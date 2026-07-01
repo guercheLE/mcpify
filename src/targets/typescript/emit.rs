@@ -33,22 +33,30 @@ pub async fn render_and_write(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::context::GeneratorContext;
     use crate::targets::typescript::context::TsTemplateContext;
     use crate::targets::typescript::render::render_engine;
+
+    fn sample_ctx(output_dir: PathBuf, api_title: &str) -> GeneratorContext {
+        GeneratorContext {
+            openapi_input: "spec.yaml".to_string(),
+            output_dir,
+            force: false,
+            output_dir_preexisted: false,
+            auth_schemes: Vec::new(),
+            normalized_operations: Vec::new(),
+            api_title: api_title.to_string(),
+        }
+    }
 
     #[tokio::test]
     async fn renders_and_writes_package_json() {
         let tera = render_engine().unwrap();
-        let view = TsTemplateContext {
-            project_name: "my-api-mcp".to_string(),
-            package_name: "my-api-mcp".to_string(),
-            display_name: "My API".to_string(),
-            client_class_name: "MyApiClientService".to_string(),
-            tool_prefix: "my-api-mcp".to_string(),
-            auth_schemes: Vec::new(),
-            operations: Vec::new(),
-        };
+        let view =
+            TsTemplateContext::from_context(&sample_ctx(PathBuf::from("my-api-mcp"), "My API"));
         let ctx = tera::Context::from_serialize(&view).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
@@ -71,15 +79,7 @@ mod tests {
     #[tokio::test]
     async fn creates_parent_directories() {
         let tera = render_engine().unwrap();
-        let view = TsTemplateContext {
-            project_name: "x".to_string(),
-            package_name: "x".to_string(),
-            display_name: "X".to_string(),
-            client_class_name: "XClientService".to_string(),
-            tool_prefix: "x".to_string(),
-            auth_schemes: Vec::new(),
-            operations: Vec::new(),
-        };
+        let view = TsTemplateContext::from_context(&sample_ctx(PathBuf::from("x"), "X"));
         let ctx = tera::Context::from_serialize(&view).unwrap();
 
         let dir = tempfile::tempdir().unwrap();

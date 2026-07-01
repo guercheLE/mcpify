@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::naming::{kebab_case, pascal_case};
+use super::naming::{kebab_case, pascal_case, screaming_snake_case};
 use crate::auth_profile::AuthSchemeKind;
 use crate::context::GeneratorContext;
 
@@ -38,9 +38,11 @@ pub struct TsTemplateContext {
     pub display_name: String,
     /// PascalCase class name for the generated target-API HTTP client.
     pub client_class_name: String,
-    /// kebab-case slug used to prefix generated env var names
-    /// (`{{ tool_prefix|upper }}_URL`) — same as `project_name` in v1.
+    /// kebab-case slug identifying this project — same as `project_name` in v1.
     pub tool_prefix: String,
+    /// `tool_prefix` as `SCREAMING_SNAKE_CASE`, since kebab-case hyphens
+    /// aren't valid in env var names (`{{ tool_prefix_env }}_URL`).
+    pub tool_prefix_env: String,
     pub auth_schemes: Vec<TsAuthSchemeView>,
     pub operations: Vec<TsOperationView>,
 }
@@ -78,10 +80,13 @@ impl TsTemplateContext {
             })
             .collect();
 
+        let tool_prefix_env = screaming_snake_case(&project_name);
+
         Self {
             package_name: project_name.clone(),
             tool_prefix: project_name.clone(),
             project_name,
+            tool_prefix_env,
             display_name: ctx.api_title.clone(),
             client_class_name,
             auth_schemes,
@@ -148,6 +153,13 @@ mod tests {
         let view = TsTemplateContext::from_context(&sample_context());
         assert_eq!(view.display_name, "Widget API");
         assert_eq!(view.client_class_name, "WidgetApiClientService");
+    }
+
+    #[test]
+    fn derives_screaming_snake_case_env_prefix_from_kebab_case_project_name() {
+        let view = TsTemplateContext::from_context(&sample_context());
+        assert_eq!(view.project_name, "my-api-mcp");
+        assert_eq!(view.tool_prefix_env, "MY_API_MCP");
     }
 
     #[test]

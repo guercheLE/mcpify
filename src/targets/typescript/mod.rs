@@ -2,6 +2,7 @@ pub mod context;
 pub mod emit;
 pub mod naming;
 pub mod render;
+pub mod steps;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -30,8 +31,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         "typescript"
     }
 
-    async fn bootstrap_project(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn bootstrap_project(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::bootstrap::bootstrap_project(ctx).await
     }
 
     async fn generate_enterprise_scaffolding(&self, _ctx: &GeneratorContext) -> Result<()> {
