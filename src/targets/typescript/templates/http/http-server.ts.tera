@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server as NodeHttpServer, type ServerResponse } from 'node:http';
 
-import type { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import type { ComponentRegistry } from '../core/component-registry.js';

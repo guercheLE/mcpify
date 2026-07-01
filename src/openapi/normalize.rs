@@ -1,5 +1,7 @@
 use openapiv3::{OpenAPI, Operation, PathItem, ReferenceOr};
 
+use super::schema_resolve::{resolve_input_schema, resolve_output_schema};
+
 /// One HTTP operation flattened out of `doc.paths`, ready for both
 /// `mcp_store.db` assembly (Story 5) and, later, target template contexts
 /// (Story 12). `input_schema`/`output_schema` here are a straightforward
@@ -21,6 +23,15 @@ pub struct NormalizedOperation {
     /// endpoint. Since v1 selects a single active auth strategy at runtime
     /// (REQ-1.2.3) this is informational rather than an enforced binding.
     pub auth_scheme_ref: Option<String>,
+    /// A genuine, `$ref`-resolved JSON Schema (properties keyed by
+    /// parameter name, plus a `body` property) that Ajv can compile
+    /// directly to validate `call` arguments — distinct from
+    /// `input_schema` above, which stays a literal OpenAPI-shape snapshot
+    /// for the `get` tool and api-client's parameter-location lookups.
+    pub validation_input_schema: serde_json::Value,
+    /// A genuine, `$ref`-resolved JSON Schema for the first documented 2xx
+    /// response, that Ajv can compile directly to validate a live response.
+    pub validation_output_schema: serde_json::Value,
 }
 
 type MethodAccessor = fn(&PathItem) -> &Option<Operation>;
@@ -78,6 +89,8 @@ pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
                 }),
                 output_schema: serde_json::json!(operation.responses),
                 auth_scheme_ref,
+                validation_input_schema: resolve_input_schema(operation, doc.components.as_ref()),
+                validation_output_schema: resolve_output_schema(operation, doc.components.as_ref()),
             });
         }
     }

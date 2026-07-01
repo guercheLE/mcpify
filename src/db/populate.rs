@@ -48,6 +48,8 @@ mod tests {
             input_schema: json!({"parameters": []}),
             output_schema: json!({"200": {"description": "OK"}}),
             auth_scheme_ref: Some("basicAuth".to_string()),
+            validation_input_schema: json!({}),
+            validation_output_schema: json!({}),
         }
     }
 

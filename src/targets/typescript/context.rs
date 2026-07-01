@@ -149,6 +149,8 @@ mod tests {
                 input_schema: serde_json::json!({}),
                 output_schema: serde_json::json!({}),
                 auth_scheme_ref: Some("basicAuth".to_string()),
+                validation_input_schema: serde_json::json!({}),
+                validation_output_schema: serde_json::json!({}),
             }],
             api_title: "Widget API".to_string(),
         }

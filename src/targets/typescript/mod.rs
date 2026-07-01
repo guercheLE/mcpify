@@ -47,8 +47,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         steps::transports::generate_transports_and_roles(ctx).await
     }
 
-    async fn generate_mcp_tools(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn generate_mcp_tools(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::tools::generate_mcp_tools(ctx).await
     }
 
     async fn generate_setup_wizard_and_tests(&self, _ctx: &GeneratorContext) -> Result<()> {

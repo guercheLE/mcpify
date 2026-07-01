@@ -1,6 +1,7 @@
 pub mod fetch;
 pub mod normalize;
 pub mod parse;
+pub mod schema_resolve;
 pub mod source;
 
 use anyhow::Result;

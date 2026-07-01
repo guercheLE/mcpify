@@ -78,6 +78,8 @@ mod tests {
             input_schema: serde_json::json!({}),
             output_schema: serde_json::json!({}),
             auth_scheme_ref: None,
+            validation_input_schema: serde_json::json!({}),
+            validation_output_schema: serde_json::json!({}),
         };
         let ctx = ctx_with_operations(dir.path().to_path_buf(), vec![operation]);
 
