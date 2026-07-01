@@ -1,0 +1,42 @@
+use anyhow::{Context, Result};
+use rust_embed::RustEmbed;
+use tera::Tera;
+
+/// Every `.tera` file under `templates/` compiles into the binary, so
+/// generation never depends on the filesystem at runtime — required for
+/// `cargo install mcpify` to remain a single, dependency-free binary.
+#[derive(RustEmbed)]
+#[folder = "src/targets/typescript/templates/"]
+struct TsTemplates;
+
+/// Builds one `Tera` instance holding every embedded template, keyed by its
+/// path relative to `templates/` (e.g. `"package.json.tera"`).
+pub fn render_engine() -> Result<Tera> {
+    let mut tera = Tera::default();
+
+    for path in TsTemplates::iter() {
+        let file = TsTemplates::get(&path).with_context(|| {
+            format!("embedded template '{path}' vanished between iter() and get()")
+        })?;
+        let contents = std::str::from_utf8(&file.data)
+            .with_context(|| format!("embedded template '{path}' is not valid UTF-8"))?;
+        tera.add_raw_template(&path, contents)
+            .with_context(|| format!("failed to parse template '{path}'"))?;
+    }
+
+    Ok(tera)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_every_embedded_template_without_error() {
+        let tera = render_engine().unwrap();
+        assert!(
+            tera.get_template_names()
+                .any(|name| name == "package.json.tera")
+        );
+    }
+}

@@ -1076,6 +1076,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "heck",
  "indexmap",
  "inquire",
  "openapiv3",

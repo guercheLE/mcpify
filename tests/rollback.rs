@@ -57,6 +57,7 @@ async fn fresh_dir_created_by_dir_guard_is_removed_on_failure() {
         output_dir_preexisted,
         auth_schemes: Vec::new(),
         normalized_operations: Vec::new(),
+        api_title: "Test API".to_string(),
     };
 
     AlwaysFails.execute(&ctx).await.unwrap_err();
@@ -88,6 +89,7 @@ async fn forced_preexisting_dir_survives_failure_with_partial_content_intact() {
         output_dir_preexisted,
         auth_schemes: Vec::new(),
         normalized_operations: Vec::new(),
+        api_title: "Test API".to_string(),
     };
 
     AlwaysFails.execute(&ctx).await.unwrap_err();

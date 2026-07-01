@@ -23,4 +23,8 @@ pub struct GeneratorContext {
     /// A deliberate, minor extension beyond architecture.md's literal
     /// `GeneratorContext` listing — justified by avoiding repeated work.
     pub normalized_operations: Vec<NormalizedOperation>,
+    /// `info.title` from the parsed OpenAPI doc, kept on the context (rather
+    /// than threading the whole raw document through the target trait) so
+    /// template contexts (Story 7) can derive a human-readable display name.
+    pub api_title: String,
 }

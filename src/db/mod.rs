@@ -51,6 +51,7 @@ mod tests {
             output_dir_preexisted: false,
             auth_schemes: Vec::new(),
             normalized_operations: operations,
+            api_title: "Test API".to_string(),
         }
     }
 

@@ -32,6 +32,7 @@ pub async fn run_shared_pipeline(
         output_dir_preexisted,
         auth_schemes,
         normalized_operations,
+        api_title: doc.info.title.clone(),
     };
 
     db::assemble_store(&ctx).await?;
