@@ -21,10 +21,12 @@ url = "2"
 anyhow = "1"
 thiserror = "2"
 openapiv3 = "2"
+indexmap = "2"
 rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
 sqlite-vec = "0.1"
 tera = "1"
 rust-embed = "8"
+inquire = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

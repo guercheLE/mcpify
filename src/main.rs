@@ -1,14 +1,12 @@
-mod auth_profile;
-mod cli;
-mod context;
-mod targets;
-
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use clap::Parser;
 
-use cli::Cli;
-use context::GeneratorContext;
+use mcpify::cli::Cli;
+use mcpify::context::GeneratorContext;
+use mcpify::pipeline::dir_guard::check_output_dir;
+use mcpify::{auth_profile, openapi, targets};
 
 #[tokio::main]
 async fn main() {
@@ -22,17 +20,24 @@ async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     cli.validate_language()?;
 
-    // The shared ingestion pipeline (OpenAPI parse, directory guard, auth
-    // profiling, mcp_store.db assembly — architecture.md §1 steps 1-4) fills
-    // in output_dir_preexisted/auth_schemes and lands in Story 6. Until then
-    // this constructs a stub context so CLI parsing and target dispatch are
-    // already exercised end to end.
+    let output_dir = PathBuf::from(&cli.output);
+    let output_dir_preexisted = check_output_dir(&output_dir, cli.force).await?;
+    let doc = openapi::ingest(&cli.input).await?;
+
+    // Only fall back to an interactive prompt (REQ-1.2.4) when there's a
+    // human on the other end of stdin; a scripted/CI invocation with an
+    // unclassifiable spec should fail loudly instead of hanging.
+    let interactive = std::io::stdin().is_terminal();
+    let auth_schemes = auth_profile::profile_auth(&doc, interactive).await?;
+
+    // mcp_store.db assembly (Story 5) joins this flow as the shared pipeline
+    // (Story 6) is wired up.
     let ctx = GeneratorContext {
         openapi_input: cli.input.clone(),
-        output_dir: PathBuf::from(&cli.output),
+        output_dir,
         force: cli.force,
-        output_dir_preexisted: false,
-        auth_schemes: Vec::new(),
+        output_dir_preexisted,
+        auth_schemes,
     };
 
     let registry = targets::build_registry();
