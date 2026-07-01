@@ -39,8 +39,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         steps::enterprise::generate_enterprise_scaffolding(ctx).await
     }
 
-    async fn generate_auth_strategies(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn generate_auth_strategies(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::auth::generate_auth_strategies(ctx).await
     }
 
     async fn generate_transports_and_roles(&self, _ctx: &GeneratorContext) -> Result<()> {
