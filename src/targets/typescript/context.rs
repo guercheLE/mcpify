@@ -44,6 +44,12 @@ pub struct TsTemplateContext {
     /// aren't valid in env var names (`{{ tool_prefix_env }}_URL`).
     pub tool_prefix_env: String,
     pub auth_schemes: Vec<TsAuthSchemeView>,
+    /// Deduplicated `method_key`s, in discovery order — the literal union
+    /// members of the generated `AuthMethod` TS type
+    /// (`'basic' | 'oauth2' | ...`). Deduplicated here in Rust rather than
+    /// in the template, since Tera has no reliable cross-version `unique`
+    /// filter to depend on.
+    pub auth_method_keys: Vec<&'static str>,
     pub operations: Vec<TsOperationView>,
 }
 
@@ -59,7 +65,7 @@ impl TsTemplateContext {
 
         let client_class_name = format!("{}ClientService", pascal_case(&ctx.api_title));
 
-        let auth_schemes = ctx
+        let auth_schemes: Vec<TsAuthSchemeView> = ctx
             .auth_schemes
             .iter()
             .map(|scheme| TsAuthSchemeView {
@@ -82,6 +88,13 @@ impl TsTemplateContext {
 
         let tool_prefix_env = screaming_snake_case(&project_name);
 
+        let mut auth_method_keys: Vec<&'static str> = Vec::new();
+        for scheme in &auth_schemes {
+            if !auth_method_keys.contains(&scheme.method_key) {
+                auth_method_keys.push(scheme.method_key);
+            }
+        }
+
         Self {
             package_name: project_name.clone(),
             tool_prefix: project_name.clone(),
@@ -90,6 +103,7 @@ impl TsTemplateContext {
             display_name: ctx.api_title.clone(),
             client_class_name,
             auth_schemes,
+            auth_method_keys,
             operations,
         }
     }
@@ -174,6 +188,27 @@ mod tests {
         let view = TsTemplateContext::from_context(&sample_context());
         assert_eq!(view.operations.len(), 1);
         assert_eq!(view.operations[0].operation_id, "listWidgets");
+    }
+
+    #[test]
+    fn dedupes_auth_method_keys_preserving_discovery_order() {
+        let mut ctx = sample_context();
+        ctx.auth_schemes = vec![
+            AuthSchemeDescriptor {
+                name: "oauth2Primary".to_string(),
+                kind: AuthSchemeKind::OAuth2,
+            },
+            AuthSchemeDescriptor {
+                name: "basicAuth".to_string(),
+                kind: AuthSchemeKind::Basic,
+            },
+            AuthSchemeDescriptor {
+                name: "oauth2Secondary".to_string(),
+                kind: AuthSchemeKind::OAuth2,
+            },
+        ];
+        let view = TsTemplateContext::from_context(&ctx);
+        assert_eq!(view.auth_method_keys, vec!["oauth2", "basic"]);
     }
 
     #[test]

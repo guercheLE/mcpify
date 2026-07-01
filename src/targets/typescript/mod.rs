@@ -35,8 +35,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         steps::bootstrap::bootstrap_project(ctx).await
     }
 
-    async fn generate_enterprise_scaffolding(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn generate_enterprise_scaffolding(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::enterprise::generate_enterprise_scaffolding(ctx).await
     }
 
     async fn generate_auth_strategies(&self, _ctx: &GeneratorContext) -> Result<()> {
