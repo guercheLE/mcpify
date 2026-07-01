@@ -105,6 +105,7 @@ mod tests {
             force: output_dir_preexisted,
             output_dir_preexisted,
             auth_schemes: Vec::new(),
+            normalized_operations: Vec::new(),
         }
     }
 

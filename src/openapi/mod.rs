@@ -1,4 +1,5 @@
 pub mod fetch;
+pub mod normalize;
 pub mod parse;
 pub mod source;
 
@@ -8,6 +9,8 @@ use openapiv3::OpenAPI;
 use fetch::load_raw;
 use parse::{detect_format_from_name, parse_document};
 use source::{InputSource, classify};
+
+pub use normalize::NormalizedOperation;
 
 /// Loads and parses an OpenAPI spec from a local path or remote URL, JSON or
 /// YAML, into a normalized document (architecture.md §1, step 1).

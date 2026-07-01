@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::auth_profile::AuthSchemeDescriptor;
+use crate::openapi::NormalizedOperation;
 
 /// Shared state threaded through every step of the compile-time lifecycle
 /// (architecture.md §1). Populated by the shared pipeline (Story 6) before
@@ -16,4 +17,10 @@ pub struct GeneratorContext {
     pub output_dir_preexisted: bool,
     /// Discovered from `components.securitySchemes`.
     pub auth_schemes: Vec<AuthSchemeDescriptor>,
+    /// Flattened out of the parsed OpenAPI doc once by the shared pipeline
+    /// (Story 6) and reused by every later target step (Stories 8-13)
+    /// instead of each one re-deriving it or re-querying `mcp_store.db`.
+    /// A deliberate, minor extension beyond architecture.md's literal
+    /// `GeneratorContext` listing — justified by avoiding repeated work.
+    pub normalized_operations: Vec<NormalizedOperation>,
 }
