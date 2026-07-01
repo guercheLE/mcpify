@@ -1,0 +1,31 @@
+[package]
+name = "mcpify"
+version = "0.1.0"
+edition = "2024"
+description = "Generate a deployment-ready, enterprise-grade MCP server project from an OpenAPI spec."
+license = "MIT"
+
+[[bin]]
+name = "mcpify"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+url = "2"
+anyhow = "1"
+thiserror = "2"
+openapiv3 = "2"
+rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
+sqlite-vec = "0.1"
+tera = "1"
+rust-embed = "8"
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
