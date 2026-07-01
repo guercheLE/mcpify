@@ -43,8 +43,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         steps::auth::generate_auth_strategies(ctx).await
     }
 
-    async fn generate_transports_and_roles(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn generate_transports_and_roles(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::transports::generate_transports_and_roles(ctx).await
     }
 
     async fn generate_mcp_tools(&self, _ctx: &GeneratorContext) -> Result<()> {
