@@ -1,3 +1,4 @@
+pub mod rust;
 pub mod typescript;
 
 use std::collections::HashMap;
