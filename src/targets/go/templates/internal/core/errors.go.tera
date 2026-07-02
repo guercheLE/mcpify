@@ -1,0 +1,39 @@
+package core
+
+// Error is what every error this project raises deliberately looks like,
+// mirroring `targets::csharp::templates::Core::Errors.cs.tera`'s
+// `McpifyException` hierarchy — one `Code` string per error family, kept
+// as a single struct rather than a type hierarchy since Go has no
+// exception-class taxonomy to walk; callers switch on `Code` instead of
+// a type.
+type Error struct {
+	Code    string
+	Message string
+	Details any
+}
+
+func (e *Error) Error() string { return e.Message }
+
+func NewConfigurationError(message string) *Error {
+	return &Error{Code: "CONFIGURATION_ERROR", Message: message}
+}
+
+func NewAuthenticationError(message string) *Error {
+	return &Error{Code: "AUTHENTICATION_ERROR", Message: message}
+}
+
+func NewValidationError(message string, details any) *Error {
+	return &Error{Code: "VALIDATION_ERROR", Message: message, Details: details}
+}
+
+func NewNotFoundError(message string) *Error {
+	return &Error{Code: "NOT_FOUND", Message: message}
+}
+
+func NewCircuitBreakerOpenError() *Error {
+	return &Error{Code: "CIRCUIT_BREAKER_OPEN", Message: "circuit breaker is open"}
+}
+
+func NewRateLimitExceededError() *Error {
+	return &Error{Code: "RATE_LIMIT_EXCEEDED", Message: "rate limit exceeded"}
+}

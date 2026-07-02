@@ -1,0 +1,90 @@
+package core
+
+import (
+	"os"
+	"strings"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+// REQ-2.3.1's deny-list of well-known sensitive field names, checked
+// case-insensitively — the same set every other target's redaction layer
+// checks (see `targets::csharp::templates::Core::Logging.cs.tera`'s
+// `RedactionEnricher`).
+var sensitiveFields = map[string]struct{}{
+	"password": {}, "token": {}, "secret": {}, "apikey": {}, "api_key": {},
+	"clientsecret": {}, "client_secret": {}, "consumersecret": {}, "consumer_secret": {},
+	"privatekey": {}, "private_key": {}, "authorization": {},
+}
+
+// RedactField replaces field's value with "***REDACTED***" if its key is
+// a well-known sensitive name, so a stray `logger.Info("token", token)`
+// call can never leak a secret into the structured log stream.
+func RedactField(field zap.Field) zap.Field {
+	if _, sensitive := sensitiveFields[strings.ToLower(field.Key)]; sensitive {
+		return zap.String(field.Key, "***REDACTED***")
+	}
+	return field
+}
+
+// NewLogger builds the shared zap.Logger every package logs through:
+// JSON-encoded, level driven by {{ tool_prefix_env }}_LOG_LEVEL, and every
+// field passed through RedactField before it reaches the sink.
+func NewLogger() (*zap.Logger, error) {
+	level := parseLevel(os.Getenv("{{ tool_prefix_env }}_LOG_LEVEL"))
+
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(level)
+	config.EncoderConfig.TimeKey = "timestamp"
+	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+
+	return config.Build(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+		return &redactingCore{Core: c}
+	}))
+}
+
+type redactingCore struct {
+	zapcore.Core
+}
+
+func (c *redactingCore) With(fields []zap.Field) zapcore.Core {
+	return &redactingCore{Core: c.Core.With(redactAll(fields))}
+}
+
+func (c *redactingCore) Write(entry zapcore.Entry, fields []zap.Field) error {
+	return c.Core.Write(entry, redactAll(fields))
+}
+
+func (c *redactingCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return checked.AddCore(entry, c)
+	}
+	return checked
+}
+
+func redactAll(fields []zap.Field) []zap.Field {
+	redacted := make([]zap.Field, len(fields))
+	for i, field := range fields {
+		redacted[i] = RedactField(field)
+	}
+	return redacted
+}
+
+// Go's zapcore has no level below Debug, so trace/verbose (a level every
+// other target's config schema allows) maps onto Debug here rather than
+// getting a dedicated level.
+func parseLevel(level string) zapcore.Level {
+	switch strings.ToLower(level) {
+	case "trace", "verbose", "debug":
+		return zapcore.DebugLevel
+	case "warn", "warning":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	case "fatal":
+		return zapcore.FatalLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}

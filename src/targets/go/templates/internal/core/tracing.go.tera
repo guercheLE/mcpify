@@ -1,0 +1,76 @@
+package core
+
+import (
+	"context"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// ServiceName is what every tracer/meter this project creates is tagged
+// with at the OTLP exporter (REQ-2.3.2).
+const ServiceName = "{{ project_name }}"
+
+// Tracing bundles the tracer/meter providers InitTracing wires up, plus a
+// Shutdown that flushes both on process exit.
+type Tracing struct {
+	TracerProvider *sdktrace.TracerProvider
+	MeterProvider  *sdkmetric.MeterProvider
+}
+
+// InitTracing sets up OTLP-exported tracing plus Prometheus-scraped
+// metrics (REQ-2.3.2, toolchain: "OpenTelemetry + Prometheus/OTLP
+// exporters"), registers both providers as the process-global otel
+// default, and returns a handle whose Shutdown flushes pending
+// spans/metrics. The Prometheus exporter registers with the default
+// Prometheus registry; the HTTP transport (Story G5) mounts it at
+// `/metrics` via `promhttp.Handler()`.
+func InitTracing(ctx context.Context) (*Tracing, error) {
+	res, err := resource.New(ctx, resource.WithAttributes(attribute.String("service.name", ServiceName)))
+	if err != nil {
+		return nil, err
+	}
+
+	traceExporter, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(tracerProvider)
+
+	promExporter, err := otelprom.New()
+	if err != nil {
+		return nil, err
+	}
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(promExporter),
+	)
+	otel.SetMeterProvider(meterProvider)
+
+	return &Tracing{TracerProvider: tracerProvider, MeterProvider: meterProvider}, nil
+}
+
+// Shutdown flushes and stops both providers; call it once on process exit.
+func (t *Tracing) Shutdown(ctx context.Context) error {
+	if err := t.TracerProvider.Shutdown(ctx); err != nil {
+		return err
+	}
+	return t.MeterProvider.Shutdown(ctx)
+}
+
+// Tracer returns this project's shared ActivitySource-equivalent tracer.
+func Tracer() trace.Tracer { return otel.Tracer(ServiceName) }
+
+// Meter returns this project's shared Meter.
+func Meter() metric.Meter { return otel.Meter(ServiceName) }

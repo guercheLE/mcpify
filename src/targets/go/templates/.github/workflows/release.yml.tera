@@ -1,0 +1,28 @@
+name: Release
+
+# Mirrors targets::csharp's/targets::python's/targets::rust's release.yml:
+# this project is a generated application tied to one specific API, not a
+# reusable library, so "release" means attaching a compiled binary to a
+# GitHub Release on a version tag rather than publishing to a package
+# registry.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: go build -o {{ project_name }} ./cmd/{{ project_name }}
+      - run: zip {{ project_name }}.zip {{ project_name }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: {{ project_name }}.zip

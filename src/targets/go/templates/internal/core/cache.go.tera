@@ -1,0 +1,62 @@
+package core
+
+import (
+	"container/list"
+	"sync"
+)
+
+type cacheEntry struct {
+	key   string
+	value any
+}
+
+// Cache is a bounded, in-memory LRU cache sized by `Config.CacheSize` —
+// the same "look up before hitting the network again" role every other
+// target's cache module plays, hand-rolled here since Go's stdlib has no
+// bounded-cache primitive.
+type Cache struct {
+	mu       sync.Mutex
+	capacity int
+	items    map[string]*list.Element
+	order    *list.List
+}
+
+// NewCache builds a cache holding at most capacity entries (0 disables
+// eviction).
+func NewCache(capacity int) *Cache {
+	return &Cache{capacity: capacity, items: make(map[string]*list.Element), order: list.New()}
+}
+
+// Get returns the cached value for key, if present, and marks it
+// most-recently-used.
+func (c *Cache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	c.order.MoveToFront(el)
+	return el.Value.(*cacheEntry).value, true
+}
+
+// Set stores value under key, evicting the least-recently-used entry if
+// the cache is at capacity.
+func (c *Cache) Set(key string, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		c.order.MoveToFront(el)
+		el.Value.(*cacheEntry).value = value
+		return
+	}
+	el := c.order.PushFront(&cacheEntry{key: key, value: value})
+	c.items[key] = el
+	if c.capacity > 0 && c.order.Len() > c.capacity {
+		oldest := c.order.Back()
+		if oldest != nil {
+			c.order.Remove(oldest)
+			delete(c.items, oldest.Value.(*cacheEntry).key)
+		}
+	}
+}

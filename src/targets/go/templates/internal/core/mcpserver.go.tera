@@ -1,0 +1,14 @@
+package core
+
+import "github.com/mark3labs/mcp-go/server"
+
+// NewMCPServer builds the shared MCP server instance every transport
+// (Story G5) and tool (Story G6) attaches to — deliberately
+// transport-agnostic here, since which transport is active (stdio vs.
+// HTTP) is a per-invocation Harness Server concern, not a fixed
+// generation-time choice. Mirrors
+// `targets::csharp::templates::Core::McpServer.cs.tera`'s "wrap the SDK,
+// stay transport-agnostic" split.
+func NewMCPServer() *server.MCPServer {
+	return server.NewMCPServer("{{ project_name }}", "1.0.0")
+}

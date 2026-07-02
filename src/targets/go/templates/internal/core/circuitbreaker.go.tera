@@ -1,0 +1,24 @@
+package core
+
+import (
+	"time"
+
+	"github.com/sony/gobreaker"
+)
+
+// NewCircuitBreaker builds the REQ-2.3.3 circuit breaker guarding outbound
+// calls to the target API: opens once at least 10 requests have been seen
+// in the current window and >=50% of them failed, then stays open for 30s
+// before probing again — the same shape as every other target's circuit
+// breaker.
+func NewCircuitBreaker(name string) *gobreaker.CircuitBreaker {
+	return gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        name,
+		MaxRequests: 1,
+		Interval:    30 * time.Second,
+		Timeout:     30 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.Requests >= 10 && float64(counts.TotalFailures)/float64(counts.Requests) >= 0.5
+		},
+	})
+}

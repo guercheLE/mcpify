@@ -1,0 +1,59 @@
+package core
+
+// CheckFunc reports whether a component is currently healthy.
+type CheckFunc func() error
+
+// Check is one named, tagged health check — Critical checks block
+// startup/readiness, non-critical ones only degrade it (REQ-2.3.4),
+// mirroring every other target's critical/optional health-check split.
+type Check struct {
+	Name     string
+	Critical bool
+	Run      CheckFunc
+}
+
+// Registry is the REQ-2.3.4 component health registry. NewRegistry seeds
+// it with an always-healthy "self" check so the registry is never empty
+// even before Story G6 registers real per-component checks (the
+// `chromem-go` store, the target API).
+type Registry struct {
+	checks []Check
+}
+
+func NewRegistry() *Registry {
+	return &Registry{
+		checks: []Check{
+			{Name: "self", Critical: true, Run: func() error { return nil }},
+		},
+	}
+}
+
+// Register adds check to the registry.
+func (r *Registry) Register(check Check) { r.checks = append(r.checks, check) }
+
+// Result is one check's outcome.
+type Result struct {
+	Name     string `json:"name"`
+	Healthy  bool   `json:"healthy"`
+	Critical bool   `json:"critical"`
+	Error    string `json:"error,omitempty"`
+}
+
+// Report runs every registered check and reports whether the aggregate is
+// healthy — false if any *critical* check fails; a failing optional check
+// only shows up in Results, not the aggregate.
+func (r *Registry) Report() (healthy bool, results []Result) {
+	healthy = true
+	for _, check := range r.checks {
+		err := check.Run()
+		result := Result{Name: check.Name, Healthy: err == nil, Critical: check.Critical}
+		if err != nil {
+			result.Error = err.Error()
+			if check.Critical {
+				healthy = false
+			}
+		}
+		results = append(results, result)
+	}
+	return healthy, results
+}
