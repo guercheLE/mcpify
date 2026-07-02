@@ -1,0 +1,92 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using {{ namespace }}.Core;
+using {{ namespace }}.Http;
+
+namespace {{ namespace }}.Cli;
+
+/// <summary>
+/// Terminal Client (`search`/`get`/`call`/`test-connection`/`setup` run
+/// as direct CLI subcommands — Stories C6/C7 add their subcommands to
+/// `Program.cs`'s <see cref="System.CommandLine.RootCommand"/> alongside
+/// <see cref="PrintVersion"/>/<see cref="PrintConfigAsync"/> below, which
+/// this story already implements since they need no tool/setup-wizard
+/// dependency) and Harness Server (`start`/`http` boot the persistent MCP
+/// server loop, this story) roles. mcpify always emits both stdio and
+/// HTTP capability; transport *selection* is runtime config (REQ-2.2's
+/// cascade), not a generation-time decision — mirrors `targets::python`'s
+/// `_run_harness_server()`.
+/// </summary>
+public static class Roles
+{
+    public static async Task<int> RunStdioHarnessAsync(string[] args, CancellationToken cancellationToken)
+    {
+        var builder = Host.CreateApplicationBuilder(args);
+        builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        builder.Services.AddMcpifyServices();
+        builder.Services.AddMcpServer().WithStdioServerTransport();
+
+        using var host = builder.Build();
+        await host.RunAsync(cancellationToken);
+        return 0;
+    }
+
+    public static async Task<int> RunHttpHarnessAsync(
+        string[] args,
+        string? hostOverride,
+        int? portOverride,
+        string? corsAllowOverride,
+        CancellationToken cancellationToken)
+    {
+        var builder = WebApplication.CreateBuilder(args);
+        builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        if (hostOverride is not null)
+        {
+            builder.Configuration["Host"] = hostOverride;
+        }
+        if (portOverride is not null)
+        {
+            builder.Configuration["Port"] = portOverride.Value.ToString();
+        }
+        if (corsAllowOverride is not null)
+        {
+            builder.Configuration["CorsAllow"] = corsAllowOverride;
+        }
+        builder.Services.AddMcpifyServices();
+
+        var app = HttpServer.Configure(builder);
+        var options = app.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
+        app.Urls.Add($"http://{options.Host}:{options.Port}");
+
+        await app.RunAsync(cancellationToken);
+        return 0;
+    }
+
+    public static void PrintVersion()
+    {
+        var version = typeof(Roles).Assembly.GetName().Version;
+        Console.WriteLine(version?.ToString() ?? "0.0.0");
+    }
+
+    /// <summary>Prints the resolved configuration with secrets redacted (REQ-2.3.1's redaction principle applied to this output too).</summary>
+    public static Task PrintConfigAsync(string[] args, CancellationToken cancellationToken)
+    {
+        var builder = Host.CreateApplicationBuilder(args);
+        builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        builder.Services.AddOptions<McpifyOptions>().BindConfiguration(string.Empty);
+
+        using var host = builder.Build();
+        var options = host.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
+
+        Console.WriteLine($"Url: {options.Url}");
+        Console.WriteLine($"AuthMethod: {options.AuthMethod}");
+        Console.WriteLine("Credentials: ***REDACTED***");
+        Console.WriteLine($"LogLevel: {options.LogLevel}");
+        Console.WriteLine($"Transport: {options.Transport}");
+        Console.WriteLine($"Host: {options.Host}");
+        Console.WriteLine($"Port: {options.Port}");
+        return Task.CompletedTask;
+    }
+}

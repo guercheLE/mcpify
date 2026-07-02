@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writes_program_cs_referencing_the_di_extension() {
+    async fn writes_program_cs_wiring_the_root_command() {
         let parent = tempfile::tempdir().unwrap();
         let dir = output_dir(&parent);
         let ctx = ctx_with_schemes(dir.clone(), Vec::new());
@@ -159,8 +159,8 @@ mod tests {
         let contents = tokio::fs::read_to_string(dir.join("Program.cs"))
             .await
             .unwrap();
-        assert!(contents.contains("using Output.Core;"));
-        assert!(contents.contains("AddMcpifyServices()"));
+        assert!(contents.contains("using Output.Cli;"));
+        assert!(contents.contains("new RootCommand("));
     }
 
     #[tokio::test]

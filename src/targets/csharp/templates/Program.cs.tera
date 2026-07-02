@@ -1,12 +1,47 @@
-using {{ namespace }}.Core;
+using System.CommandLine;
+using {{ namespace }}.Cli;
 
-var builder = Host.CreateApplicationBuilder(args);
-builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
-builder.Services.AddMcpifyServices();
+var rootCommand = new RootCommand("{{ display_name }} MCP server");
 
-using var host = builder.Build();
+var hostOption = new Option<string?>("--host");
+var portOption = new Option<int?>("--port");
+var corsAllowOption = new Option<string?>("--cors-allow");
 
-// Story C5 replaces this skeleton with the real Terminal Client / Harness
-// Server dual-role dispatch (branching on a CLI subcommand via
-// System.CommandLine, per v4-implementation-plan.md's C5 goal).
-await host.RunAsync();
+var startCommand = new Command("start", "Start the Harness Server over stdio (for agent hosts).");
+startCommand.SetAction((_, cancellationToken) => Roles.RunStdioHarnessAsync(args, cancellationToken));
+rootCommand.Subcommands.Add(startCommand);
+
+var httpCommand = new Command("http", "Start the Harness Server over HTTP (for agent hosts).")
+{
+    hostOption,
+    portOption,
+    corsAllowOption,
+};
+httpCommand.SetAction((parseResult, cancellationToken) => Roles.RunHttpHarnessAsync(
+    args,
+    parseResult.GetValue(hostOption),
+    parseResult.GetValue(portOption),
+    parseResult.GetValue(corsAllowOption),
+    cancellationToken));
+rootCommand.Subcommands.Add(httpCommand);
+
+var versionCommand = new Command("version", "Print the installed version.");
+versionCommand.SetAction(_ =>
+{
+    Roles.PrintVersion();
+    return Task.FromResult(0);
+});
+rootCommand.Subcommands.Add(versionCommand);
+
+var configCommand = new Command("config", "Print the resolved configuration (secrets redacted).");
+configCommand.SetAction(async (_, cancellationToken) =>
+{
+    await Roles.PrintConfigAsync(args, cancellationToken);
+    return 0;
+});
+rootCommand.Subcommands.Add(configCommand);
+
+// Stories C6 (`search`/`get`/`call`/`test-connection`) and C7 (`setup`)
+// add their subcommands here, alongside the ones above.
+
+return await rootCommand.Parse(args).InvokeAsync();

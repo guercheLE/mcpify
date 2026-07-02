@@ -1,0 +1,30 @@
+using Microsoft.AspNetCore.Http;
+
+namespace {{ namespace }}.Http;
+
+/// <summary>
+/// Requests from localhost get relaxed auth requirements (see
+/// <see cref="LocalhostDetector"/>); everything else must carry an
+/// `Authorization` header on `/mcp` — enforced here, in front of the
+/// mounted MCP endpoint, since this project's auth policy isn't the MCP
+/// SDK's concern.
+/// </summary>
+public sealed class AuthGateMiddleware(RequestDelegate next, Metrics metrics)
+{
+    public async Task InvokeAsync(HttpContext context)
+    {
+        metrics.Increment("http_requests_total");
+
+        var relaxed = LocalhostDetector.IsLocalhost(context.Connection.RemoteIpAddress?.ToString());
+        if (!relaxed &&
+            context.Request.Path.StartsWithSegments("/mcp") &&
+            AuthExtractor.ExtractAuthorizationHeader(context.Request.Headers) is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { error = "missing Authorization header" });
+            return;
+        }
+
+        await next(context);
+    }
+}

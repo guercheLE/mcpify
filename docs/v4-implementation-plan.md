@@ -1,6 +1,6 @@
 # mcpify: v4 C# (.NET) Target Implementation Plan
 
-> **Status: In progress (2026-07-02).** C1–C4 are implemented, committed, and verified (`cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, plus a real `dotnet restore && dotnet build` and `dotnet format --verify-no-changes` against the scaffolded output covering all 5 auth-strategy kinds together — all green). C4's OAuth1 RSA-SHA1 signing was additionally verified functionally (not just compiled): a throwaway RSA keypair signed and verified a base string with the exact `RSA.SignData`/`RSASignaturePadding.Pkcs1` primitives the generated `OAuth1Signer` uses, confirming both a correct signature and correct rejection of a tampered base string. `-l csharp` is **not yet** registered in `targets::build_registry()`; per this plan, that happens only once C8 is real and green. This plan covers adding the C#/.NET output target (`-l csharp`) to the mcpify generator, per `docs/architecture.md`'s "Target Language Roadmap" (§3). It assumes `docs/v1-implementation-plan.md` is complete — the shared pipeline, CLI, `GeneratorContext`, `McpServerTargetGenerator` trait, rollback, and `TargetRegistry` are reused as-is. This plan only covers the new, C#-specific per-target work.
+> **Status: In progress (2026-07-02).** C1–C5 are implemented, committed, and verified (`cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, plus a real `dotnet restore && dotnet build` and `dotnet format --verify-no-changes` against the full C2-C5 scaffold — all green). C4's OAuth1 RSA-SHA1 signing was additionally verified functionally (not just compiled): a throwaway RSA keypair signed and verified a base string with the exact `RSA.SignData`/`RSASignaturePadding.Pkcs1` primitives the generated `OAuth1Signer` uses, confirming both a correct signature and correct rejection of a tampered base string. C5's `System.CommandLine` 2.0.9 usage (the package's API shifted significantly across its multi-year beta) was written against the current, live Microsoft Learn tutorial and how-to docs fetched during implementation, not assumed from training-data knowledge, and confirmed correct by the same real `dotnet build`. `-l csharp` is **not yet** registered in `targets::build_registry()`; per this plan, that happens only once C8 is real and green. This plan covers adding the C#/.NET output target (`-l csharp`) to the mcpify generator, per `docs/architecture.md`'s "Target Language Roadmap" (§3). It assumes `docs/v1-implementation-plan.md` is complete — the shared pipeline, CLI, `GeneratorContext`, `McpServerTargetGenerator` trait, rollback, and `TargetRegistry` are reused as-is. This plan only covers the new, C#-specific per-target work.
 
 ## Context
 
@@ -64,7 +64,7 @@ Target-local numbering (C1, C2, ...), mirroring v1's Story 7→14 shape.
 
 ---
 
-### C5 — `generate_transports_and_roles`
+### C5 — `generate_transports_and_roles` ✅ Done
 **Goal:** Dual-role entry point — `Program.cs` branching on a CLI argument/subcommand (`System.CommandLine` is the modern first-party choice for this) between Terminal Client and Harness Server modes. Kestrel/minimal-API HTTP transport with middleware for the localhost-detection/auth-extraction/metrics concerns v1 hand-rolled in `node:http` — ASP.NET Core middleware is the idiomatic translation.
 
 **Depends on:** C3, C4.

@@ -1,0 +1,24 @@
+using System.Collections.Concurrent;
+
+namespace {{ namespace }}.Http;
+
+/// <summary>
+/// Minimal Prometheus-text-format counters, exposed at GET /metrics.
+/// Request/duration histograms are recorded via OpenTelemetry
+/// (`Core/Tracing.cs`); this class only surfaces a couple of MCP-specific
+/// counters that are simplest to track as plain in-process counters.
+/// </summary>
+public sealed class Metrics
+{
+    private readonly ConcurrentDictionary<string, long> _counters = new();
+
+    public void Increment(string name) => _counters.AddOrUpdate(name, 1, (_, value) => value + 1);
+
+    public string Render()
+    {
+        var lines = _counters
+            .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+            .Select(kvp => $"{kvp.Key} {kvp.Value}");
+        return string.Join('\n', lines) + "\n";
+    }
+}

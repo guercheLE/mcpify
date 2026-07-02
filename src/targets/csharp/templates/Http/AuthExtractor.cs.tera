@@ -1,0 +1,10 @@
+using Microsoft.AspNetCore.Http;
+
+namespace {{ namespace }}.Http;
+
+/// <summary>Parses the `Authorization` header off an incoming HTTP request, if present.</summary>
+public static class AuthExtractor
+{
+    public static string? ExtractAuthorizationHeader(IHeaderDictionary headers) =>
+        headers.TryGetValue("Authorization", out var value) ? value.ToString() : null;
+}

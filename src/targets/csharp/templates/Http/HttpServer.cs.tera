@@ -1,0 +1,51 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace {{ namespace }}.Http;
+
+/// <summary>
+/// HTTP transport: `/mcp` is handled by the MCP SDK's own ASP.NET Core
+/// integration (mounted by Story C6, once the tool registrations it
+/// serves exist); `/healthz` and `/metrics` are plain endpoints alongside
+/// it. Mirrors `targets::python`'s `build_http_app`.
+/// </summary>
+public static class HttpServer
+{
+    public static WebApplication Configure(WebApplicationBuilder builder)
+    {
+        builder.Services.AddSingleton<Metrics>();
+
+        var app = builder.Build();
+
+        app.UseMiddleware<CorsHeaderMiddleware>();
+        app.UseMiddleware<AuthGateMiddleware>();
+
+        app.MapHealthChecks("/healthz", new HealthCheckOptions
+        {
+            ResponseWriter = async (context, report) =>
+            {
+                context.Response.ContentType = "application/json";
+                context.Response.StatusCode = report.Status == HealthStatus.Unhealthy ? 503 : 200;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    status = report.Status.ToString(),
+                    components = report.Entries.Count,
+                });
+            },
+        });
+
+        app.MapGet("/metrics", (Metrics metrics) =>
+        {
+            metrics.Increment("http_requests_total");
+            return Results.Text(metrics.Render(), "text/plain");
+        });
+
+        // Story C6 adds `app.MapMcp("/mcp");` here once the search/get/call
+        // tools it serves exist to register onto the MCP server builder.
+        return app;
+    }
+}

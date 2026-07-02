@@ -1,11 +1,164 @@
 use anyhow::Result;
 
 use crate::context::GeneratorContext;
+use crate::targets::csharp::context::CsTemplateContext;
+use crate::targets::csharp::emit::render_and_write;
+use crate::targets::csharp::render::render_engine;
 
-/// Story C5: emits the dual-role `Program.cs` entry point (Terminal Client
-/// vs. Harness Server, branched via `System.CommandLine`) and the
-/// Kestrel/minimal-API HTTP transport middleware. Stubbed in Story C1
-/// pending that story.
-pub async fn generate_transports_and_roles(_ctx: &GeneratorContext) -> Result<()> {
+/// Dual-role entry point (architecture.md §1, step 8): re-renders
+/// `Program.cs` from the (by now dual-role-dispatch-aware) shared
+/// template, plus the `Http/` middleware and `Cli/Roles.cs` it depends
+/// on. mcpify always emits both stdio and HTTP capability; transport
+/// *selection* is runtime config (REQ-2.2's cascade), not a
+/// generation-time decision. Mirrors
+/// `targets::python::steps::transports`'s file list, scoped to what C5
+/// alone can deliver — the Terminal Client's `search`/`get`/`call`/
+/// `test-connection`/`setup` subcommands are Stories C6/C7's job (they
+/// depend on tools/setup-wizard code this story doesn't have yet), added
+/// to this same `Program.cs`/`RootCommand` incrementally.
+const FILES: &[(&str, &str)] = &[
+    (
+        "Http/LocalhostDetector.cs.tera",
+        "Http/LocalhostDetector.cs",
+    ),
+    ("Http/AuthExtractor.cs.tera", "Http/AuthExtractor.cs"),
+    ("Http/Metrics.cs.tera", "Http/Metrics.cs"),
+    (
+        "Http/AuthGateMiddleware.cs.tera",
+        "Http/AuthGateMiddleware.cs",
+    ),
+    (
+        "Http/CorsHeaderMiddleware.cs.tera",
+        "Http/CorsHeaderMiddleware.cs",
+    ),
+    ("Http/HttpServer.cs.tera", "Http/HttpServer.cs"),
+    ("Cli/Roles.cs.tera", "Cli/Roles.cs"),
+];
+
+pub async fn generate_transports_and_roles(ctx: &GeneratorContext) -> Result<()> {
+    let view = CsTemplateContext::from_context(ctx);
+    let tera = render_engine()?;
+    let tera_ctx = tera::Context::from_serialize(&view)?;
+
+    for (template, out_name) in FILES {
+        render_and_write(&tera, template, &tera_ctx, &ctx.output_dir.join(out_name)).await?;
+    }
+
+    render_and_write(
+        &tera,
+        "Program.cs.tera",
+        &tera_ctx,
+        &ctx.output_dir.join("Program.cs"),
+    )
+    .await?;
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn ctx(output_dir: PathBuf) -> GeneratorContext {
+        GeneratorContext {
+            openapi_input: "spec.yaml".to_string(),
+            output_dir,
+            force: false,
+            output_dir_preexisted: false,
+            auth_schemes: Vec::new(),
+            normalized_operations: Vec::new(),
+            api_title: "Widget API".to_string(),
+        }
+    }
+
+    fn output_dir(parent: &tempfile::TempDir) -> PathBuf {
+        parent.path().join("output")
+    }
+
+    #[tokio::test]
+    #[ignore = "manual sanity check: requires the dotnet SDK; not part of CI until C9 wires .NET into the pipeline"]
+    async fn full_scaffold_through_c5_builds_with_dotnet() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        let generator_ctx = ctx(dir.clone());
+
+        crate::targets::csharp::steps::bootstrap::bootstrap_project(&generator_ctx)
+            .await
+            .unwrap();
+        crate::targets::csharp::steps::enterprise::generate_enterprise_scaffolding(&generator_ctx)
+            .await
+            .unwrap();
+        crate::targets::csharp::steps::auth::generate_auth_strategies(&generator_ctx)
+            .await
+            .unwrap();
+        generate_transports_and_roles(&generator_ctx).await.unwrap();
+
+        let status = std::process::Command::new("dotnet")
+            .arg("build")
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "dotnet build failed for the full C2-C5 scaffold"
+        );
+
+        let format_status = std::process::Command::new("dotnet")
+            .args(["format", "--verify-no-changes"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(
+            format_status.success(),
+            "dotnet format --verify-no-changes failed for the full C2-C5 scaffold"
+        );
+    }
+
+    #[tokio::test]
+    async fn writes_every_file() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        generate_transports_and_roles(&ctx(dir.clone()))
+            .await
+            .unwrap();
+
+        for (_, out_name) in FILES {
+            assert!(dir.join(out_name).is_file(), "missing {out_name}");
+        }
+        assert!(dir.join("Program.cs").is_file());
+    }
+
+    #[tokio::test]
+    async fn program_cs_dispatches_the_four_c5_subcommands() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        generate_transports_and_roles(&ctx(dir.clone()))
+            .await
+            .unwrap();
+
+        let contents = tokio::fs::read_to_string(dir.join("Program.cs"))
+            .await
+            .unwrap();
+        for command in ["\"start\"", "\"http\"", "\"version\"", "\"config\""] {
+            assert!(contents.contains(command), "missing {command} subcommand");
+        }
+    }
+
+    #[tokio::test]
+    async fn roles_wires_the_configuration_cascade_for_both_harness_roles() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        generate_transports_and_roles(&ctx(dir.clone()))
+            .await
+            .unwrap();
+
+        let contents = tokio::fs::read_to_string(dir.join("Cli").join("Roles.cs"))
+            .await
+            .unwrap();
+        assert!(contents.contains("AddMcpifyConfiguration(\"output\", args)"));
+        assert!(contents.contains("WithStdioServerTransport"));
+        assert!(contents.contains("HttpServer.Configure"));
+    }
 }

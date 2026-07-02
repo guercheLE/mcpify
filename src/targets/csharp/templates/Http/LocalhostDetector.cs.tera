@@ -1,0 +1,15 @@
+using System.Net;
+
+namespace {{ namespace }}.Http;
+
+/// <summary>
+/// Requests from localhost get relaxed auth requirements — the same
+/// localhost-vs-network binding distinction proven useful in the
+/// reference servers (looser auth only when bound to localhost, never
+/// over an exposed network interface).
+/// </summary>
+public static class LocalhostDetector
+{
+    public static bool IsLocalhost(string? address) =>
+        !string.IsNullOrEmpty(address) && IPAddress.TryParse(address, out var parsed) && IPAddress.IsLoopback(parsed);
+}
