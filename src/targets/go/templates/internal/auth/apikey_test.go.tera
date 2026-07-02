@@ -1,0 +1,34 @@
+package auth
+
+import (
+	"context"
+	"testing"
+)
+
+func TestApiKeyStrategy(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Credentials
+		wantErr bool
+	}{
+		{name: "valid api key", config: Credentials{"api_key": "sk-123"}},
+		{name: "missing api key", config: Credentials{}, wantErr: true},
+		{name: "empty api key", config: Credentials{"api_key": ""}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy := ApiKeyStrategy{}
+			credentials, err := strategy.Authenticate(context.Background(), tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Authenticate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if !strategy.ValidateCredentials(credentials) {
+				t.Errorf("expected the resulting credentials to validate")
+			}
+		})
+	}
+}

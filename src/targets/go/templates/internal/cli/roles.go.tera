@@ -218,15 +218,8 @@ func RunPopulateEmbeddings(ctx context.Context, overrides core.CLIOverrides) err
 	return nil
 }
 
-// RunSetup will be replaced by Story G7 with an interactive credential
-// setup wizard (AlecAivazis/survey) — stubbed here so this story's own
-// output stays buildable in isolation, the same way every other target's
-// intermediate stories leave a forward-referenced piece stubbed rather
-// than unbuildable.
-func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
-	fmt.Println("interactive setup is not yet implemented — set config via --url/env vars/a config file for now")
-	return nil
-}
+// RunSetup is implemented in setup.go (Story G7) — the interactive
+// credential setup wizard.
 
 // RunTestConnection verifies the configured API URL is reachable.
 func RunTestConnection(ctx context.Context, overrides core.CLIOverrides) error {

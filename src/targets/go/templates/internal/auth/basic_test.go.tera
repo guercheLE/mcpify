@@ -1,0 +1,38 @@
+package auth
+
+import (
+	"context"
+	"testing"
+)
+
+func TestBasicStrategy(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Credentials
+		wantErr bool
+	}{
+		{name: "valid credentials", config: Credentials{"username": "alice", "password": "s3cret"}},
+		{name: "missing password", config: Credentials{"username": "alice"}, wantErr: true},
+		{name: "missing username", config: Credentials{"password": "s3cret"}, wantErr: true},
+		{name: "empty credentials", config: Credentials{}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy := BasicStrategy{}
+			credentials, err := strategy.Authenticate(context.Background(), tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Authenticate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if credentials["authorization_header"] == "" {
+				t.Errorf("expected an authorization_header to be set")
+			}
+			if !strategy.ValidateCredentials(credentials) {
+				t.Errorf("expected the resulting credentials to validate")
+			}
+		})
+	}
+}

@@ -1,0 +1,33 @@
+package auth
+
+import (
+	"context"
+	"testing"
+)
+
+func TestPatStrategy(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Credentials
+		wantErr bool
+	}{
+		{name: "valid token", config: Credentials{"token": "ghp_abc123"}},
+		{name: "missing token", config: Credentials{}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy := PatStrategy{}
+			credentials, err := strategy.Authenticate(context.Background(), tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Authenticate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if credentials["authorization_header"] == "" {
+				t.Errorf("expected an authorization_header to be set")
+			}
+		})
+	}
+}

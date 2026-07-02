@@ -132,7 +132,6 @@ mod tests {
             "func RunGet",
             "func RunCall",
             "func RunPopulateEmbeddings",
-            "func RunSetup",
             "func RunTestConnection",
             "func PrintVersion",
             "func PrintConfig",

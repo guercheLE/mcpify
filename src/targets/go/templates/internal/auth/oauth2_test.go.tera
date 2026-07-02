@@ -1,0 +1,71 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestOAuth2StrategyAuthenticateAndRefresh(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.FormValue("grant_type") {
+		case "authorization_code":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "initial-token",
+				"refresh_token": "refresh-token",
+				"expires_in":    3600,
+			})
+		case "refresh_token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "refreshed-token",
+				"expires_in":   3600,
+			})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	strategy := OAuth2Strategy{}
+
+	credentials, err := strategy.Authenticate(context.Background(), Credentials{
+		"client_id":          "client-1",
+		"token_url":          server.URL,
+		"authorization_code": "auth-code",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if credentials["authorization_header"] != "Bearer initial-token" {
+		t.Errorf("unexpected authorization_header: %q", credentials["authorization_header"])
+	}
+	if !strategy.ValidateCredentials(credentials) {
+		t.Errorf("expected fresh credentials to validate")
+	}
+
+	refreshed, err := strategy.RefreshToken(context.Background(), credentials)
+	if err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	if refreshed["access_token"] != "refreshed-token" {
+		t.Errorf("expected the refreshed access token, got %q", refreshed["access_token"])
+	}
+}
+
+func TestOAuth2StrategyValidateCredentialsExpiry(t *testing.T) {
+	strategy := OAuth2Strategy{}
+
+	if strategy.ValidateCredentials(Credentials{}) {
+		t.Errorf("expected credentials with no access_token to be invalid")
+	}
+	if !strategy.ValidateCredentials(Credentials{"access_token": "tok"}) {
+		t.Errorf("expected credentials with no expiry to be treated as valid")
+	}
+	if strategy.ValidateCredentials(Credentials{"access_token": "tok", "expires_at": "1"}) {
+		t.Errorf("expected an already-expired token to be invalid")
+	}
+}

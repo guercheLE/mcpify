@@ -1,0 +1,46 @@
+package core
+
+import "testing"
+
+func TestCache(t *testing.T) {
+	tests := []struct {
+		name     string
+		capacity int
+		sets     []string
+		wantHit  string
+		wantMiss []string
+	}{
+		{
+			name:     "evicts the least-recently-used entry once over capacity",
+			capacity: 2,
+			sets:     []string{"a", "b", "c"},
+			wantHit:  "c",
+			wantMiss: []string{"a"},
+		},
+		{
+			name:     "unlimited capacity keeps everything",
+			capacity: 0,
+			sets:     []string{"a", "b", "c"},
+			wantHit:  "a",
+			wantMiss: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewCache(tt.capacity)
+			for i, key := range tt.sets {
+				cache.Set(key, i)
+			}
+
+			if _, ok := cache.Get(tt.wantHit); !ok {
+				t.Errorf("expected %q to still be cached", tt.wantHit)
+			}
+			for _, key := range tt.wantMiss {
+				if _, ok := cache.Get(key); ok {
+					t.Errorf("expected %q to have been evicted", key)
+				}
+			}
+		})
+	}
+}

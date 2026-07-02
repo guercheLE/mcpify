@@ -1,0 +1,109 @@
+package auth
+
+import (
+	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/dghubble/oauth1"
+)
+
+func TestOAuth1Strategy(t *testing.T) {
+	strategy := OAuth1Strategy{}
+
+	credentials, err := strategy.Authenticate(context.Background(), Credentials{
+		"consumer_key": "ck",
+		"private_key":  "pk",
+		"token":        "tok",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !strategy.ValidateCredentials(credentials) {
+		t.Errorf("expected the resulting credentials to validate")
+	}
+
+	if _, err := strategy.RefreshToken(context.Background(), credentials); err == nil {
+		t.Errorf("expected RefreshToken to be unsupported for OAuth1")
+	}
+
+	if _, err := strategy.Authenticate(context.Background(), Credentials{}); err == nil {
+		t.Errorf("expected an error when consumer_key/private_key are missing")
+	}
+}
+
+// TestOAuth1SignatureVerifiesAgainstRealRSAKeypair mirrors the same "real
+// keypair sign/verify roundtrip" bar the C# target's OAuth1SignerTests.cs
+// applies to its equivalent signer: generates a real RSA key, signs a
+// request, and independently verifies the resulting signature against
+// the public half of that key using Go's own crypto/rsa — proof the
+// signature this package produces is a real, verifiable RSA-SHA1
+// signature, not just "some base64 string".
+func TestOAuth1SignatureVerifiesAgainstRealRSAKeypair(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	pemBlock := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+
+	const method = "GET"
+	const rawURL = "https://api.example.com/widgets?foo=bar"
+
+	header, err := BuildOAuth1AuthorizationHeader("consumer-key", string(pemBlock), "tok", method, rawURL)
+	if err != nil {
+		t.Fatalf("BuildOAuth1AuthorizationHeader: %v", err)
+	}
+	if !strings.HasPrefix(header, "OAuth ") {
+		t.Fatalf("expected header to start with 'OAuth ', got %q", header)
+	}
+
+	nonce := extractOAuthParam(header, "oauth_nonce")
+	timestamp := extractOAuthParam(header, "oauth_timestamp")
+	signatureB64 := extractOAuthParam(header, "oauth_signature")
+
+	params := map[string]string{
+		"oauth_consumer_key":     "consumer-key",
+		"oauth_nonce":            nonce,
+		"oauth_signature_method": "RSA-SHA1",
+		"oauth_timestamp":        timestamp,
+		"oauth_version":          "1.0",
+		"oauth_token":            "tok",
+		"foo":                    "bar",
+	}
+	baseString := strings.Join([]string{
+		method,
+		oauth1.PercentEncode("https://api.example.com/widgets"),
+		oauth1.PercentEncode(normalizedParameterString(params)),
+	}, "&")
+
+	unescaped, err := url.QueryUnescape(signatureB64)
+	if err != nil {
+		t.Fatalf("unescape signature: %v", err)
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(unescaped)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	digest := sha1.Sum([]byte(baseString))
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA1, digest[:], sigBytes); err != nil {
+		t.Fatalf("signature failed to verify against the real RSA public key: %v", err)
+	}
+}
+
+func extractOAuthParam(header, name string) string {
+	marker := name + `="`
+	start := strings.Index(header, marker) + len(marker)
+	end := strings.Index(header[start:], `"`) + start
+	return header[start:end]
+}

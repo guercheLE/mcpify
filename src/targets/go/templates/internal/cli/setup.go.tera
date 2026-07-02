@@ -1,0 +1,232 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/AlecAivazis/survey/v2"
+
+	"{{ module_path }}/internal/core"
+)
+
+// RunSetup interactively collects the API URL and the credentials the
+// discovered auth scheme(s) need, then persists them per the operator's
+// choice: a .env file, a config.json file, or a ready-to-run CLI
+// invocation printed to stdout (nothing written to disk). Mirrors
+// `targets::csharp::templates::Cli::SetupWizard.cs.tera`.
+func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
+	url, err := promptBaseURL(ctx)
+	if err != nil {
+		return err
+	}
+
+	authMethod := promptAuthMethod()
+	credentials, err := promptCredentials(authMethod)
+	if err != nil {
+		return err
+	}
+
+	credentialStore, err := core.NewCredentialStore()
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(credentials)
+	if err != nil {
+		return err
+	}
+	if err := credentialStore.Save("active-credentials", string(encoded)); err != nil {
+		return err
+	}
+
+	env := map[string]string{
+		"{{ tool_prefix_env }}_URL":         url,
+		"{{ tool_prefix_env }}_AUTH_METHOD": string(authMethod),
+	}
+	for key, value := range credentials {
+		env["{{ tool_prefix_env }}_"+strings.ToUpper(key)] = value
+	}
+
+	if err := promptPersistence(env); err != nil {
+		return err
+	}
+	fmt.Println("Setup complete! Run: {{ project_name }} start")
+	return nil
+}
+
+func promptBaseURL(ctx context.Context) (string, error) {
+	var url string
+	if err := survey.AskOne(&survey.Input{Message: "{{ display_name }} base URL:"}, &url, survey.WithValidator(survey.Required)); err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err == nil {
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+			fmt.Println("reachable")
+		} else {
+			fmt.Println("could not reach that URL yet — continuing anyway (fix it later with `test-connection`)")
+		}
+	}
+
+	return url, nil
+}
+
+func promptAuthMethod() core.AuthMethod {
+{%- if auth_methods | length == 0 %}
+	// No scheme was discovered — nothing to choose between.
+	return core.AuthMethodNone
+{%- elif auth_methods | length == 1 %}
+	// Exactly one scheme was discovered — nothing to choose between.
+	return core.AuthMethod{{ auth_methods.0.type_name }}
+{%- else %}
+	// Built as individual assignments rather than one map literal — gofmt
+	// column-aligns every entry in a multi-line map literal by the longest
+	// key, which a Tera template can't predict ahead of rendering since
+	// the set of discovered schemes varies per generation (the same
+	// reason `internal/core/config.go.tera`'s per-method consts are
+	// ungrouped statements instead of one `const (...)` block).
+	choices := map[string]core.AuthMethod{}
+{%- for method in auth_methods %}
+	choices["{{ method.key }}"] = core.AuthMethod{{ method.type_name }}
+{%- endfor %}
+	options := make([]string, 0, len(choices))
+	for key := range choices {
+		options = append(options, key)
+	}
+	sort.Strings(options)
+
+	var selection string
+	_ = survey.AskOne(&survey.Select{Message: "Authentication method:", Options: options}, &selection)
+	return choices[selection]
+{%- endif %}
+}
+
+func promptCredentials(authMethod core.AuthMethod) (map[string]string, error) {
+	credentials := map[string]string{}
+{%- if "basic" in auth_method_keys %}
+	if authMethod == core.AuthMethodBasic {
+		var username, password string
+		if err := survey.AskOne(&survey.Input{Message: "Username:"}, &username); err != nil {
+			return nil, err
+		}
+		if err := survey.AskOne(&survey.Password{Message: "Password:"}, &password); err != nil {
+			return nil, err
+		}
+		credentials["username"] = username
+		credentials["password"] = password
+	}
+{%- endif %}
+{%- if "pat" in auth_method_keys %}
+	if authMethod == core.AuthMethodPat {
+		var token string
+		if err := survey.AskOne(&survey.Password{Message: "Personal access token:"}, &token); err != nil {
+			return nil, err
+		}
+		credentials["token"] = token
+	}
+{%- endif %}
+{%- if "apiKey" in auth_method_keys %}
+	if authMethod == core.AuthMethodApiKey {
+		var apiKey string
+		if err := survey.AskOne(&survey.Password{Message: "API key:"}, &apiKey); err != nil {
+			return nil, err
+		}
+		credentials["api_key"] = apiKey
+	}
+{%- endif %}
+{%- if "oauth2" in auth_method_keys %}
+	if authMethod == core.AuthMethodOAuth2 {
+		var clientID, clientSecret, tokenURL, authorizationCode string
+		if err := survey.AskOne(&survey.Input{Message: "OAuth2 client ID:"}, &clientID); err != nil {
+			return nil, err
+		}
+		_ = survey.AskOne(&survey.Password{Message: "OAuth2 client secret (leave blank if none):"}, &clientSecret)
+		if err := survey.AskOne(&survey.Input{Message: "OAuth2 token URL:"}, &tokenURL); err != nil {
+			return nil, err
+		}
+		_ = survey.AskOne(&survey.Input{Message: "Authorization code, if you already have one (leave blank to skip):"}, &authorizationCode)
+
+		credentials["client_id"] = clientID
+		if clientSecret != "" {
+			credentials["client_secret"] = clientSecret
+		}
+		credentials["token_url"] = tokenURL
+		if authorizationCode != "" {
+			credentials["authorization_code"] = authorizationCode
+		}
+	}
+{%- endif %}
+{%- if "oauth1" in auth_method_keys %}
+	if authMethod == core.AuthMethodOAuth1 {
+		var consumerKey, privateKeyPath string
+		if err := survey.AskOne(&survey.Input{Message: "OAuth1 consumer key:"}, &consumerKey); err != nil {
+			return nil, err
+		}
+		if err := survey.AskOne(&survey.Input{Message: "Path to RSA private key file:"}, &privateKeyPath); err != nil {
+			return nil, err
+		}
+		keyBytes, err := os.ReadFile(privateKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		credentials["consumer_key"] = consumerKey
+		credentials["private_key"] = string(keyBytes)
+	}
+{%- endif %}
+	return credentials, nil
+}
+
+func promptPersistence(env map[string]string) error {
+	options := []string{
+		"Write a .env file",
+		"Write a config.json file",
+		"Print a ready-to-run CLI invocation (nothing written to disk)",
+	}
+	var selection string
+	if err := survey.AskOne(&survey.Select{Message: "How should these settings be saved?", Options: options}, &selection); err != nil {
+		return err
+	}
+
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	switch selection {
+	case options[0]:
+		lines := make([]string, 0, len(keys))
+		for _, key := range keys {
+			lines = append(lines, fmt.Sprintf("%s=%s", key, env[key]))
+		}
+		if err := os.WriteFile(".env", []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			return err
+		}
+		fmt.Println("Wrote .env")
+	case options[1]:
+		encoded, err := json.MarshalIndent(env, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile("config.json", encoded, 0o600); err != nil {
+			return err
+		}
+		fmt.Println("Wrote config.json")
+	default:
+		flags := make([]string, 0, len(keys))
+		for _, key := range keys {
+			flag := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+			flags = append(flags, fmt.Sprintf("--%s %q", flag, env[key]))
+		}
+		fmt.Printf("{{ project_name }} start %s\n", strings.Join(flags, " "))
+	}
+	return nil
+}

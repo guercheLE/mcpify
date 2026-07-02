@@ -1,0 +1,51 @@
+//go:build integration
+
+package services
+
+import (
+	"context"
+	"testing"
+)
+
+// TestEmbeddingServiceProducesCorrectlyOrderedSimilarities is gated by the
+// "integration" build tag (go test -tags=integration) rather than a
+// separate config file the way vitest.config.ts/pytest.ini gate slow,
+// networked tests for other targets — the Go-native way to express "skip
+// by default". It downloads the real embedding model on first run and
+// exercises the real ONNX Runtime shared library, so it's excluded from
+// the default `go test ./...` run.
+func TestEmbeddingServiceProducesCorrectlyOrderedSimilarities(t *testing.T) {
+	ctx := context.Background()
+	svc, err := NewEmbeddingService(ctx, t.TempDir(), ResolveSharedLibraryPath())
+	if err != nil {
+		t.Fatalf("NewEmbeddingService: %v", err)
+	}
+	defer svc.Close()
+
+	query, err := svc.Embed(ctx, "list all widgets")
+	if err != nil {
+		t.Fatalf("Embed(query): %v", err)
+	}
+	relevant, err := svc.Embed(ctx, "GET /widgets — retrieve every widget in the catalog")
+	if err != nil {
+		t.Fatalf("Embed(relevant): %v", err)
+	}
+	unrelated, err := svc.Embed(ctx, "DELETE /users/{id} — permanently remove a user account")
+	if err != nil {
+		t.Fatalf("Embed(unrelated): %v", err)
+	}
+
+	relevantScore := dotProduct(query, relevant)
+	unrelatedScore := dotProduct(query, unrelated)
+	if relevantScore <= unrelatedScore {
+		t.Fatalf("expected relevant score (%.4f) > unrelated score (%.4f)", relevantScore, unrelatedScore)
+	}
+}
+
+func dotProduct(a, b []float32) float64 {
+	var sum float64
+	for i := range a {
+		sum += float64(a[i]) * float64(b[i])
+	}
+	return sum
+}
