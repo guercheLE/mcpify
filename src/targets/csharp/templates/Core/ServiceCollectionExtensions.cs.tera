@@ -25,6 +25,7 @@ public static partial class ServiceCollectionExtensions
         AddHealthChecks(services);
         AddMcpServer(services);
         AddDataStore(services);
+        AddEmbeddingService(services);
         AddApiClient(services);
         AddAuthStrategies(services);
         return services;
@@ -38,6 +39,7 @@ public static partial class ServiceCollectionExtensions
     static partial void AddHealthChecks(IServiceCollection services);
     static partial void AddMcpServer(IServiceCollection services);
     static partial void AddDataStore(IServiceCollection services);
+    static partial void AddEmbeddingService(IServiceCollection services);
     static partial void AddApiClient(IServiceCollection services);
     static partial void AddAuthStrategies(IServiceCollection services);
 }

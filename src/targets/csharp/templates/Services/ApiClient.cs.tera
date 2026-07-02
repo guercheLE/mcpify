@@ -1,0 +1,135 @@
+using System.Text;
+using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
+using Polly.Registry;
+using {{ namespace }}.Auth;
+using {{ namespace }}.Core;
+using {{ namespace }}.Data;
+
+namespace {{ namespace }}.Services;
+
+/// <summary>
+/// Generic operationId -> HTTP request dispatcher (rather than one method
+/// per operation), so generation stays robust against specs with
+/// hundreds of operations and this file's size never grows with the
+/// spec. Mirrors `targets::python::templates::services::api_client.py`.
+/// </summary>
+public sealed class ApiClient(
+    IHttpClientFactory httpClientFactory,
+    IOptions<McpifyOptions> options,
+    ResiliencePipelineProvider<string> resiliencePipelines,
+    AuthManager authManager)
+{
+    /// <summary>
+    /// Executes <paramref name="endpoint"/> against the configured target
+    /// API, retrying transient failures inside the circuit
+    /// breaker/retry/rate-limiter pipeline from `Core/CircuitBreaker.cs`
+    /// (REQ-2.3.3). <paramref name="args"/> may contain a `body` key
+    /// holding the JSON request body, alongside any path/query/header
+    /// parameter values.
+    /// </summary>
+    public async Task<JsonNode?> ExecuteAsync(
+        EndpointRecord endpoint,
+        Dictionary<string, JsonNode?> args,
+        CancellationToken cancellationToken = default)
+    {
+        var query = PickByLocation(endpoint, args, "query");
+        var path = ApplyPathParams(endpoint, args);
+        var url = BuildApiUrl(options.Value.Url, path, query);
+
+        var headers = new Dictionary<string, string>();
+        foreach (var (name, value) in PickByLocation(endpoint, args, "header"))
+        {
+            headers[name] = value;
+        }
+        headers = await authManager.ApplyAuthHeadersAsync(headers, endpoint.Method, url, cancellationToken);
+
+        var body = args.GetValueOrDefault("body");
+
+        var pipeline = resiliencePipelines.GetPipeline(ServiceCollectionExtensions.ResiliencePipelineKey);
+        return await pipeline.ExecuteAsync(
+            async token => await DispatchAsync(endpoint.Method, url, body, headers, token),
+            cancellationToken);
+    }
+
+    internal static string BuildApiUrl(string baseUrl, string path, IReadOnlyList<(string Name, string Value)> query)
+    {
+        var normalizedBase = baseUrl.EndsWith('/') ? baseUrl : $"{baseUrl}/";
+        var url = normalizedBase + path.TrimStart('/');
+        if (query.Count > 0)
+        {
+            var queryString = string.Join(
+                "&", query.Select(q => $"{Uri.EscapeDataString(q.Name)}={Uri.EscapeDataString(q.Value)}"));
+            url = $"{url}?{queryString}";
+        }
+        return url;
+    }
+
+    internal static string ApplyPathParams(EndpointRecord endpoint, Dictionary<string, JsonNode?> args)
+    {
+        var result = new StringBuilder();
+        var path = endpoint.Path;
+        var i = 0;
+        while (i < path.Length)
+        {
+            if (path[i] == '{')
+            {
+                var end = path.IndexOf('}', i);
+                var name = path[(i + 1)..end];
+                var value = args.TryGetValue(name, out var v) ? ValueToPlainString(v) : string.Empty;
+                result.Append(Uri.EscapeDataString(value));
+                i = end + 1;
+            }
+            else
+            {
+                result.Append(path[i]);
+                i++;
+            }
+        }
+        return result.ToString();
+    }
+
+    private static List<(string Name, string Value)> PickByLocation(
+        EndpointRecord endpoint, Dictionary<string, JsonNode?> args, string location) =>
+        NamesWithLocation(endpoint, location)
+            .Where(args.ContainsKey)
+            .Select(name => (name, ValueToPlainString(args[name])))
+            .ToList();
+
+    private static List<string> NamesWithLocation(EndpointRecord endpoint, string location) =>
+        (endpoint.InputSchema?["parameters"] as JsonArray)?
+            .OfType<JsonObject>()
+            .Where(p => p["in"]?.GetValue<string>() == location && p["name"] is not null)
+            .Select(p => p["name"]!.GetValue<string>())
+            .ToList() ?? [];
+
+    private static string ValueToPlainString(JsonNode? value) => value switch
+    {
+        null => string.Empty,
+        JsonValue scalar when scalar.TryGetValue<string>(out var s) => s,
+        _ => value.ToJsonString(),
+    };
+
+    private async Task<JsonNode?> DispatchAsync(
+        string method, string url, JsonNode? body, Dictionary<string, string> headers, CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromMilliseconds(options.Value.TimeoutMs);
+
+        using var request = new HttpRequestMessage(new HttpMethod(method), url);
+        foreach (var (name, value) in headers)
+        {
+            request.Headers.TryAddWithoutValidation(name, value);
+        }
+        if (body is not null)
+        {
+            request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+        }
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        return string.IsNullOrWhiteSpace(text) ? null : JsonNode.Parse(text);
+    }
+}

@@ -1,0 +1,67 @@
+using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using ModelContextProtocol.Server;
+using {{ namespace }}.Core;
+using {{ namespace }}.Data;
+using {{ namespace }}.Services;
+using {{ namespace }}.Validation;
+
+namespace {{ namespace }}.Tools;
+
+/// <summary>
+/// PRD §1.5's `search`/`get`/`call` — exactly 3 tools, regardless of how
+/// many operations the source spec declares, so an LLM never needs the
+/// full API surface in context. Non-<see cref="Description"/>-decorated
+/// parameters (<see cref="SqliteVecStore"/>, <see cref="EmbeddingService"/>,
+/// <see cref="ApiClient"/>) are DI-injected by the MCP SDK's own
+/// `WithToolsFromAssembly()` scan, per the SDK's documented pattern.
+/// </summary>
+[McpServerToolType]
+public static class McpTools
+{
+    [McpServerTool(Name = "search")]
+    [Description("Semantic search for operations matching a natural-language query.")]
+    public static async Task<string> Search(
+        SqliteVecStore store,
+        EmbeddingService embeddingService,
+        [Description("Natural-language description of the operation to find")] string query,
+        [Description("Maximum number of results to return")] int limit = 5)
+    {
+        var queryEmbedding = await embeddingService.EmbedAsync(query);
+        var results = store.SearchEndpoints(queryEmbedding, limit);
+        return JsonSerializer.Serialize(results);
+    }
+
+    [McpServerTool(Name = "get")]
+    [Description("Show the schema, path, method, and documentation for one operation.")]
+    public static string Get(
+        SqliteVecStore store,
+        [Description("The operationId to look up")] string operationId)
+    {
+        var endpoint = store.GetEndpoint(operationId)
+            ?? throw new McpifyNotFoundException($"unknown operationId '{operationId}'");
+        return JsonSerializer.Serialize(endpoint);
+    }
+
+    [McpServerTool(Name = "call")]
+    [Description("Validate arguments, invoke the live API, and validate the response.")]
+    public static async Task<string> Call(
+        SqliteVecStore store,
+        ApiClient apiClient,
+        [Description("The operationId to invoke")] string operationId,
+        [Description("JSON object of arguments for the operation")] string args)
+    {
+        var endpoint = store.GetEndpoint(operationId)
+            ?? throw new McpifyNotFoundException($"unknown operationId '{operationId}'");
+
+        var argsNode = JsonNode.Parse(args) as JsonObject ?? [];
+        Validator.ValidateInput(operationId, argsNode);
+
+        var argsDict = argsNode.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var response = await apiClient.ExecuteAsync(endpoint, argsDict);
+
+        Validator.ValidateOutput(operationId, response);
+        return response?.ToJsonString() ?? "null";
+    }
+}

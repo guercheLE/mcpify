@@ -1,0 +1,15 @@
+using System.Text.Json.Nodes;
+
+namespace {{ namespace }}.Data;
+
+public sealed record EndpointRecord(
+    string OperationId,
+    string Path,
+    string Method,
+    string? Summary,
+    string? Description,
+    JsonNode? InputSchema,
+    JsonNode? OutputSchema,
+    string? AuthSchemeRef);
+
+public sealed record SearchResult(string OperationId, string? Summary, double Similarity);

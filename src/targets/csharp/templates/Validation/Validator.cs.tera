@@ -1,0 +1,92 @@
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Json.Schema;
+using {{ namespace }}.Core;
+
+namespace {{ namespace }}.Validation;
+
+/// <summary>
+/// `JsonSchema.Net`-based input/output validation. Schemas themselves are
+/// NOT embedded in this file — they're loaded from the co-located
+/// `GeneratedSchemas.json` embedded resource (written directly by the
+/// Rust generator, not templated, keeping this file's size independent
+/// of how many operations the source spec declares) — mirrors
+/// `targets::rust::templates::validation::validator.rs`'s `include_str!`
+/// approach: baked into the compiled assembly rather than read from disk
+/// at runtime.
+/// </summary>
+public static class Validator
+{
+    private static readonly Lazy<Dictionary<string, (JsonSchema Input, JsonSchema Output)>> Schemas = new(LoadSchemas);
+
+    /// <summary>Throws <see cref="ValidationException"/> if <paramref name="data"/> doesn't satisfy <paramref name="operationId"/>'s input schema.</summary>
+    public static void ValidateInput(string operationId, JsonNode? data)
+    {
+        var errors = ValidateAgainst(operationId, data, useInputSchema: true);
+        if (errors.Count > 0)
+        {
+            throw new ValidationException($"invalid input for '{operationId}'", errors);
+        }
+    }
+
+    /// <summary>
+    /// Throws <see cref="ValidationException"/> if <paramref name="data"/>
+    /// doesn't satisfy <paramref name="operationId"/>'s output schema —
+    /// surfaces upstream API drift as a structured error rather than
+    /// silently returning a mismatched response (architecture.md's `call`
+    /// pipeline).
+    /// </summary>
+    public static void ValidateOutput(string operationId, JsonNode? data)
+    {
+        var errors = ValidateAgainst(operationId, data, useInputSchema: false);
+        if (errors.Count > 0)
+        {
+            throw new ValidationException($"unexpected response shape for '{operationId}'", errors);
+        }
+    }
+
+    private static List<string> ValidateAgainst(string operationId, JsonNode? data, bool useInputSchema)
+    {
+        if (!Schemas.Value.TryGetValue(operationId, out var pair))
+        {
+            return [];
+        }
+
+        var schema = useInputSchema ? pair.Input : pair.Output;
+        var instance = (data?.Deserialize<JsonElement>()) ?? default;
+        var results = schema.Evaluate(instance, new EvaluationOptions { OutputFormat = OutputFormat.List });
+        if (results.IsValid)
+        {
+            return [];
+        }
+
+        return (results.Details ?? [])
+            .Where(d => d.Errors is not null)
+            .SelectMany(d => d.Errors!.Values)
+            .ToList();
+    }
+
+    private static Dictionary<string, (JsonSchema Input, JsonSchema Output)> LoadSchemas()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var resourceName = assembly.GetManifestResourceNames()
+            .FirstOrDefault(name => name.EndsWith("GeneratedSchemas.json", StringComparison.Ordinal));
+        if (resourceName is null)
+        {
+            return [];
+        }
+
+        using var stream = assembly.GetManifestResourceStream(resourceName)!;
+        using var document = JsonDocument.Parse(stream);
+
+        var result = new Dictionary<string, (JsonSchema, JsonSchema)>();
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            var inputSchema = JsonSchema.Build(property.Value.GetProperty("inputSchema"));
+            var outputSchema = JsonSchema.Build(property.Value.GetProperty("outputSchema"));
+            result[property.Name] = (inputSchema, outputSchema);
+        }
+        return result;
+    }
+}

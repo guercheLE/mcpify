@@ -1,0 +1,13 @@
+using Microsoft.Extensions.DependencyInjection;
+using {{ namespace }}.Services;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    static partial void AddApiClient(IServiceCollection services)
+    {
+        services.AddSingleton<ApiClient>();
+        services.AddSingleton<PopulateEmbeddingsService>();
+    }
+}

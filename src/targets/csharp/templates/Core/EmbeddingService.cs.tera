@@ -1,0 +1,12 @@
+using Microsoft.Extensions.DependencyInjection;
+using {{ namespace }}.Services;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    static partial void AddEmbeddingService(IServiceCollection services)
+    {
+        services.AddSingleton<EmbeddingService>();
+    }
+}

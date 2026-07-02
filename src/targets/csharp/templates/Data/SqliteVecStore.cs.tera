@@ -1,0 +1,128 @@
+using System.Text.Json.Nodes;
+using Microsoft.Data.Sqlite;
+
+namespace {{ namespace }}.Data;
+
+/// <summary>
+/// Single data-access layer against mcp_store.db — both the relational
+/// `endpoints` table and the `semantic_endpoints` vec0 virtual table
+/// (REQ-2.4.1's single-store consolidation). This class never creates
+/// tables — mcpify's shared pipeline (architecture.md §1, steps 5/6)
+/// already wrote mcp_store.db's schema before any generated code runs.
+/// Mirrors `targets::python::templates::data::store.py`'s query shapes.
+///
+/// sqlite-vec ships no NuGet wrapper (unlike Rust's `sqlite-vec` crate or
+/// Python's `sqlite-vec` PyPI package, both of which bundle the native
+/// extension) — the loadable `vec0` native library is expected alongside
+/// the built assembly (`{{ tool_prefix_env }}_SQLITE_VEC_PATH` overrides
+/// the path), fetched by the Dockerfile's build stage for container
+/// deployments.
+/// </summary>
+public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
+{
+    private const string Columns =
+        "operation_id, path, method, summary, description, input_schema, output_schema, auth_scheme_ref";
+
+    private readonly string _vecExtensionPath =
+        Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_SQLITE_VEC_PATH")
+            ?? Path.Combine(AppContext.BaseDirectory, "vec0");
+
+    /// <summary>Every caller except <see cref="OpenReadWrite"/>'s one consumer (`Services/PopulateEmbeddingsService.cs`) uses this.</summary>
+    public SqliteConnection OpenReadOnly() => Open(SqliteOpenMode.ReadOnly);
+
+    /// <summary>Read-write counterpart — the only code path that writes to `semantic_endpoints`.</summary>
+    public SqliteConnection OpenReadWrite() => Open(SqliteOpenMode.ReadWriteCreate);
+
+    public EndpointRecord? GetEndpoint(string operationId)
+    {
+        using var connection = OpenReadOnly();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT {Columns} FROM endpoints WHERE operation_id = $operationId";
+        command.Parameters.AddWithValue("$operationId", operationId);
+
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadEndpoint(reader) : null;
+    }
+
+    public IReadOnlyList<EndpointRecord> ListEndpoints()
+    {
+        using var connection = OpenReadOnly();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT {Columns} FROM endpoints";
+
+        using var reader = command.ExecuteReader();
+        var results = new List<EndpointRecord>();
+        while (reader.Read())
+        {
+            results.Add(ReadEndpoint(reader));
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// k-nearest-neighbor search over `semantic_endpoints` (sqlite-vec's
+    /// documented `MATCH ... AND k = ...` query form). <paramref name="queryEmbedding"/>
+    /// must come from the same model as the vectors it's compared
+    /// against — see <c>Services/EmbeddingService.cs</c>.
+    ///
+    /// <c>Similarity</c> is a simple `1 - distance` transform of
+    /// sqlite-vec's L2 distance, not a true cosine-similarity
+    /// computation; since embeddings are normalized (unit vectors),
+    /// L2-distance ordering already matches cosine-similarity ordering,
+    /// so result *ranking* is correct even though the displayed score is
+    /// an approximation.
+    /// </summary>
+    public IReadOnlyList<SearchResult> SearchEndpoints(float[] queryEmbedding, int limit)
+    {
+        using var connection = OpenReadOnly();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT e.operation_id, e.summary, s.distance " +
+            "FROM semantic_endpoints s " +
+            "JOIN endpoints e ON e.operation_id = s.operation_id " +
+            "WHERE s.embedding MATCH $query AND k = $limit " +
+            "ORDER BY s.distance";
+        command.Parameters.AddWithValue("$query", SerializeFloat32(queryEmbedding));
+        command.Parameters.AddWithValue("$limit", limit);
+
+        using var reader = command.ExecuteReader();
+        var results = new List<SearchResult>();
+        while (reader.Read())
+        {
+            var distance = reader.GetDouble(2);
+            results.Add(new SearchResult(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1),
+                1.0 - distance));
+        }
+        return results;
+    }
+
+    /// <summary>Serializes a float vector into sqlite-vec's expected little-endian `float[]` BLOB wire format.</summary>
+    public static byte[] SerializeFloat32(float[] vector)
+    {
+        var bytes = new byte[vector.Length * sizeof(float)];
+        Buffer.BlockCopy(vector, 0, bytes, 0, bytes.Length);
+        return bytes;
+    }
+
+    private SqliteConnection Open(SqliteOpenMode mode)
+    {
+        var connectionString = new SqliteConnectionStringBuilder { DataSource = dbPath, Mode = mode }.ToString();
+        var connection = new SqliteConnection(connectionString);
+        connection.Open();
+        connection.EnableExtensions(true);
+        connection.LoadExtension(_vecExtensionPath);
+        return connection;
+    }
+
+    private static EndpointRecord ReadEndpoint(SqliteDataReader reader) => new(
+        reader.GetString(0),
+        reader.GetString(1),
+        reader.GetString(2),
+        reader.IsDBNull(3) ? null : reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4),
+        JsonNode.Parse(reader.GetString(5)),
+        JsonNode.Parse(reader.GetString(6)),
+        reader.IsDBNull(7) ? null : reader.GetString(7));
+}

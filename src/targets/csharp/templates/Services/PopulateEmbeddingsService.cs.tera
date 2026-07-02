@@ -1,0 +1,56 @@
+using {{ namespace }}.Data;
+
+namespace {{ namespace }}.Services;
+
+/// <summary>
+/// Backfills `mcp_store.db`'s `semantic_endpoints` table — mcpify's
+/// shared generation pipeline writes the table's schema but leaves it
+/// empty (vectors are computed here, in the target language, not by
+/// mcpify's own Rust generator — see the plan's embeddings decision).
+/// Invoked by `Dockerfile` before the image is considered usable, and by
+/// `run_generated_tests` (Story C8) before the test suite runs — the same
+/// way v1 sequences `populate-embeddings` before `npm test`.
+/// </summary>
+public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingService embeddingService)
+{
+    public async Task<int> PopulateAsync(CancellationToken cancellationToken = default)
+    {
+        var rows = new List<(string OperationId, string Text)>();
+        using (var connection = store.OpenReadWrite())
+        {
+            using var selectCommand = connection.CreateCommand();
+            selectCommand.CommandText = "SELECT operation_id, method, path, summary, description FROM endpoints";
+            using var reader = selectCommand.ExecuteReader();
+            while (reader.Read())
+            {
+                var parts = new[]
+                {
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                }.Where(p => !string.IsNullOrEmpty(p));
+                rows.Add((reader.GetString(0), string.Join(' ', parts)));
+            }
+        }
+
+        var count = 0;
+        using (var connection = store.OpenReadWrite())
+        {
+            foreach (var (operationId, text) in rows)
+            {
+                var vector = await embeddingService.EmbedAsync(text, cancellationToken);
+
+                using var insertCommand = connection.CreateCommand();
+                insertCommand.CommandText =
+                    "INSERT OR REPLACE INTO semantic_endpoints (operation_id, embedding) VALUES ($operationId, $embedding)";
+                insertCommand.Parameters.AddWithValue("$operationId", operationId);
+                insertCommand.Parameters.AddWithValue("$embedding", SqliteVecStore.SerializeFloat32(vector));
+                insertCommand.ExecuteNonQuery();
+                count++;
+            }
+        }
+
+        return count;
+    }
+}

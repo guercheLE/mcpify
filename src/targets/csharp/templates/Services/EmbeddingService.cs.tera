@@ -1,0 +1,138 @@
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
+using Microsoft.ML.Tokenizers;
+
+namespace {{ namespace }}.Services;
+
+/// <summary>
+/// Single source of truth for embedding computation — `Tools/McpTools.cs`
+/// (live query time) and `Services/PopulateEmbeddingsService.cs`
+/// (indexing time) both call <see cref="EmbedAsync"/>, so the two are
+/// structurally guaranteed to share the same model and vector space (see
+/// v4-implementation-plan.md's embeddings open decision #2).
+///
+/// `all-mpnet-base-v2` at its native 768 dimensions, matching
+/// `mcp_store.db`'s `semantic_endpoints` schema exactly (mcpify's shared
+/// pipeline hard-codes `FLOAT[768]`) — the same model every other
+/// target's embedding service uses, so `-l csharp` output is
+/// search-behavior equivalent for the same spec. Uses the
+/// `Xenova/all-mpnet-base-v2` ONNX export `targets::typescript`'s
+/// `@xenova/transformers`-based service already depends on, downloaded
+/// and cached locally on first use (mirroring that target's own caching
+/// UX) rather than bundled — `Microsoft.ML.OnnxRuntime` +
+/// `Microsoft.ML.Tokenizers` is the direct C# analog of v2 Rust's
+/// `ort`/`fastembed-rs` path, but unlike `fastembed-rs`, neither package
+/// bundles a model-download helper, so this class implements one.
+/// </summary>
+public sealed class EmbeddingService : IDisposable
+{
+    private const string ModelUrl = "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/onnx/model.onnx";
+    private const string VocabUrl = "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/vocab.txt";
+    private const int EmbeddingDimensions = 768;
+
+    private readonly string _cacheDir;
+    private readonly Lazy<Task<(InferenceSession Session, BertTokenizer Tokenizer)>> _model;
+
+    public EmbeddingService(string? cacheDir = null)
+    {
+        _cacheDir = cacheDir ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".{{ project_name }}",
+            "models");
+        _model = new Lazy<Task<(InferenceSession Session, BertTokenizer Tokenizer)>>(LoadModelAsync);
+    }
+
+    /// <summary>Computes a 768-dim embedding vector for <paramref name="text"/>, mean-pooled over token embeddings and L2-normalized.</summary>
+    public async Task<float[]> EmbedAsync(string text, CancellationToken cancellationToken = default)
+    {
+        var (session, tokenizer) = await _model.Value.WaitAsync(cancellationToken);
+
+        var ids = tokenizer.EncodeToIds(text, considerPreTokenization: true, considerNormalization: true);
+        var inputIds = new DenseTensor<long>([1, ids.Count]);
+        var attentionMask = new DenseTensor<long>([1, ids.Count]);
+        var tokenTypeIds = new DenseTensor<long>([1, ids.Count]);
+        for (var i = 0; i < ids.Count; i++)
+        {
+            inputIds[0, i] = ids[i];
+            attentionMask[0, i] = 1;
+            tokenTypeIds[0, i] = 0;
+        }
+
+        var inputs = new List<NamedOnnxValue>
+        {
+            NamedOnnxValue.CreateFromTensor("input_ids", inputIds),
+            NamedOnnxValue.CreateFromTensor("attention_mask", attentionMask),
+            NamedOnnxValue.CreateFromTensor("token_type_ids", tokenTypeIds),
+        };
+
+        using var results = session.Run(inputs);
+        var lastHiddenState = results.First(v => v.Name == "last_hidden_state").AsTensor<float>();
+
+        return MeanPoolAndNormalize(lastHiddenState, ids.Count);
+    }
+
+    public void Dispose()
+    {
+        if (_model.IsValueCreated)
+        {
+            _model.Value.Result.Session.Dispose();
+        }
+    }
+
+    private static float[] MeanPoolAndNormalize(Tensor<float> lastHiddenState, int tokenCount)
+    {
+        var pooled = new float[EmbeddingDimensions];
+        for (var token = 0; token < tokenCount; token++)
+        {
+            for (var dim = 0; dim < EmbeddingDimensions; dim++)
+            {
+                pooled[dim] += lastHiddenState[0, token, dim];
+            }
+        }
+        for (var dim = 0; dim < EmbeddingDimensions; dim++)
+        {
+            pooled[dim] /= tokenCount;
+        }
+
+        var norm = MathF.Sqrt(pooled.Sum(v => v * v));
+        if (norm > 0)
+        {
+            for (var dim = 0; dim < EmbeddingDimensions; dim++)
+            {
+                pooled[dim] /= norm;
+            }
+        }
+        return pooled;
+    }
+
+    private async Task<(InferenceSession Session, BertTokenizer Tokenizer)> LoadModelAsync()
+    {
+        Directory.CreateDirectory(_cacheDir);
+        var modelPath = Path.Combine(_cacheDir, "model.onnx");
+        var vocabPath = Path.Combine(_cacheDir, "vocab.txt");
+
+        using var client = new HttpClient();
+        await DownloadIfMissingAsync(client, ModelUrl, modelPath);
+        await DownloadIfMissingAsync(client, VocabUrl, vocabPath);
+
+        var session = new InferenceSession(modelPath);
+        var tokenizer = BertTokenizer.Create(vocabPath);
+        return (session, tokenizer);
+    }
+
+    private static async Task DownloadIfMissingAsync(HttpClient client, string url, string path)
+    {
+        if (File.Exists(path))
+        {
+            return;
+        }
+
+        var tempPath = $"{path}.download";
+        await using (var stream = await client.GetStreamAsync(url))
+        await using (var file = File.Create(tempPath))
+        {
+            await stream.CopyToAsync(file);
+        }
+        File.Move(tempPath, path, overwrite: true);
+    }
+}

@@ -41,7 +41,43 @@ configCommand.SetAction(async (_, cancellationToken) =>
 });
 rootCommand.Subcommands.Add(configCommand);
 
-// Stories C6 (`search`/`get`/`call`/`test-connection`) and C7 (`setup`)
-// add their subcommands here, alongside the ones above.
+var queryArgument = new Argument<string>("query");
+var limitOption = new Option<int>("--limit") { DefaultValueFactory = _ => 5 };
+limitOption.Aliases.Add("-l");
+var searchCommand = new Command("search", "Semantic search for operations matching a natural-language query.")
+{
+    queryArgument,
+    limitOption,
+};
+searchCommand.SetAction((parseResult, _) => Roles.RunSearchAsync(
+    args, parseResult.GetValue(queryArgument)!, parseResult.GetValue(limitOption)));
+rootCommand.Subcommands.Add(searchCommand);
+
+var getOperationIdArgument = new Argument<string>("operationId");
+var getCommand = new Command("get", "Show the schema, path, method, and documentation for one operation.")
+{
+    getOperationIdArgument,
+};
+getCommand.SetAction(parseResult => Roles.RunGet(args, parseResult.GetValue(getOperationIdArgument)!));
+rootCommand.Subcommands.Add(getCommand);
+
+var callOperationIdArgument = new Argument<string>("operationId");
+var callArgsOption = new Option<string>("--args") { DefaultValueFactory = _ => "{}" };
+callArgsOption.Aliases.Add("-a");
+var callCommand = new Command("call", "Validate arguments, invoke the live API, and validate the response.")
+{
+    callOperationIdArgument,
+    callArgsOption,
+};
+callCommand.SetAction((parseResult, _) => Roles.RunCallAsync(
+    args, parseResult.GetValue(callOperationIdArgument)!, parseResult.GetValue(callArgsOption)!));
+rootCommand.Subcommands.Add(callCommand);
+
+var populateEmbeddingsCommand = new Command(
+    "populate-embeddings", "Backfill mcp_store.db's semantic_endpoints table.");
+populateEmbeddingsCommand.SetAction((_, cancellationToken) => Roles.RunPopulateEmbeddingsAsync(args, cancellationToken));
+rootCommand.Subcommands.Add(populateEmbeddingsCommand);
+
+// Story C7 adds the `test-connection`/`setup` subcommands here.
 
 return await rootCommand.Parse(args).InvokeAsync();

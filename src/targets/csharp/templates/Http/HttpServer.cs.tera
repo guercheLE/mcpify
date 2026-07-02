@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.AspNetCore;
 
 namespace {{ namespace }}.Http;
 
@@ -44,8 +45,8 @@ public static class HttpServer
             return Results.Text(metrics.Render(), "text/plain");
         });
 
-        // Story C6 adds `app.MapMcp("/mcp");` here once the search/get/call
-        // tools it serves exist to register onto the MCP server builder.
+        app.MapMcp("/mcp");
+
         return app;
     }
 }

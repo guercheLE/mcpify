@@ -3,18 +3,20 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using {{ namespace }}.Core;
+using {{ namespace }}.Data;
 using {{ namespace }}.Http;
+using {{ namespace }}.Services;
+using {{ namespace }}.Tools;
 
 namespace {{ namespace }}.Cli;
 
 /// <summary>
-/// Terminal Client (`search`/`get`/`call`/`test-connection`/`setup` run
-/// as direct CLI subcommands — Stories C6/C7 add their subcommands to
-/// `Program.cs`'s <see cref="System.CommandLine.RootCommand"/> alongside
-/// <see cref="PrintVersion"/>/<see cref="PrintConfigAsync"/> below, which
-/// this story already implements since they need no tool/setup-wizard
-/// dependency) and Harness Server (`start`/`http` boot the persistent MCP
-/// server loop, this story) roles. mcpify always emits both stdio and
+/// Terminal Client (`search`/`get`/`call`/`populate-embeddings` — this
+/// story; `test-connection`/`setup` — Story C7 — run as direct CLI
+/// subcommands, calling the same tool implementations
+/// `Tools/McpTools.cs`'s MCP-protocol path uses, just in-process instead
+/// of over stdio/HTTP) and Harness Server (`start`/`http` boot the
+/// persistent MCP server loop) roles. mcpify always emits both stdio and
 /// HTTP capability; transport *selection* is runtime config (REQ-2.2's
 /// cascade), not a generation-time decision — mirrors `targets::python`'s
 /// `_run_harness_server()`.
@@ -88,5 +90,53 @@ public static class Roles
         Console.WriteLine($"Host: {options.Host}");
         Console.WriteLine($"Port: {options.Port}");
         return Task.CompletedTask;
+    }
+
+    public static async Task<int> RunSearchAsync(string[] args, string query, int limit)
+    {
+        using var host = BuildServicesHost(args);
+        var result = await McpTools.Search(
+            host.Services.GetRequiredService<SqliteVecStore>(),
+            host.Services.GetRequiredService<EmbeddingService>(),
+            query,
+            limit);
+        Console.WriteLine(result);
+        return 0;
+    }
+
+    public static int RunGet(string[] args, string operationId)
+    {
+        using var host = BuildServicesHost(args);
+        var result = McpTools.Get(host.Services.GetRequiredService<SqliteVecStore>(), operationId);
+        Console.WriteLine(result);
+        return 0;
+    }
+
+    public static async Task<int> RunCallAsync(string[] args, string operationId, string callArgs)
+    {
+        using var host = BuildServicesHost(args);
+        var result = await McpTools.Call(
+            host.Services.GetRequiredService<SqliteVecStore>(),
+            host.Services.GetRequiredService<ApiClient>(),
+            operationId,
+            callArgs);
+        Console.WriteLine(result);
+        return 0;
+    }
+
+    public static async Task<int> RunPopulateEmbeddingsAsync(string[] args, CancellationToken cancellationToken)
+    {
+        using var host = BuildServicesHost(args);
+        var count = await host.Services.GetRequiredService<PopulateEmbeddingsService>().PopulateAsync(cancellationToken);
+        Console.WriteLine($"populated {count} embedding(s)");
+        return 0;
+    }
+
+    private static IHost BuildServicesHost(string[] args)
+    {
+        var builder = Host.CreateApplicationBuilder(args);
+        builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        builder.Services.AddMcpifyServices();
+        return builder.Build();
     }
 }
