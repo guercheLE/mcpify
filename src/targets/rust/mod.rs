@@ -16,8 +16,9 @@ use crate::targets::McpServerTargetGenerator;
 /// Stubbed out per Story R1; each stub is replaced with a real
 /// `steps::*` call as its story (R2-R7) lands — R2 (`bootstrap_project`),
 /// R3 (`generate_enterprise_scaffolding`), R4 (`generate_auth_strategies`),
-/// R5 (`generate_transports_and_roles`), and R6 (`generate_mcp_tools`) are
-/// done, R7 remains stubbed. Deliberately **not**
+/// R5 (`generate_transports_and_roles`), R6 (`generate_mcp_tools`), and R7
+/// (`generate_setup_wizard_and_tests`) are done — every step but
+/// `run_generated_tests` (Story R8). Deliberately **not**
 /// registered in `targets::build_registry()` yet — Story R8 registers it
 /// only once `run_generated_tests` is real and green, the same
 /// "don't register a target whose tests can't actually prove anything"
@@ -51,8 +52,8 @@ impl McpServerTargetGenerator for RustTargetGenerator {
         steps::tools::generate_mcp_tools(ctx).await
     }
 
-    async fn generate_setup_wizard_and_tests(&self, _ctx: &GeneratorContext) -> Result<()> {
-        anyhow::bail!("rust target: generate_setup_wizard_and_tests not yet implemented (Story R7)")
+    async fn generate_setup_wizard_and_tests(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::setup_and_tests::generate_setup_wizard_and_tests(ctx).await
     }
 
     async fn run_generated_tests(&self, _ctx: &GeneratorContext) -> Result<()> {
