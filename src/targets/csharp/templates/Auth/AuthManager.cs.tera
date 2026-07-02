@@ -1,0 +1,123 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using {{ namespace }}.Auth.Strategies;
+using {{ namespace }}.Core;
+
+namespace {{ namespace }}.Auth;
+
+/// <summary>
+/// Selects exactly one active auth strategy per deployment, chosen via
+/// the <see cref="AuthMethod"/> config value (REQ-1.2.3) — there is no
+/// runtime engine for resolving multiple simultaneously-required schemes.
+/// The active strategy is resolved through .NET 8+ keyed DI
+/// (<see cref="IKeyedServiceProvider"/>), keyed by the
+/// <see cref="AuthMethod"/> enum value itself — investigated per
+/// v4-implementation-plan.md's C4 goal text and confirmed to map onto
+/// "select one active strategy by a config-driven key" more directly than
+/// a hand-rolled dictionary/switch would.
+/// </summary>
+public sealed class AuthManager(
+    IOptions<McpifyOptions> options,
+    IKeyedServiceProvider keyedServiceProvider,
+    ICredentialStore credentialStore)
+{
+    private const string CredentialKey = "active-credentials";
+    private Dictionary<string, string>? _cachedCredentials;
+
+    private IAuthStrategy Strategy =>
+        keyedServiceProvider.GetRequiredKeyedService<IAuthStrategy>(options.Value.AuthMethod);
+
+    public async Task<Dictionary<string, string>> LoginAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default)
+    {
+        var credentials = await Strategy.AuthenticateAsync(config, cancellationToken);
+        _cachedCredentials = credentials;
+        await credentialStore.SaveAsync(CredentialKey, JsonSerializer.Serialize(credentials), cancellationToken);
+        return credentials;
+    }
+
+    /// <summary>
+    /// Seeds in-memory credentials directly, bypassing OS-keychain/file
+    /// storage entirely — for tests (which must never touch the real
+    /// credential store as a side effect of running) and for callers that
+    /// already hold validated credentials from elsewhere.
+    /// </summary>
+    public void SetCredentials(Dictionary<string, string> credentials) => _cachedCredentials = credentials;
+
+    public async Task<Dictionary<string, string>> GetCredentialsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_cachedCredentials is not null && Strategy.ValidateCredentials(_cachedCredentials))
+        {
+            return _cachedCredentials;
+        }
+
+        var stored = await credentialStore.GetAsync(CredentialKey, cancellationToken);
+        if (stored is not null)
+        {
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(stored) ?? [];
+            if (Strategy.ValidateCredentials(parsed))
+            {
+                _cachedCredentials = parsed;
+                return parsed;
+            }
+
+            try
+            {
+                var refreshed = await Strategy.RefreshTokenAsync(parsed, cancellationToken);
+                _cachedCredentials = refreshed;
+                await credentialStore.SaveAsync(CredentialKey, JsonSerializer.Serialize(refreshed), cancellationToken);
+                return refreshed;
+            }
+            catch
+            {
+                // Fall through to NoActiveCredentialsException below —
+                // matches `targets::python`'s auth_manager.py: a failed
+                // refresh means "no valid credentials", not a fatal error.
+            }
+        }
+
+        throw new NoActiveCredentialsException(options.Value.AuthMethod.ToString());
+    }
+
+    /// <summary>
+    /// Decorates outgoing request headers with the active strategy's
+    /// credentials. API-key placement (header vs. query, and the
+    /// header/param name) defaults to an <c>X-Api-Key</c> header here; a
+    /// scheme declaring a different location is one of Story C6's
+    /// api-client responsibilities to refine, not this manager's.
+    /// </summary>
+    public async Task<Dictionary<string, string>> ApplyAuthHeadersAsync(
+        Dictionary<string, string> headers, string method, string url, CancellationToken cancellationToken = default)
+    {
+        var credentials = await GetCredentialsAsync(cancellationToken);
+
+{%- if "oauth1" in auth_method_keys %}
+        if (options.Value.AuthMethod == AuthMethod.OAuth1)
+        {
+            if (!credentials.TryGetValue("consumer_key", out var consumerKey) ||
+                !credentials.TryGetValue("private_key", out var privateKey))
+            {
+                throw new MissingCredentialsException("consumer_key, private_key");
+            }
+            credentials.TryGetValue("token", out var token);
+
+            return new Dictionary<string, string>(headers)
+            {
+                ["Authorization"] = OAuth1Signer.BuildAuthorizationHeader(consumerKey, privateKey, token, method, url),
+            };
+        }
+{%- endif %}
+
+        var updated = new Dictionary<string, string>(headers);
+        if (credentials.TryGetValue("authorization_header", out var authHeader))
+        {
+            updated["Authorization"] = authHeader;
+        }
+        else if (credentials.TryGetValue("api_key", out var apiKey))
+        {
+            updated["X-Api-Key"] = apiKey;
+        }
+        return updated;
+    }
+}

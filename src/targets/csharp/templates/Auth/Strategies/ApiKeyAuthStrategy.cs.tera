@@ -1,0 +1,18 @@
+namespace {{ namespace }}.Auth.Strategies;
+
+public sealed class ApiKeyAuthStrategy : IAuthStrategy
+{
+    public Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default)
+    {
+        if (!config.TryGetValue("api_key", out var apiKey) || string.IsNullOrEmpty(apiKey))
+        {
+            throw new MissingCredentialsException("api_key");
+        }
+
+        return Task.FromResult(new Dictionary<string, string> { ["api_key"] = apiKey });
+    }
+
+    public bool ValidateCredentials(Dictionary<string, string> credentials) =>
+        credentials.TryGetValue("api_key", out var apiKey) && !string.IsNullOrEmpty(apiKey);
+}

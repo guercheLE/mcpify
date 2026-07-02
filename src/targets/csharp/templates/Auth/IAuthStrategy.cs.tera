@@ -1,0 +1,27 @@
+namespace {{ namespace }}.Auth;
+
+/// <summary>
+/// One implementation per auth scheme discovered in the OpenAPI spec
+/// (REQ-1.2.2). Credential/config shapes vary by scheme (e.g.
+/// <c>authorization_header</c> for Basic/PAT/OAuth2, <c>consumer_key</c>/
+/// <c>private_key</c> for OAuth1, <c>api_key</c> for API-key auth) — kept
+/// as a flexible <see cref="Dictionary{TKey, TValue}"/> rather than a
+/// per-scheme type, since exactly one strategy is active per deployment
+/// (REQ-1.2.3) and callers already know which shape to expect from the
+/// strategy they're using.
+/// </summary>
+public interface IAuthStrategy
+{
+    Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Not every scheme has a refresh flow (only OAuth2 does in practice)
+    /// — overridden by the strategies that do.
+    /// </summary>
+    Task<Dictionary<string, string>> RefreshTokenAsync(
+        Dictionary<string, string> credentials, CancellationToken cancellationToken = default) =>
+        throw new AuthException("this auth strategy does not support token refresh");
+
+    bool ValidateCredentials(Dictionary<string, string> credentials);
+}

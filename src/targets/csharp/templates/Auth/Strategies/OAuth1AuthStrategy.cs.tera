@@ -1,0 +1,149 @@
+using System.Security.Cryptography;
+using System.Text;
+
+namespace {{ namespace }}.Auth.Strategies;
+
+/// <summary>
+/// Composes the OAuth1 RSA-SHA1 signature base string by hand (RFC 5849
+/// §3.4.1) and signs it with .NET's built-in <see cref="RSA"/> —
+/// unlike `targets::python`'s target (which needs authlib's low-level
+/// signing helper), .NET needs no third-party crypto library for this at
+/// all, since <c>RSA.SignData</c> covers RSA-SHA1 natively. Mirrors
+/// `targets::rust`'s/`targets::typescript`'s approach of composing the
+/// signature base string directly rather than depending on a heavyweight
+/// OAuth client library.
+/// </summary>
+public static class OAuth1Signer
+{
+    // RFC 3986 unreserved characters (`-`, `.`, `_`, `~`) are the only
+    // ones OAuth1 percent-encoding (RFC 5849 §3.6) leaves unescaped
+    // beyond alphanumerics.
+    private const string UnreservedExtra = "-._~";
+
+    /// <summary>
+    /// Computes the per-request <c>Authorization</c> header for OAuth1
+    /// RSA-SHA1. Unlike the other strategies, OAuth1 signs the method +
+    /// URL + params on every call, so this can't be precomputed once in
+    /// <c>AuthenticateAsync</c> — callers (the generated API client,
+    /// Story C6) call this immediately before dispatch.
+    /// </summary>
+    public static string BuildAuthorizationHeader(
+        string consumerKey, string privateKeyPem, string? token, string method, string url)
+    {
+        var uri = new Uri(url);
+        var baseUrl = $"{uri.Scheme}://{uri.Authority}{uri.AbsolutePath}";
+
+        var nonce = Guid.NewGuid().ToString("N");
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+        var parameters = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in ParseQueryString(uri.Query))
+        {
+            parameters[key] = value;
+        }
+        parameters["oauth_consumer_key"] = consumerKey;
+        parameters["oauth_nonce"] = nonce;
+        parameters["oauth_signature_method"] = "RSA-SHA1";
+        parameters["oauth_timestamp"] = timestamp;
+        parameters["oauth_version"] = "1.0";
+        if (!string.IsNullOrEmpty(token))
+        {
+            parameters["oauth_token"] = token;
+        }
+
+        var normalizedParams = string.Join(
+            "&", parameters.Select(kvp => $"{Encode(kvp.Key)}={Encode(kvp.Value)}"));
+
+        var baseString = string.Join(
+            "&", method.ToUpperInvariant(), Encode(baseUrl), Encode(normalizedParams));
+
+        var signature = Sign(baseString, privateKeyPem);
+
+        var headerParams = new List<(string Key, string Value)>
+        {
+            ("oauth_consumer_key", consumerKey),
+            ("oauth_nonce", nonce),
+            ("oauth_signature", signature),
+            ("oauth_signature_method", "RSA-SHA1"),
+            ("oauth_timestamp", timestamp),
+            ("oauth_version", "1.0"),
+        };
+        if (!string.IsNullOrEmpty(token))
+        {
+            headerParams.Add(("oauth_token", token));
+        }
+
+        var headerValue = string.Join(", ", headerParams.Select(p => $"{p.Key}=\"{Encode(p.Value)}\""));
+        return $"OAuth {headerValue}";
+    }
+
+    private static IEnumerable<(string Key, string Value)> ParseQueryString(string query)
+    {
+        if (string.IsNullOrEmpty(query))
+        {
+            yield break;
+        }
+
+        foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            yield return (Uri.UnescapeDataString(parts[0]), parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty);
+        }
+    }
+
+    private static string Sign(string baseString, string privateKeyPem)
+    {
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(privateKeyPem);
+        var signature = rsa.SignData(Encoding.ASCII.GetBytes(baseString), HashAlgorithmName.SHA1, RSASignaturePadding.Pkcs1);
+        return Convert.ToBase64String(signature);
+    }
+
+    private static string Encode(string value)
+    {
+        var builder = new StringBuilder();
+        foreach (var ch in value)
+        {
+            if (char.IsAsciiLetterOrDigit(ch) || UnreservedExtra.Contains(ch))
+            {
+                builder.Append(ch);
+            }
+            else
+            {
+                foreach (var b in Encoding.UTF8.GetBytes([ch]))
+                {
+                    builder.Append('%').Append(b.ToString("X2"));
+                }
+            }
+        }
+        return builder.ToString();
+    }
+}
+
+public sealed class OAuth1AuthStrategy : IAuthStrategy
+{
+    public Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default)
+    {
+        if (!config.TryGetValue("consumer_key", out var consumerKey) || string.IsNullOrEmpty(consumerKey) ||
+            !config.TryGetValue("private_key", out var privateKey) || string.IsNullOrEmpty(privateKey))
+        {
+            throw new MissingCredentialsException("consumer_key, private_key");
+        }
+
+        var credentials = new Dictionary<string, string>
+        {
+            ["consumer_key"] = consumerKey,
+            ["private_key"] = privateKey,
+        };
+        if (config.TryGetValue("token", out var token) && !string.IsNullOrEmpty(token))
+        {
+            credentials["token"] = token;
+        }
+
+        return Task.FromResult(credentials);
+    }
+
+    public bool ValidateCredentials(Dictionary<string, string> credentials) =>
+        credentials.ContainsKey("consumer_key") && credentials.ContainsKey("private_key");
+}

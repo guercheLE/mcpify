@@ -1,6 +1,6 @@
 # mcpify: v4 C# (.NET) Target Implementation Plan
 
-> **Status: In progress (2026-07-02).** C1–C3 are implemented, committed, and verified (`cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, plus a real `dotnet restore && dotnet build` and `dotnet format --verify-no-changes` against the scaffolded output — all green on the first attempt after resolving the Polly/OpenTelemetry/health-checks/AesGcm API surface against the actual NuGet packages). `-l csharp` is **not yet** registered in `targets::build_registry()`; per this plan, that happens only once C8 is real and green. This plan covers adding the C#/.NET output target (`-l csharp`) to the mcpify generator, per `docs/architecture.md`'s "Target Language Roadmap" (§3). It assumes `docs/v1-implementation-plan.md` is complete — the shared pipeline, CLI, `GeneratorContext`, `McpServerTargetGenerator` trait, rollback, and `TargetRegistry` are reused as-is. This plan only covers the new, C#-specific per-target work.
+> **Status: In progress (2026-07-02).** C1–C4 are implemented, committed, and verified (`cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, plus a real `dotnet restore && dotnet build` and `dotnet format --verify-no-changes` against the scaffolded output covering all 5 auth-strategy kinds together — all green). C4's OAuth1 RSA-SHA1 signing was additionally verified functionally (not just compiled): a throwaway RSA keypair signed and verified a base string with the exact `RSA.SignData`/`RSASignaturePadding.Pkcs1` primitives the generated `OAuth1Signer` uses, confirming both a correct signature and correct rejection of a tampered base string. `-l csharp` is **not yet** registered in `targets::build_registry()`; per this plan, that happens only once C8 is real and green. This plan covers adding the C#/.NET output target (`-l csharp`) to the mcpify generator, per `docs/architecture.md`'s "Target Language Roadmap" (§3). It assumes `docs/v1-implementation-plan.md` is complete — the shared pipeline, CLI, `GeneratorContext`, `McpServerTargetGenerator` trait, rollback, and `TargetRegistry` are reused as-is. This plan only covers the new, C#-specific per-target work.
 
 ## Context
 
@@ -57,7 +57,7 @@ Target-local numbering (C1, C2, ...), mirroring v1's Story 7→14 shape.
 
 ---
 
-### C4 — `generate_auth_strategies`
+### C4 — `generate_auth_strategies` ✅ Done
 **Goal:** Same 5 strategies as every target, expressed as an `IAuthStrategy` interface and DI-registered implementations, with the auth-manager resolving the active one via a keyed-service lookup (`.NET 8+`'s keyed DI services map onto "select one active strategy by a config-driven key" unusually well — investigate before falling back to a manual dictionary/switch the way the other targets do, since this may be a case where the platform's own primitive is a better fit than replicating the other targets' pattern verbatim).
 
 **Depends on:** C3.

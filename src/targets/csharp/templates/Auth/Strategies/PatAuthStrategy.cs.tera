@@ -1,0 +1,22 @@
+namespace {{ namespace }}.Auth.Strategies;
+
+public sealed class PatAuthStrategy : IAuthStrategy
+{
+    public Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default)
+    {
+        if (!config.TryGetValue("token", out var token) || string.IsNullOrEmpty(token))
+        {
+            throw new MissingCredentialsException("token");
+        }
+
+        return Task.FromResult(new Dictionary<string, string>
+        {
+            ["token"] = token,
+            ["authorization_header"] = $"Bearer {token}",
+        });
+    }
+
+    public bool ValidateCredentials(Dictionary<string, string> credentials) =>
+        credentials.TryGetValue("token", out var token) && !string.IsNullOrEmpty(token);
+}

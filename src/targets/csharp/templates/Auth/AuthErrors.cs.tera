@@ -1,0 +1,12 @@
+namespace {{ namespace }}.Auth;
+
+public class AuthException(string message) : Exception(message);
+
+public sealed class MissingCredentialsException(string fields)
+    : AuthException($"missing required credential field(s): {fields}");
+
+public sealed class TokenExpiredException()
+    : AuthException("access token expired and could not be refreshed");
+
+public sealed class NoActiveCredentialsException(string authMethod)
+    : AuthException($"no valid credentials for auth method '{authMethod}'; run `{{ project_name }} setup`");

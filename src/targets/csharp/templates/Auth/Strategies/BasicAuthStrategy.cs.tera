@@ -1,0 +1,27 @@
+using System.Text;
+
+namespace {{ namespace }}.Auth.Strategies;
+
+public sealed class BasicAuthStrategy : IAuthStrategy
+{
+    public Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default)
+    {
+        if (!config.TryGetValue("username", out var username) || string.IsNullOrEmpty(username) ||
+            !config.TryGetValue("password", out var password) || string.IsNullOrEmpty(password))
+        {
+            throw new MissingCredentialsException("username, password");
+        }
+
+        var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+        return Task.FromResult(new Dictionary<string, string>
+        {
+            ["username"] = username,
+            ["password"] = password,
+            ["authorization_header"] = $"Basic {token}",
+        });
+    }
+
+    public bool ValidateCredentials(Dictionary<string, string> credentials) =>
+        credentials.ContainsKey("authorization_header");
+}

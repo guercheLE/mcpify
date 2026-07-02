@@ -1,0 +1,150 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
+namespace {{ namespace }}.Auth.Strategies;
+
+/// <summary>
+/// PKCE (RFC 7636) <c>code_verifier</c>/<c>code_challenge</c> pair
+/// generation for the setup wizard's (Story C7) authorization-code flow.
+/// </summary>
+public static class Pkce
+{
+    public static (string Verifier, string Challenge) CreatePair()
+    {
+        var verifier = Base64UrlEncode(RandomNumberGenerator.GetBytes(64));
+        var challenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+        return (verifier, challenge);
+    }
+
+    private static string Base64UrlEncode(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+}
+
+public sealed class OAuth2AuthStrategy(IHttpClientFactory httpClientFactory) : IAuthStrategy
+{
+    public async Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default)
+    {
+        if (!config.TryGetValue("client_id", out var clientId) || string.IsNullOrEmpty(clientId) ||
+            !config.TryGetValue("token_url", out var tokenUrl) || string.IsNullOrEmpty(tokenUrl))
+        {
+            throw new MissingCredentialsException("client_id, token_url");
+        }
+
+        var parameters = new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["client_id"] = clientId,
+        };
+        if (config.TryGetValue("client_secret", out var clientSecret) && !string.IsNullOrEmpty(clientSecret))
+        {
+            parameters["client_secret"] = clientSecret;
+        }
+        if (config.TryGetValue("authorization_code", out var code) && !string.IsNullOrEmpty(code))
+        {
+            parameters["code"] = code;
+        }
+        if (config.TryGetValue("redirect_uri", out var redirectUri) && !string.IsNullOrEmpty(redirectUri))
+        {
+            parameters["redirect_uri"] = redirectUri;
+        }
+        if (config.TryGetValue("code_verifier", out var verifier) && !string.IsNullOrEmpty(verifier))
+        {
+            parameters["code_verifier"] = verifier;
+        }
+
+        var response = await ExchangeAsync(tokenUrl, parameters, cancellationToken);
+        return FromTokenResponse(response, clientId, config.GetValueOrDefault("client_secret"), tokenUrl);
+    }
+
+    public async Task<Dictionary<string, string>> RefreshTokenAsync(
+        Dictionary<string, string> credentials, CancellationToken cancellationToken = default)
+    {
+        if (!credentials.TryGetValue("refresh_token", out var refreshToken) || string.IsNullOrEmpty(refreshToken) ||
+            !credentials.TryGetValue("token_url", out var tokenUrl) || string.IsNullOrEmpty(tokenUrl))
+        {
+            throw new TokenExpiredException();
+        }
+
+        var parameters = new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refreshToken,
+            ["client_id"] = credentials.GetValueOrDefault("client_id", string.Empty),
+        };
+        if (credentials.TryGetValue("client_secret", out var clientSecret) && !string.IsNullOrEmpty(clientSecret))
+        {
+            parameters["client_secret"] = clientSecret;
+        }
+
+        var response = await ExchangeAsync(tokenUrl, parameters, cancellationToken);
+        return FromTokenResponse(
+            response, credentials.GetValueOrDefault("client_id"), credentials.GetValueOrDefault("client_secret"), tokenUrl);
+    }
+
+    public bool ValidateCredentials(Dictionary<string, string> credentials)
+    {
+        if (!credentials.ContainsKey("access_token"))
+        {
+            return false;
+        }
+
+        if (!credentials.TryGetValue("expires_at", out var expiresAtRaw))
+        {
+            return true;
+        }
+
+        return long.TryParse(expiresAtRaw, out var expiresAt) &&
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < expiresAt;
+    }
+
+    private async Task<Dictionary<string, JsonElement>> ExchangeAsync(
+        string tokenUrl, Dictionary<string, string> parameters, CancellationToken cancellationToken)
+    {
+        using var client = httpClientFactory.CreateClient();
+        using var content = new FormUrlEncodedContent(parameters);
+        using var response = await client.PostAsync(tokenUrl, content, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)
+            ?? throw new AuthException("empty token response");
+    }
+
+    private static Dictionary<string, string> FromTokenResponse(
+        Dictionary<string, JsonElement> data, string? clientId, string? clientSecret, string? tokenUrl)
+    {
+        var accessToken = data["access_token"].GetString()
+            ?? throw new AuthException("token response missing access_token");
+
+        var credentials = new Dictionary<string, string>
+        {
+            ["authorization_header"] = $"Bearer {accessToken}",
+            ["access_token"] = accessToken,
+        };
+
+        if (data.TryGetValue("refresh_token", out var refreshTokenElement))
+        {
+            credentials["refresh_token"] = refreshTokenElement.GetString() ?? string.Empty;
+        }
+        if (data.TryGetValue("expires_in", out var expiresInElement) && expiresInElement.TryGetInt64(out var expiresIn))
+        {
+            var expiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + (expiresIn * 1000);
+            credentials["expires_at"] = expiresAt.ToString();
+        }
+        if (!string.IsNullOrEmpty(clientId))
+        {
+            credentials["client_id"] = clientId;
+        }
+        if (!string.IsNullOrEmpty(clientSecret))
+        {
+            credentials["client_secret"] = clientSecret;
+        }
+        if (!string.IsNullOrEmpty(tokenUrl))
+        {
+            credentials["token_url"] = tokenUrl;
+        }
+
+        return credentials;
+    }
+}

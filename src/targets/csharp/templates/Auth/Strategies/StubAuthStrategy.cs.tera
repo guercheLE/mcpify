@@ -1,0 +1,17 @@
+namespace {{ namespace }}.Auth.Strategies;
+
+/// <summary>
+/// No-op fallback strategy — the safe default when the target API
+/// requires no authentication, or before <c>{{ project_name }} setup</c>
+/// has configured a real scheme. Always emitted so `AuthManager` never has
+/// to special-case a missing strategy, mirroring every other target's
+/// stub strategy.
+/// </summary>
+public sealed class StubAuthStrategy : IAuthStrategy
+{
+    public Task<Dictionary<string, string>> AuthenticateAsync(
+        Dictionary<string, string> config, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new Dictionary<string, string>());
+
+    public bool ValidateCredentials(Dictionary<string, string> credentials) => true;
+}

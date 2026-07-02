@@ -1,0 +1,30 @@
+using Microsoft.Extensions.DependencyInjection;
+using {{ namespace }}.Auth;
+using {{ namespace }}.Auth.Strategies;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// REQ-1.2.2/REQ-1.2.3: one <see cref="IAuthStrategy"/> DI registration
+    /// per discovered auth scheme, keyed by the <see cref="AuthMethod"/>
+    /// enum value itself (.NET 8+ keyed services), plus the
+    /// <see cref="AuthManager"/> that resolves whichever one is active.
+    /// When no scheme was discovered, <see cref="AuthMethod.None"/> is the
+    /// enum's only member (see `Core/Config.cs`) and <see cref="StubAuthStrategy"/>
+    /// is registered under it — mirrors `targets::python`'s
+    /// `strategy_for()` dict-get-with-default, just resolved at
+    /// registration time instead of on every lookup.
+    /// </summary>
+    static partial void AddAuthStrategies(IServiceCollection services)
+    {
+{%- if auth_methods | length == 0 %}
+        services.AddKeyedSingleton<IAuthStrategy, StubAuthStrategy>(AuthMethod.None);
+{%- endif %}
+{%- for method in auth_methods %}
+        services.AddKeyedSingleton<IAuthStrategy, {{ method.class_name }}AuthStrategy>(AuthMethod.{{ method.class_name }});
+{%- endfor %}
+        services.AddSingleton<AuthManager>();
+    }
+}
