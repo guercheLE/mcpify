@@ -1,0 +1,29 @@
+package tools
+
+import (
+	"context"
+
+	"{{ module_path }}/internal/services"
+)
+
+// SearchResult is one search hit, in the shape the search tool returns to
+// the calling agent (PRD §1.5).
+type SearchResult struct {
+	OperationID string  `json:"operationId"`
+	Similarity  float32 `json:"similarity"`
+}
+
+// Search performs a semantic similarity lookup matching a natural-language
+// query against candidate API operations — so an LLM never needs the full
+// OpenAPI spec in context to find the right operation.
+func Search(ctx context.Context, store *services.VectorStore, query string, limit int) ([]SearchResult, error) {
+	results, err := store.Search(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	searchResults := make([]SearchResult, len(results))
+	for i, result := range results {
+		searchResults[i] = SearchResult{OperationID: result.OperationID, Similarity: result.Similarity}
+	}
+	return searchResults, nil
+}

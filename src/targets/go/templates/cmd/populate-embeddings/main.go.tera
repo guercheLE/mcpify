@@ -1,0 +1,58 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"{{ module_path }}/internal/data"
+	"{{ module_path }}/internal/services"
+)
+
+// Backfills the chromem-go vector store persisted alongside mcp_store.db —
+// mcpify's shared generation pipeline writes mcp_store.db's schema but
+// this project's Go target never populates its own semantic_endpoints
+// vec0 table (v5-implementation-plan.md's deliberate divergence); this is
+// the equivalent step for the sibling chromem-go collection it actually
+// queries. Invoked by Dockerfile before the image is considered usable,
+// and by run_generated_tests (Story G8) before the test suite runs, the
+// same way v1 sequences populate-embeddings before npm test.
+func main() {
+	ctx := context.Background()
+
+	store, err := data.Open("mcp_store.db")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to open mcp_store.db: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve home directory: %v\n", err)
+		os.Exit(1)
+	}
+	cacheDir := filepath.Join(home, ".{{ project_name }}", "models")
+
+	embedSvc, err := services.NewEmbeddingService(ctx, cacheDir, services.ResolveSharedLibraryPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize embedding service: %v\n", err)
+		os.Exit(1)
+	}
+	defer embedSvc.Close()
+
+	vectorStore, err := services.NewVectorStore("mcp_store.chromem", embedSvc.Embed)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to open vector store: %v\n", err)
+		os.Exit(1)
+	}
+
+	count, err := services.PopulateEmbeddings(ctx, store, vectorStore)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to populate embeddings: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("populated %d embedding(s)\n", count)
+}

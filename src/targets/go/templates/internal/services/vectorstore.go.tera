@@ -1,0 +1,75 @@
+package services
+
+import (
+	"context"
+
+	chromem "github.com/philippgille/chromem-go"
+)
+
+const collectionName = "endpoints"
+
+// VectorStore wraps a chromem-go collection persisted to disk alongside
+// mcp_store.db (v5-implementation-plan.md's deliberate divergence: Go
+// never loads the sqlite-vec extension, this collection is the only
+// vector store this target consumes).
+type VectorStore struct {
+	collection *chromem.Collection
+}
+
+// NewVectorStore opens (or creates) a chromem-go collection persisted
+// under persistDir, using embed as its embedding function — the same
+// EmbeddingService.Embed used for both populate-time indexing and live
+// search query embedding.
+func NewVectorStore(persistDir string, embed chromem.EmbeddingFunc) (*VectorStore, error) {
+	db, err := chromem.NewPersistentDB(persistDir, false)
+	if err != nil {
+		return nil, err
+	}
+	collection, err := db.GetOrCreateCollection(collectionName, nil, embed)
+	if err != nil {
+		return nil, err
+	}
+	return &VectorStore{collection: collection}, nil
+}
+
+// IndexOperation stores operationID's reconstructed text, computing its
+// embedding via the collection's configured embedding function.
+func (v *VectorStore) IndexOperation(ctx context.Context, operationID, text string) error {
+	return v.collection.AddDocument(ctx, chromem.Document{
+		ID:      operationID,
+		Content: text,
+	})
+}
+
+// SearchResult is one semantic search hit.
+type SearchResult struct {
+	OperationID string
+	Similarity  float32
+}
+
+// Search returns the nResults operations whose indexed text is most
+// similar to query.
+func (v *VectorStore) Search(ctx context.Context, query string, nResults int) ([]SearchResult, error) {
+	if nResults > v.collection.Count() {
+		nResults = v.collection.Count()
+	}
+	if nResults == 0 {
+		return nil, nil
+	}
+
+	results, err := v.collection.Query(ctx, query, nResults, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	searchResults := make([]SearchResult, len(results))
+	for i, result := range results {
+		searchResults[i] = SearchResult{OperationID: result.ID, Similarity: result.Similarity}
+	}
+	return searchResults, nil
+}
+
+// Count returns the number of indexed operations.
+func (v *VectorStore) Count() int {
+	return v.collection.Count()
+}

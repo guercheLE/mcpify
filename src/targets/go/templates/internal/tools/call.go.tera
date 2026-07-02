@@ -1,0 +1,48 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+
+	"{{ module_path }}/internal/auth"
+	"{{ module_path }}/internal/core"
+	"{{ module_path }}/internal/data"
+	"{{ module_path }}/internal/services"
+	"{{ module_path }}/internal/validation"
+)
+
+// Call validates arguments against the input schema, injects the active
+// auth strategy's credentials, executes the live HTTP request, and
+// validates the response against the output schema before returning it —
+// PRD §1.5's call pipeline (architecture.md's 4-step call pipeline),
+// protecting the calling agent from upstream API drift.
+func Call(
+	ctx context.Context,
+	store *data.Store,
+	client *services.ApiClient,
+	authManager *auth.Manager,
+	operationID string,
+	args map[string]any,
+) (any, error) {
+	endpoint, ok, err := store.GetEndpoint(operationID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, core.NewNotFoundError(fmt.Sprintf("unknown operationId '%s'", operationID))
+	}
+
+	if err := validation.ValidateInput(operationID, args); err != nil {
+		return nil, err
+	}
+
+	response, err := client.Execute(ctx, endpoint, args, authManager)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validation.ValidateOutput(operationID, response); err != nil {
+		return nil, err
+	}
+	return response, nil
+}

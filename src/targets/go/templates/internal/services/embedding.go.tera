@@ -1,0 +1,212 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+
+	"github.com/sugarme/tokenizer"
+	"github.com/sugarme/tokenizer/pretrained"
+	ort "github.com/yalue/onnxruntime_go"
+)
+
+const (
+	embeddingDim = 384
+	modelURL     = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+	tokenizerURL = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+)
+
+type EmbeddingService struct {
+	session   *ort.DynamicAdvancedSession
+	tokenizer *tokenizer.Tokenizer
+}
+
+func ResolveSharedLibraryPath() string {
+	if path := os.Getenv("ONNXRUNTIME_SHARED_LIBRARY_PATH"); path != "" {
+		return path
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "libonnxruntime.dylib"
+	case "windows":
+		return "onnxruntime.dll"
+	default:
+		return "libonnxruntime.so"
+	}
+}
+
+func NewEmbeddingService(ctx context.Context, cacheDir, onnxRuntimeLibPath string) (*EmbeddingService, error) {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return nil, err
+	}
+
+	modelPath := filepath.Join(cacheDir, "model.onnx")
+	if err := downloadIfMissing(ctx, modelURL, modelPath); err != nil {
+		return nil, fmt.Errorf("downloading embedding model: %w", err)
+	}
+	tokenizerPath := filepath.Join(cacheDir, "tokenizer.json")
+	if err := downloadIfMissing(ctx, tokenizerURL, tokenizerPath); err != nil {
+		return nil, fmt.Errorf("downloading tokenizer config: %w", err)
+	}
+
+	if !ort.IsInitialized() {
+		ort.SetSharedLibraryPath(onnxRuntimeLibPath)
+		if err := ort.InitializeEnvironment(); err != nil {
+			return nil, fmt.Errorf("initializing ONNX Runtime: %w", err)
+		}
+	}
+
+	session, err := ort.NewDynamicAdvancedSession(
+		modelPath,
+		[]string{"input_ids", "attention_mask", "token_type_ids"},
+		[]string{"last_hidden_state"},
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("loading embedding model: %w", err)
+	}
+
+	tk, err := pretrained.FromFile(tokenizerPath)
+	if err != nil {
+		session.Destroy()
+		return nil, fmt.Errorf("loading tokenizer: %w", err)
+	}
+
+	return &EmbeddingService{session: session, tokenizer: tk}, nil
+}
+
+func (s *EmbeddingService) Close() error {
+	return s.session.Destroy()
+}
+
+func (s *EmbeddingService) Embed(ctx context.Context, text string) ([]float32, error) {
+	enc, err := s.tokenizer.EncodeSingle(text, true)
+	if err != nil {
+		return nil, err
+	}
+
+	seqLen := 0
+	for _, mask := range enc.AttentionMask {
+		if mask == 0 {
+			break
+		}
+		seqLen++
+	}
+	if seqLen == 0 {
+		seqLen = 1
+	}
+
+	inputIds := make([]int64, seqLen)
+	attentionMask := make([]int64, seqLen)
+	tokenTypeIds := make([]int64, seqLen)
+	for i := 0; i < seqLen; i++ {
+		inputIds[i] = int64(enc.Ids[i])
+		attentionMask[i] = int64(enc.AttentionMask[i])
+		tokenTypeIds[i] = int64(enc.TypeIds[i])
+	}
+
+	shape := ort.NewShape(1, int64(seqLen))
+	inputIdsTensor, err := ort.NewTensor(shape, inputIds)
+	if err != nil {
+		return nil, err
+	}
+	defer inputIdsTensor.Destroy()
+	attentionMaskTensor, err := ort.NewTensor(shape, attentionMask)
+	if err != nil {
+		return nil, err
+	}
+	defer attentionMaskTensor.Destroy()
+	tokenTypeIdsTensor, err := ort.NewTensor(shape, tokenTypeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer tokenTypeIdsTensor.Destroy()
+
+	outputShape := ort.NewShape(1, int64(seqLen), embeddingDim)
+	output, err := ort.NewEmptyTensor[float32](outputShape)
+	if err != nil {
+		return nil, err
+	}
+	defer output.Destroy()
+
+	err = s.session.Run(
+		[]ort.Value{inputIdsTensor, attentionMaskTensor, tokenTypeIdsTensor},
+		[]ort.Value{output},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return meanPoolAndNormalize(output.GetData(), attentionMask, seqLen), nil
+}
+
+func meanPoolAndNormalize(hiddenStates []float32, attentionMask []int64, seqLen int) []float32 {
+	pooled := make([]float64, embeddingDim)
+	var maskSum float64
+	for pos := 0; pos < seqLen; pos++ {
+		mask := float64(attentionMask[pos])
+		maskSum += mask
+		for dim := 0; dim < embeddingDim; dim++ {
+			pooled[dim] += float64(hiddenStates[pos*embeddingDim+dim]) * mask
+		}
+	}
+	if maskSum == 0 {
+		maskSum = 1
+	}
+
+	var norm float64
+	for dim := 0; dim < embeddingDim; dim++ {
+		pooled[dim] /= maskSum
+		norm += pooled[dim] * pooled[dim]
+	}
+	norm = math.Sqrt(norm)
+	if norm == 0 {
+		norm = 1
+	}
+
+	result := make([]float32, embeddingDim)
+	for dim := 0; dim < embeddingDim; dim++ {
+		result[dim] = float32(pooled[dim] / norm)
+	}
+	return result
+}
+
+func downloadIfMissing(ctx context.Context, url, path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d downloading %s", resp.StatusCode, url)
+	}
+
+	tmpPath := path + ".tmp"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}

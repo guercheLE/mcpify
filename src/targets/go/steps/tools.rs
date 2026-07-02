@@ -1,11 +1,201 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde_json::{Map, Value};
 
 use crate::context::GeneratorContext;
+use crate::targets::go::context::GoTemplateContext;
+use crate::targets::go::emit::render_and_write;
+use crate::targets::go::render::render_engine;
 
-/// Story G6: `data/store.go`, `services/embedding.go` (wrapping
-/// `all-minilm-l6-v2-go`), `services/vectorstore.go` (wrapping
-/// `chromem-go`), `services/apiclient.go`, `tools/{search,get,call}.go`,
-/// and `validation/validator.go`. Stubbed in G1.
-pub async fn generate_mcp_tools(_ctx: &GeneratorContext) -> Result<()> {
+/// Rendered via Tera — structurally static regardless of the spec.
+/// `internal/core/mcpserver.go` isn't listed here even though this step is
+/// what gives it its final, tool-bearing meaning: it's already emitted by
+/// `steps::enterprise` (Story G3), which owns that file's place in the
+/// generation pipeline — this step only supplies the packages that file's
+/// eventual callers (Story G5's transports/roles) import
+/// (`internal/data`, `internal/tools`, `internal/services`), not the file
+/// itself. Mirrors `targets::python::steps::tools::FILES`.
+const FILES: &[(&str, &str)] = &[
+    ("internal/data/store.go.tera", "internal/data/store.go"),
+    (
+        "internal/services/embedding.go.tera",
+        "internal/services/embedding.go",
+    ),
+    (
+        "internal/services/vectorstore.go.tera",
+        "internal/services/vectorstore.go",
+    ),
+    (
+        "internal/services/populate.go.tera",
+        "internal/services/populate.go",
+    ),
+    (
+        "internal/services/apiclient.go.tera",
+        "internal/services/apiclient.go",
+    ),
+    (
+        "internal/validation/validator.go.tera",
+        "internal/validation/validator.go",
+    ),
+    ("internal/tools/search.go.tera", "internal/tools/search.go"),
+    ("internal/tools/get.go.tera", "internal/tools/get.go"),
+    ("internal/tools/call.go.tera", "internal/tools/call.go"),
+    (
+        "cmd/populate-embeddings/main.go.tera",
+        "cmd/populate-embeddings/main.go",
+    ),
+];
+
+const GENERATED_SCHEMAS_RELATIVE_PATH: &str = "internal/validation/generated_schemas.json";
+
+/// `generate_mcp_tools` (architecture.md §1, step 9): the data-access
+/// layer, embedding/vector-store/API-client services, validator, and 3
+/// tool packages against `mcp_store.db` and the target-API HTTP client,
+/// plus the `generated_schemas.json` asset `internal/validation/validator.go`
+/// embeds via `go:embed` at compile time (rather than reading it from disk
+/// at runtime — Go's `go:embed` directive is the natural fit here, closer
+/// to `targets::rust`'s `include_str!` approach than
+/// `targets::python`/`targets::csharp`'s runtime file reads).
+///
+/// This is also where the embeddings decision (v5-implementation-plan.md's
+/// open decision #5) actually gets proven: `services/embedding.go`
+/// composes `yalue/onnxruntime_go` + `sugarme/tokenizer` directly
+/// (`clems4ever/all-minilm-l6-v2-go` was dropped after its `go:embed`-bundled
+/// model turned out to be a broken Git LFS pointer when installed as a
+/// normal dependency), downloading the `Xenova/all-MiniLM-L6-v2` model and
+/// tokenizer from Hugging Face at first run and caching them locally, fed
+/// into a `philippgille/chromem-go` collection persisted alongside
+/// `mcp_store.db` — one `Embed` function reused by both
+/// `services/populate.go` and the live `search` tool's query embedding.
+pub async fn generate_mcp_tools(ctx: &GeneratorContext) -> Result<()> {
+    let view = GoTemplateContext::from_context(ctx);
+    let tera = render_engine()?;
+    let tera_ctx = tera::Context::from_serialize(&view)?;
+
+    for (template, out_name) in FILES {
+        render_and_write(&tera, template, &tera_ctx, &ctx.output_dir.join(out_name)).await?;
+    }
+
+    write_generated_schemas(ctx).await?;
+
     Ok(())
+}
+
+/// Built directly with `serde_json` rather than through a Tera loop: the
+/// per-operation JSON Schema documents (from `schema_resolve.rs`, already
+/// `$ref`-resolved) are genuine data, not boilerplate text, and a
+/// hundreds-of-operations spec would make a loop-heavy `.tera` template
+/// slow to render and unreadable to maintain — mirrors
+/// `targets::rust::steps::tools::write_generated_schemas`.
+async fn write_generated_schemas(ctx: &GeneratorContext) -> Result<()> {
+    let mut schemas = Map::new();
+    for operation in &ctx.normalized_operations {
+        schemas.insert(
+            operation.operation_id.clone(),
+            serde_json::json!({
+                "inputSchema": operation.validation_input_schema,
+                "outputSchema": operation.validation_output_schema,
+            }),
+        );
+    }
+
+    let json_text = serde_json::to_string_pretty(&Value::Object(schemas))
+        .context("failed to serialize generated_schemas.json")?;
+
+    let out_path = ctx.output_dir.join(GENERATED_SCHEMAS_RELATIVE_PATH);
+    if let Some(parent) = out_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
+    }
+    tokio::fs::write(&out_path, json_text)
+        .await
+        .with_context(|| format!("failed to write '{}'", out_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::openapi::NormalizedOperation;
+
+    fn ctx_with_operations(
+        output_dir: PathBuf,
+        normalized_operations: Vec<NormalizedOperation>,
+    ) -> GeneratorContext {
+        GeneratorContext {
+            openapi_input: "spec.yaml".to_string(),
+            output_dir,
+            force: false,
+            output_dir_preexisted: false,
+            auth_schemes: Vec::new(),
+            normalized_operations,
+            api_title: "Widget API".to_string(),
+        }
+    }
+
+    fn sample_operation() -> NormalizedOperation {
+        NormalizedOperation {
+            operation_id: "listWidgets".to_string(),
+            path: "/widgets".to_string(),
+            method: "GET".to_string(),
+            summary: Some("List widgets".to_string()),
+            description: None,
+            input_schema: serde_json::json!({}),
+            output_schema: serde_json::json!({}),
+            auth_scheme_ref: None,
+            validation_input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            validation_output_schema: serde_json::json!({"type": "array"}),
+        }
+    }
+
+    fn output_dir(parent: &tempfile::TempDir) -> PathBuf {
+        parent.path().join("output")
+    }
+
+    #[tokio::test]
+    async fn writes_every_tool_file() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        let ctx = ctx_with_operations(dir.clone(), vec![sample_operation()]);
+
+        generate_mcp_tools(&ctx).await.unwrap();
+
+        for (_, out_name) in FILES {
+            assert!(dir.join(out_name).is_file(), "missing {out_name}");
+        }
+        assert!(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH).is_file());
+    }
+
+    #[tokio::test]
+    async fn generated_schemas_json_round_trips_operation_schemas() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        let ctx = ctx_with_operations(dir.clone(), vec![sample_operation()]);
+
+        generate_mcp_tools(&ctx).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH))
+            .await
+            .unwrap();
+        let parsed: Value = serde_json::from_str(&contents).unwrap();
+
+        assert_eq!(parsed["listWidgets"]["inputSchema"]["type"], "object");
+        assert_eq!(parsed["listWidgets"]["outputSchema"]["type"], "array");
+    }
+
+    #[tokio::test]
+    async fn generated_schemas_json_is_empty_object_with_no_operations() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        let ctx = ctx_with_operations(dir.clone(), Vec::new());
+
+        generate_mcp_tools(&ctx).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH))
+            .await
+            .unwrap();
+        let parsed: Value = serde_json::from_str(&contents).unwrap();
+        assert_eq!(parsed, Value::Object(Map::new()));
+    }
 }

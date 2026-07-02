@@ -1,0 +1,100 @@
+package data
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+// EndpointRecord is one row of mcp_store.db's endpoints table (written by
+// mcpify's shared pipeline, Story 5/6) — the relational half of the
+// deliberate divergence in v5-implementation-plan.md's Context section:
+// Go reads this table via mattn/go-sqlite3 but never loads the sqlite-vec
+// extension or touches semantic_endpoints; vectors live in a sibling
+// chromem-go collection instead (services/vectorstore.go).
+type EndpointRecord struct {
+	OperationID   string
+	Path          string
+	Method        string
+	Summary       *string
+	Description   *string
+	InputSchema   json.RawMessage
+	OutputSchema  json.RawMessage
+	AuthSchemeRef *string
+}
+
+// Store is the read-only relational data-access layer against
+// mcp_store.db's endpoints table.
+type Store struct {
+	db *sql.DB
+}
+
+// Open opens mcp_store.db read-only — this project only ever reads it,
+// except cmd/populate-embeddings, which also only ever reads this table
+// (what it writes to is the chromem-go collection, not mcp_store.db).
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?mode=ro", path))
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+const endpointColumns = "operation_id, path, method, summary, description, input_schema, output_schema, auth_scheme_ref"
+
+func scanEndpoint(row interface{ Scan(...any) error }) (EndpointRecord, error) {
+	var record EndpointRecord
+	var inputSchema, outputSchema []byte
+	err := row.Scan(
+		&record.OperationID,
+		&record.Path,
+		&record.Method,
+		&record.Summary,
+		&record.Description,
+		&inputSchema,
+		&outputSchema,
+		&record.AuthSchemeRef,
+	)
+	record.InputSchema = json.RawMessage(inputSchema)
+	record.OutputSchema = json.RawMessage(outputSchema)
+	return record, err
+}
+
+// GetEndpoint returns the endpoint named by operationID, or (zero value,
+// false) if no such operation exists.
+func (s *Store) GetEndpoint(operationID string) (EndpointRecord, bool, error) {
+	row := s.db.QueryRow(
+		"SELECT "+endpointColumns+" FROM endpoints WHERE operation_id = ?", operationID,
+	)
+	record, err := scanEndpoint(row)
+	if err == sql.ErrNoRows {
+		return EndpointRecord{}, false, nil
+	}
+	if err != nil {
+		return EndpointRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+// ListEndpoints returns every endpoint row, in no particular order.
+func (s *Store) ListEndpoints() ([]EndpointRecord, error) {
+	rows, err := s.db.Query("SELECT " + endpointColumns + " FROM endpoints")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []EndpointRecord
+	for rows.Next() {
+		record, err := scanEndpoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}

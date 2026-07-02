@@ -1,0 +1,232 @@
+package services
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/sony/gobreaker"
+
+	"{{ module_path }}/internal/auth"
+	"{{ module_path }}/internal/core"
+	"{{ module_path }}/internal/data"
+)
+
+// operationParam is one entry of an operation's resolved input schema's
+// "parameters" array (path/query/header locations only — "body" is
+// carried directly under args["body"] instead, matching every other
+// target's ApiClient design).
+type operationParam struct {
+	Name string `json:"name"`
+	In   string `json:"in"`
+}
+
+func parametersOf(endpoint data.EndpointRecord) []operationParam {
+	var schema struct {
+		Parameters []operationParam `json:"parameters"`
+	}
+	_ = json.Unmarshal(endpoint.InputSchema, &schema)
+	return schema.Parameters
+}
+
+func namesWithLocation(endpoint data.EndpointRecord, location string) []string {
+	var names []string
+	for _, param := range parametersOf(endpoint) {
+		if param.In == location && param.Name != "" {
+			names = append(names, param.Name)
+		}
+	}
+	return names
+}
+
+func valueToString(value any) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", value)
+}
+
+func pickByLocation(endpoint data.EndpointRecord, args map[string]any, location string) map[string]string {
+	picked := map[string]string{}
+	for _, name := range namesWithLocation(endpoint, location) {
+		if value, ok := args[name]; ok {
+			picked[name] = valueToString(value)
+		}
+	}
+	return picked
+}
+
+// applyPathParams substitutes every `{name}` path template segment with
+// the matching, percent-encoded argument.
+func applyPathParams(endpoint data.EndpointRecord, args map[string]any) string {
+	var result strings.Builder
+	path := endpoint.Path
+	for i := 0; i < len(path); i++ {
+		if path[i] != '{' {
+			result.WriteByte(path[i])
+			continue
+		}
+		end := strings.IndexByte(path[i:], '}')
+		if end == -1 {
+			result.WriteString(path[i:])
+			break
+		}
+		name := path[i+1 : i+end]
+		value := ""
+		if v, ok := args[name]; ok {
+			value = valueToString(v)
+		}
+		result.WriteString(url.PathEscape(value))
+		i += end
+	}
+	return result.String()
+}
+
+// buildAPIURL joins a configured base URL with an operation path and
+// query params, normalizing slashes so callers never have to think about
+// trailing/leading separators.
+func buildAPIURL(baseURL, path string, query map[string]string) (string, error) {
+	base := baseURL
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	joined, err := parsed.Parse(strings.TrimPrefix(path, "/"))
+	if err != nil {
+		return "", err
+	}
+	if len(query) > 0 {
+		values := joined.Query()
+		for key, value := range query {
+			values.Set(key, value)
+		}
+		joined.RawQuery = values.Encode()
+	}
+	return joined.String(), nil
+}
+
+// ApiClient is the generic operationId -> HTTP request dispatcher — one
+// dispatcher for every operation, rather than one method per operation,
+// so generation stays robust against specs with hundreds of operations.
+type ApiClient struct {
+	config         core.Config
+	circuitBreaker *gobreaker.CircuitBreaker
+	rateLimiter    *core.RateLimiter
+	httpClient     *http.Client
+}
+
+func NewApiClient(config core.Config) *ApiClient {
+	return &ApiClient{
+		config:         config,
+		circuitBreaker: core.NewCircuitBreaker("target-api"),
+		rateLimiter:    core.NewRateLimiter(config.RateLimit),
+		httpClient:     &http.Client{Timeout: time.Duration(config.TimeoutMs) * time.Millisecond},
+	}
+}
+
+// Execute dispatches endpoint against the configured target API, applying
+// auth headers, honoring the rate limiter, and retrying transient
+// failures up to config.RetryAttempts times (REQ-2.3.3). args may contain
+// a "body" key holding the JSON request body, alongside any
+// path/query/header parameter values.
+func (c *ApiClient) Execute(
+	ctx context.Context,
+	endpoint data.EndpointRecord,
+	args map[string]any,
+	authManager *auth.Manager,
+) (any, error) {
+	if err := c.rateLimiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
+	query := pickByLocation(endpoint, args, "query")
+	path := applyPathParams(endpoint, args)
+	requestURL, err := buildAPIURL(c.config.URL, path, query)
+	if err != nil {
+		return nil, err
+	}
+
+	headers := map[string]string{"Content-Type": "application/json"}
+	for name, value := range pickByLocation(endpoint, args, "header") {
+		headers[name] = value
+	}
+	headers, err = authManager.ApplyAuthHeaders(ctx, headers, endpoint.Method, requestURL)
+	if err != nil {
+		return nil, err
+	}
+
+	var body []byte
+	if raw, ok := args["body"]; ok {
+		body, err = json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result, err := c.circuitBreaker.Execute(func() (interface{}, error) {
+		return c.dispatchWithRetries(ctx, endpoint.Method, requestURL, body, headers)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// dispatchWithRetries retries transient failures up to
+// config.RetryAttempts times, all inside the circuit breaker's own
+// success/failure accounting (REQ-2.3.3) — a request that only succeeds
+// on its 3rd attempt still counts as one circuit-breaker success, not two
+// failures and a success.
+func (c *ApiClient) dispatchWithRetries(ctx context.Context, method, requestURL string, body []byte, headers map[string]string) (any, error) {
+	var lastErr error
+	for attempt := 0; attempt <= c.config.RetryAttempts; attempt++ {
+		result, err := c.dispatch(ctx, method, requestURL, body, headers)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func (c *ApiClient) dispatch(ctx context.Context, method, requestURL string, body []byte, headers map[string]string) (any, error) {
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("target API returned status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	if len(responseBody) == 0 {
+		return nil, nil
+	}
+
+	var parsed any
+	if err := json.Unmarshal(responseBody, &parsed); err != nil {
+		return nil, nil
+	}
+	return parsed, nil
+}

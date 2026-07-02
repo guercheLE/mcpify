@@ -1,0 +1,46 @@
+package services
+
+import (
+	"context"
+	"strings"
+
+	"{{ module_path }}/internal/data"
+)
+
+// reconstructText builds the text an operation is embedded from —
+// method + path + summary + description, skipping empty parts — mirroring
+// every other target's populate step exactly (identical to
+// `targets::python::templates::services::populate_embeddings.py.tera`'s
+// reconstruction).
+func reconstructText(endpoint data.EndpointRecord) string {
+	parts := []string{endpoint.Method, endpoint.Path}
+	if endpoint.Summary != nil && *endpoint.Summary != "" {
+		parts = append(parts, *endpoint.Summary)
+	}
+	if endpoint.Description != nil && *endpoint.Description != "" {
+		parts = append(parts, *endpoint.Description)
+	}
+	return strings.Join(parts, " ")
+}
+
+// PopulateEmbeddings backfills the chromem-go vector store from every row
+// in mcp_store.db's endpoints table — the Go equivalent of every other
+// target's populate-embeddings step, invoked by the Dockerfile before the
+// image is considered usable and by run_generated_tests (Story G8) before
+// the test suite runs.
+func PopulateEmbeddings(ctx context.Context, store *data.Store, vectorStore *VectorStore) (int, error) {
+	endpoints, err := store.ListEndpoints()
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, endpoint := range endpoints {
+		text := reconstructText(endpoint)
+		if err := vectorStore.IndexOperation(ctx, endpoint.OperationID, text); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}

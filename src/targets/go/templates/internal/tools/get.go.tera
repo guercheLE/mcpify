@@ -1,0 +1,44 @@
+package tools
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"{{ module_path }}/internal/core"
+	"{{ module_path }}/internal/data"
+)
+
+// GetResult mirrors data.EndpointRecord in the shape the get tool returns
+// to the calling agent — the literal schema, path, method, and
+// documentation for a specific operationId (PRD §1.5).
+type GetResult struct {
+	OperationID   string          `json:"operationId"`
+	Path          string          `json:"path"`
+	Method        string          `json:"method"`
+	Summary       *string         `json:"summary,omitempty"`
+	Description   *string         `json:"description,omitempty"`
+	InputSchema   json.RawMessage `json:"inputSchema"`
+	OutputSchema  json.RawMessage `json:"outputSchema"`
+	AuthSchemeRef *string         `json:"authSchemeRef,omitempty"`
+}
+
+// Get returns the schema, path, method, and documentation for operationID.
+func Get(store *data.Store, operationID string) (GetResult, error) {
+	endpoint, ok, err := store.GetEndpoint(operationID)
+	if err != nil {
+		return GetResult{}, err
+	}
+	if !ok {
+		return GetResult{}, core.NewNotFoundError(fmt.Sprintf("unknown operationId '%s'", operationID))
+	}
+	return GetResult{
+		OperationID:   endpoint.OperationID,
+		Path:          endpoint.Path,
+		Method:        endpoint.Method,
+		Summary:       endpoint.Summary,
+		Description:   endpoint.Description,
+		InputSchema:   endpoint.InputSchema,
+		OutputSchema:  endpoint.OutputSchema,
+		AuthSchemeRef: endpoint.AuthSchemeRef,
+	}, nil
+}

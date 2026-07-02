@@ -1,0 +1,118 @@
+package validation
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"sync"
+
+	"github.com/xeipuuv/gojsonschema"
+
+	"{{ module_path }}/internal/core"
+)
+
+// generatedSchemasJSON is written directly by the Rust generator (not
+// templated) and baked into the compiled binary via go:embed rather than
+// read from disk at runtime — mirrors
+// `targets::rust::templates::validation::validator.rs`'s `include_str!`
+// approach, keeping this file's size independent of how many operations
+// the source spec declares.
+//
+//go:embed generated_schemas.json
+var generatedSchemasJSON []byte
+
+type operationSchemas struct {
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	OutputSchema json.RawMessage `json:"outputSchema"`
+}
+
+var (
+	schemasOnce sync.Once
+	schemas     map[string]operationSchemas
+
+	validatorCacheMu sync.Mutex
+	validatorCache   = map[string]*gojsonschema.Schema{}
+)
+
+func schemasByOperation() map[string]operationSchemas {
+	schemasOnce.Do(func() {
+		schemas = map[string]operationSchemas{}
+		_ = json.Unmarshal(generatedSchemasJSON, &schemas)
+	})
+	return schemas
+}
+
+func validatorFor(operationID, schemaKey string) (*gojsonschema.Schema, error) {
+	cacheKey := operationID + "\x00" + schemaKey
+	validatorCacheMu.Lock()
+	defer validatorCacheMu.Unlock()
+
+	if cached, ok := validatorCache[cacheKey]; ok {
+		return cached, nil
+	}
+
+	entry := schemasByOperation()[operationID]
+	var raw json.RawMessage
+	if schemaKey == "inputSchema" {
+		raw = entry.InputSchema
+	} else {
+		raw = entry.OutputSchema
+	}
+	if len(raw) == 0 {
+		raw = json.RawMessage("{}")
+	}
+
+	schema, err := gojsonschema.NewSchema(gojsonschema.NewBytesLoader(raw))
+	if err != nil {
+		return nil, err
+	}
+	validatorCache[cacheKey] = schema
+	return schema, nil
+}
+
+func validateAgainst(operationID, schemaKey string, data any) ([]string, error) {
+	schema, err := validatorFor(operationID, schemaKey)
+	if err != nil {
+		return nil, err
+	}
+	result, err := schema.Validate(gojsonschema.NewGoLoader(data))
+	if err != nil {
+		return nil, err
+	}
+	if result.Valid() {
+		return nil, nil
+	}
+	messages := make([]string, len(result.Errors()))
+	for i, e := range result.Errors() {
+		messages[i] = e.String()
+	}
+	return messages, nil
+}
+
+// ValidateInput raises a ValidationError if data doesn't satisfy
+// operationID's input schema.
+func ValidateInput(operationID string, data any) error {
+	errors, err := validateAgainst(operationID, "inputSchema", data)
+	if err != nil {
+		return err
+	}
+	if len(errors) > 0 {
+		return core.NewValidationError(fmt.Sprintf("invalid input for '%s'", operationID), errors)
+	}
+	return nil
+}
+
+// ValidateOutput raises a ValidationError if data doesn't satisfy
+// operationID's output schema — surfaces upstream API drift as a
+// structured error rather than silently returning a mismatched response
+// (architecture.md's call pipeline).
+func ValidateOutput(operationID string, data any) error {
+	errors, err := validateAgainst(operationID, "outputSchema", data)
+	if err != nil {
+		return err
+	}
+	if len(errors) > 0 {
+		return core.NewValidationError(fmt.Sprintf("unexpected response shape for '%s'", operationID), errors)
+	}
+	return nil
+}
