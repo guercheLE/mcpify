@@ -38,6 +38,18 @@ def resolve_log_level() -> str:
     return os.environ.get(LOG_LEVEL_ENV_VAR, "info")
 
 
+def redact(data: dict[str, Any]) -> dict[str, Any]:
+    """Shallow-redacts sensitive fields from an arbitrary dict — the same
+    field list `_redact_sensitive_fields` applies to log events, reused by
+    `cli/config.py` (Story P5) so `{{ project_name }} config` never prints
+    a raw secret to the terminal.
+    """
+    return {
+        key: (_REDACTED_VALUE if key.lower() in _REDACTED_KEYS else value)
+        for key, value in data.items()
+    }
+
+
 def _redact_sensitive_fields(
     _logger: Any, _method_name: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
