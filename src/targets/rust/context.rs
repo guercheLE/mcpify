@@ -14,6 +14,17 @@ pub struct RsAuthSchemeView {
     pub method_key: &'static str,
 }
 
+/// One entry in the deduplicated `AuthMethod` enum the config-schema
+/// template emits: `key` is the literal wire value (`method_key` above),
+/// `variant_name` is its PascalCase Rust identifier. Precomputed here
+/// rather than in the template, since Tera's built-in `capitalize` filter
+/// doesn't preserve mixed-case input like `"apiKey"` -> `ApiKey`.
+#[derive(Debug, Clone, Serialize)]
+pub struct RsAuthMethodView {
+    pub key: &'static str,
+    pub variant_name: &'static str,
+}
+
 /// One operation, in the shape templates need to render tool/schema files.
 #[derive(Debug, Clone, Serialize)]
 pub struct RsOperationView {
@@ -57,6 +68,10 @@ pub struct RsTemplateContext {
     /// Rust rather than in the template, since Tera has no reliable
     /// cross-version `unique` filter to depend on.
     pub auth_method_keys: Vec<&'static str>,
+    /// Deduplicated (key, PascalCase variant name) pairs, in discovery
+    /// order — what the generated `AuthMethod` enum's variants are built
+    /// from.
+    pub auth_methods: Vec<RsAuthMethodView>,
     pub operations: Vec<RsOperationView>,
 }
 
@@ -102,6 +117,13 @@ impl RsTemplateContext {
                 auth_method_keys.push(scheme.method_key);
             }
         }
+        let auth_methods = auth_method_keys
+            .iter()
+            .map(|&key| RsAuthMethodView {
+                key,
+                variant_name: auth_method_variant_name(key),
+            })
+            .collect();
 
         Self {
             package_name: project_name.clone(),
@@ -113,6 +135,7 @@ impl RsTemplateContext {
             client_struct_name,
             auth_schemes,
             auth_method_keys,
+            auth_methods,
             operations,
         }
     }
@@ -135,6 +158,20 @@ fn auth_method_key(kind: AuthSchemeKind) -> &'static str {
         AuthSchemeKind::BearerPat => "pat",
         AuthSchemeKind::OAuth2 => "oauth2",
         AuthSchemeKind::OAuth1 => "oauth1",
+    }
+}
+
+/// Maps an `auth_method_key` literal onto its PascalCase Rust enum-variant
+/// identifier. A closed match over the same 5 literals `auth_method_key`
+/// can produce, so this can never actually hit its `unreachable!` arm.
+fn auth_method_variant_name(key: &str) -> &'static str {
+    match key {
+        "basic" => "Basic",
+        "apiKey" => "ApiKey",
+        "pat" => "Pat",
+        "oauth2" => "OAuth2",
+        "oauth1" => "OAuth1",
+        other => unreachable!("auth_method_key never returns '{other}'"),
     }
 }
 
@@ -233,6 +270,19 @@ mod tests {
         ];
         let view = RsTemplateContext::from_context(&ctx);
         assert_eq!(view.auth_method_keys, vec!["oauth2", "basic"]);
+    }
+
+    #[test]
+    fn derives_pascal_case_variant_names_for_auth_methods() {
+        let mut ctx = sample_context();
+        ctx.auth_schemes = vec![AuthSchemeDescriptor {
+            name: "apiKeyAuth".to_string(),
+            kind: AuthSchemeKind::ApiKey,
+        }];
+        let view = RsTemplateContext::from_context(&ctx);
+        assert_eq!(view.auth_methods.len(), 1);
+        assert_eq!(view.auth_methods[0].key, "apiKey");
+        assert_eq!(view.auth_methods[0].variant_name, "ApiKey");
     }
 
     #[test]

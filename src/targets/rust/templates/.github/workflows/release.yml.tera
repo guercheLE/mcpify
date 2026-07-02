@@ -1,0 +1,28 @@
+name: Release
+
+# Unlike targets::typescript's release.yml (semantic-release publishing to
+# npm), this project sets `publish = false` in Cargo.toml — it's an
+# application, not a library for reuse — so "release" means attaching a
+# built binary to a GitHub Release on a version tag, mirroring how mcpify's
+# own release.yml is triggered but skipping the crates.io-publish step that
+# doesn't apply to an unpublished application binary.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+      - run: cargo build --release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/{{ project_name }}
