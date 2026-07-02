@@ -21,26 +21,43 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # v5's Go target: `tests/go_build_smoke.rs` renders a real fixture
+      # and runs gofmt/go vet/go build against it as part of the regular
+      # `cargo test` below — unlike every prior target, this one needs the
+      # Go toolchain in the *fast* job too, since two of its real
+      # implementation bugs (a literal `{{` in a Go composite literal
+      # parsed as a Tera expression, and gofmt's column-alignment of
+      # grouped const/map-literal declarations) were only catchable by
+      # actually compiling generated output. No ONNX Runtime shared
+      # library needed here: `go build` only needs the CGo wrapper's
+      # vendored header, not the actual native library — that's only
+      # required at runtime (`e2e` job below).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
   e2e:
-    # The slow, real acceptance gate for all four targets (v1 Story 14 /
-    # v2 Story R8 / v3 Story P8 / v4 Story C8, PRD REQ-2.5.1): the
-    # TypeScript test does npm install (including the
+    # The slow, real acceptance gate for all five targets (v1 Story 14 /
+    # v2 Story R8 / v3 Story P8 / v4 Story C8 / v5 Story G8, PRD
+    # REQ-2.5.1): the TypeScript test does npm install (including the
     # @xenova/transformers model download) and npm test; the Rust test
     # does cargo run --bin populate-embeddings (including the fastembed
     # model download) and cargo test; the Python test does uv sync and uv
     # run pytest (including the sentence-transformers all-mpnet-base-v2
     # model download during populate_embeddings); the C# test does
     # dotnet restore, dotnet format, and dotnet test (which compiles both
-    # the main project and Tests/ as a prerequisite) — all four against a
-    # generated project, all in tests/e2e_generation.rs, so this one
-    # `cargo test` invocation runs all four. Only on pushes to main, not
-    # every PR, to keep PR feedback fast — it takes minutes, not seconds.
-    # No separate Rust toolchain install needed here: this workflow
-    # already runs on Rust, since mcpify itself is Rust.
+    # the main project and Tests/ as a prerequisite); the Go test does go
+    # mod tidy, go build, go run ./cmd/populate-embeddings (the real
+    # ~90MB Xenova/all-MiniLM-L6-v2 ONNX model download plus a real ONNX
+    # Runtime inference session), and go test -tags=integration — all
+    # five against a generated project, all in tests/e2e_generation.rs,
+    # so this one `cargo test` invocation runs all five. Only on pushes
+    # to main, not every PR, to keep PR feedback fast — it takes minutes,
+    # not seconds. No separate Rust toolchain install needed here: this
+    # workflow already runs on Rust, since mcpify itself is Rust.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -57,4 +74,30 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      # The ONNX Runtime shared library the Go target's embedding
+      # pipeline loads at runtime (open decision #2) — unlike every
+      # prior target's ONNX story, this one isn't fetched by a package
+      # manager (NuGet/npm/pip already bundle their native binaries), so
+      # CI has to stage it explicitly. Cached by version+OS so this only
+      # actually downloads once per cache generation, not every run —
+      # flagged in v5-implementation-plan.md's G9 goal text as a new,
+      # Go-specific CI risk analogous to the generator's own sqlite-vec
+      # extension-loading flakiness (Story 5's tests).
+      - name: Cache ONNX Runtime
+        id: onnxruntime-cache
+        uses: actions/cache@v4
+        with:
+          path: onnxruntime
+          key: onnxruntime-linux-x64-1.27.0
+      - name: Download ONNX Runtime
+        if: steps.onnxruntime-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o onnxruntime.tgz \
+            https://github.com/microsoft/onnxruntime/releases/download/v1.27.0/onnxruntime-linux-x64-1.27.0.tgz
+          mkdir -p onnxruntime
+          tar -xzf onnxruntime.tgz -C onnxruntime --strip-components=1
+      - run: echo "ONNXRUNTIME_SHARED_LIBRARY_PATH=$GITHUB_WORKSPACE/onnxruntime/lib/libonnxruntime.so" >> "$GITHUB_ENV"
       - run: cargo test --test e2e_generation -- --ignored

@@ -1,0 +1,238 @@
+---
+source: tests/golden_go.rs
+expression: contents
+---
+package core
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+)
+
+// AuthMethod mirrors the closed set of auth strategies discovered from the
+// OpenAPI spec — the same "basic" | "apiKey" | "pat" | "oauth2" | "oauth1"
+// wire values `GoTemplateContext::from_context` derives, restricted here to
+// only the schemes this project actually discovered.
+type AuthMethod string
+
+// AuthMethodNone is the zero-configuration fallback when no auth scheme
+// was discovered — Story G4's StubStrategy is registered under it. Always
+// declared (unlike the per-scheme consts below) since Config.AuthMethod's
+// Go zero value ("") already equals it, so this just gives that zero
+// value a name rather than gating it on discovery.
+const AuthMethodNone AuthMethod = ""
+
+// Each discovered method gets its own ungrouped `const` statement rather
+// than one shared `const (...)` block — gofmt column-aligns every entry in
+// a grouped block by the longest identifier, which a Tera template can't
+// predict ahead of rendering since the set of discovered schemes (and
+// therefore the longest identifier) varies per generation; ungrouped
+// single-line const statements aren't subject to that alignment, so the
+// output stays gofmt-clean regardless of which schemes were discovered.
+const AuthMethodBasic AuthMethod = "basic"
+const AuthMethodPat AuthMethod = "pat"
+const AuthMethodOAuth2 AuthMethod = "oauth2"
+const AuthMethodOAuth1 AuthMethod = "oauth1"
+
+// Transport selects which Harness Server transport (Story G5) is active.
+type Transport string
+
+const (
+	TransportStdio Transport = "stdio"
+	TransportHTTP  Transport = "http"
+)
+
+// Config is the typed view of the resolved REQ-2.2 cascade.
+type Config struct {
+	URL           string
+	AuthMethod    AuthMethod
+	LogLevel      string
+	RateLimit     int
+	TimeoutMs     int
+	CacheSize     int
+	RetryAttempts int
+	Transport     Transport
+	Host          string
+	Port          int
+	CorsAllow     string
+}
+
+// defaults is tier 7: built-in defaults, the lowest-priority tier every
+// other tier overrides.
+func defaults() Config {
+	return Config{
+		LogLevel:      "info",
+		RateLimit:     100,
+		TimeoutMs:     30_000,
+		CacheSize:     500,
+		RetryAttempts: 3,
+		Transport:     TransportStdio,
+		Host:          "127.0.0.1",
+		Port:          3000,
+	}
+}
+
+// CLIOverrides carries tier-1 values a cobra command parsed directly
+// (Story G5) — a pointer field is set only when its flag was actually
+// passed, so an unset flag doesn't clobber a lower tier's value.
+type CLIOverrides struct {
+	URL       *string
+	Host      *string
+	Port      *int
+	CorsAllow *string
+}
+
+// Load resolves REQ-2.2's 7-tier configuration cascade (CLI flags > env
+// vars > local file > home file > system file > install-dir file >
+// built-in defaults), applied lowest-priority-first so each later tier
+// overwrites the fields it sets. Mirrors
+// `targets::csharp::templates::Core::Config.cs.tera`'s cascade, adapted to
+// a hand-rolled struct merge since Go has no `IConfiguration`-equivalent
+// first-party layered-config primitive (v5-implementation-plan.md's
+// toolchain note on `config`).
+func Load(overrides CLIOverrides) (Config, error) {
+	cfg := defaults()
+
+	if installDir, err := os.Executable(); err == nil {
+		applyFile(&cfg, filepath.Join(filepath.Dir(installDir), "config.json"))
+	}
+	applyFile(&cfg, filepath.Join("/etc", "out", "config.json"))
+	if home, err := os.UserHomeDir(); err == nil {
+		applyFile(&cfg, filepath.Join(home, ".out", "config.json"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		applyFile(&cfg, filepath.Join(cwd, "out.config.json"))
+	}
+	applyEnv(&cfg)
+	applyCLIOverrides(&cfg, overrides)
+
+	if cfg.URL == "" {
+		return cfg, NewConfigurationError("url is required (set OUT_URL or pass --url)")
+	}
+	return cfg, nil
+}
+
+type fileOverrides struct {
+	URL           *string `json:"url"`
+	AuthMethod    *string `json:"authMethod"`
+	LogLevel      *string `json:"logLevel"`
+	RateLimit     *int    `json:"rateLimit"`
+	TimeoutMs     *int    `json:"timeoutMs"`
+	CacheSize     *int    `json:"cacheSize"`
+	RetryAttempts *int    `json:"retryAttempts"`
+	Transport     *string `json:"transport"`
+	Host          *string `json:"host"`
+	Port          *int    `json:"port"`
+	CorsAllow     *string `json:"corsAllow"`
+}
+
+func applyFile(cfg *Config, path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var overrides fileOverrides
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		return
+	}
+	overrides.applyTo(cfg)
+}
+
+func (o fileOverrides) applyTo(cfg *Config) {
+	if o.URL != nil {
+		cfg.URL = *o.URL
+	}
+	if o.AuthMethod != nil {
+		cfg.AuthMethod = AuthMethod(*o.AuthMethod)
+	}
+	if o.LogLevel != nil {
+		cfg.LogLevel = *o.LogLevel
+	}
+	if o.RateLimit != nil {
+		cfg.RateLimit = *o.RateLimit
+	}
+	if o.TimeoutMs != nil {
+		cfg.TimeoutMs = *o.TimeoutMs
+	}
+	if o.CacheSize != nil {
+		cfg.CacheSize = *o.CacheSize
+	}
+	if o.RetryAttempts != nil {
+		cfg.RetryAttempts = *o.RetryAttempts
+	}
+	if o.Transport != nil {
+		cfg.Transport = Transport(*o.Transport)
+	}
+	if o.Host != nil {
+		cfg.Host = *o.Host
+	}
+	if o.Port != nil {
+		cfg.Port = *o.Port
+	}
+	if o.CorsAllow != nil {
+		cfg.CorsAllow = *o.CorsAllow
+	}
+}
+
+func applyEnv(cfg *Config) {
+	if v, ok := os.LookupEnv("OUT_URL"); ok {
+		cfg.URL = v
+	}
+	if v, ok := os.LookupEnv("OUT_AUTH_METHOD"); ok {
+		cfg.AuthMethod = AuthMethod(v)
+	}
+	if v, ok := os.LookupEnv("OUT_LOG_LEVEL"); ok {
+		cfg.LogLevel = v
+	}
+	if v, ok := os.LookupEnv("OUT_TRANSPORT"); ok {
+		cfg.Transport = Transport(v)
+	}
+	if v, ok := os.LookupEnv("OUT_HOST"); ok {
+		cfg.Host = v
+	}
+	if v, ok := os.LookupEnv("OUT_CORS_ALLOW"); ok {
+		cfg.CorsAllow = v
+	}
+	if v, ok := os.LookupEnv("OUT_RATE_LIMIT"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RateLimit = n
+		}
+	}
+	if v, ok := os.LookupEnv("OUT_TIMEOUT_MS"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.TimeoutMs = n
+		}
+	}
+	if v, ok := os.LookupEnv("OUT_CACHE_SIZE"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.CacheSize = n
+		}
+	}
+	if v, ok := os.LookupEnv("OUT_RETRY_ATTEMPTS"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RetryAttempts = n
+		}
+	}
+	if v, ok := os.LookupEnv("OUT_PORT"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Port = n
+		}
+	}
+}
+
+func applyCLIOverrides(cfg *Config, o CLIOverrides) {
+	if o.URL != nil {
+		cfg.URL = *o.URL
+	}
+	if o.Host != nil {
+		cfg.Host = *o.Host
+	}
+	if o.Port != nil {
+		cfg.Port = *o.Port
+	}
+	if o.CorsAllow != nil {
+		cfg.CorsAllow = *o.CorsAllow
+	}
+}

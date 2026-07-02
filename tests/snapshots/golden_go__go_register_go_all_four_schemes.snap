@@ -1,0 +1,99 @@
+---
+source: tests/golden_go.rs
+expression: contents
+---
+package tools
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
+	"out/internal/auth"
+	"out/internal/data"
+	"out/internal/services"
+)
+
+// Register attaches the search/get/call tools to mcpServer — the actual
+// MCP-protocol surface every transport (stdio, HTTP) serves. Go's mcp-go
+// SDK has no attribute/reflection-based auto-registration (Go has no
+// attributes), unlike C#'s [McpServerToolType]-scanned assembly, so this
+// wiring is explicit and imperative instead.
+func Register(
+	mcpServer *server.MCPServer,
+	store *data.Store,
+	vectorStore *services.VectorStore,
+	apiClient *services.ApiClient,
+	authManager *auth.Manager,
+) {
+	mcpServer.AddTool(
+		mcp.NewTool("search",
+			mcp.WithDescription("Semantic search for operations matching a natural-language query."),
+			mcp.WithString("query", mcp.Required(), mcp.Description("Natural-language description of the desired operation.")),
+			mcp.WithNumber("limit", mcp.DefaultNumber(5), mcp.Description("Maximum number of results to return.")),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			query, err := request.RequireString("query")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			limit := request.GetInt("limit", 5)
+
+			results, err := Search(ctx, vectorStore, query, limit)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(results)
+		},
+	)
+
+	mcpServer.AddTool(
+		mcp.NewTool("get",
+			mcp.WithDescription("Show the schema, path, method, and documentation for one operation."),
+			mcp.WithString("operationId", mcp.Required()),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			operationID, err := request.RequireString("operationId")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+
+			result, err := Get(store, operationID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(result)
+		},
+	)
+
+	mcpServer.AddTool(
+		mcp.NewTool("call",
+			mcp.WithDescription("Validate arguments, invoke the live API, and validate the response."),
+			mcp.WithString("operationId", mcp.Required()),
+			mcp.WithObject("args", mcp.Description("Arguments for the operation (path/query/header parameters plus an optional body field).")),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			operationID, err := request.RequireString("operationId")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			args := mcp.ParseStringMap(request, "args", map[string]any{})
+
+			result, err := Call(ctx, store, apiClient, authManager, operationID, args)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(result)
+		},
+	)
+}
+
+func jsonResult(value any) (*mcp.CallToolResult, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(string(encoded)), nil
+}

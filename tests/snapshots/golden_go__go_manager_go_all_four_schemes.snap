@@ -1,0 +1,164 @@
+---
+source: tests/golden_go.rs
+expression: contents
+---
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+
+	"out/internal/core"
+)
+
+const credentialKey = "active-credentials"
+
+// CredentialStore is the subset of `core.CredentialStore` the auth manager
+// needs — declared locally so this package doesn't import `core` for
+// anything beyond `AuthMethod`.
+type CredentialStore interface {
+	Save(key, secret string) error
+	Get(key string) (string, bool, error)
+	Delete(key string) error
+}
+
+// Manager selects exactly one active auth strategy per deployment, chosen
+// via config's `AuthMethod` (REQ-1.2.3) — there is no runtime engine for
+// resolving multiple simultaneously-required schemes. Mirrors
+// `targets::csharp::templates::Auth::AuthManager.cs.tera`'s "resolve one
+// strategy by a config-driven key" design, using a
+// `map[core.AuthMethod]Strategy` instead of .NET's keyed DI container
+// since Go has no DI container to route the lookup through — this
+// target's own idiomatic equivalent of v1's TS object-literal lookup,
+// v2's Rust `match`, v3's Python dispatch dict, v4's C# keyed-DI
+// registration.
+type Manager struct {
+	authMethod  core.AuthMethod
+	strategy    Strategy
+	credentials CredentialStore
+
+	mu                sync.Mutex
+	cachedCredentials Credentials
+}
+
+func NewManager(authMethod core.AuthMethod, strategies map[core.AuthMethod]Strategy, credentialStore CredentialStore) (*Manager, error) {
+	strategy, ok := strategies[authMethod]
+	if !ok {
+		return nil, fmt.Errorf("no auth strategy registered for method %q", authMethod)
+	}
+	return &Manager{authMethod: authMethod, strategy: strategy, credentials: credentialStore}, nil
+}
+
+func (m *Manager) Login(ctx context.Context, config Credentials) (Credentials, error) {
+	credentials, err := m.strategy.Authenticate(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.cachedCredentials = credentials
+	m.mu.Unlock()
+
+	encoded, err := json.Marshal(credentials)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.credentials.Save(credentialKey, string(encoded)); err != nil {
+		return nil, err
+	}
+	return credentials, nil
+}
+
+// SetCredentials seeds in-memory credentials directly, bypassing
+// OS-keychain/file storage entirely — for tests (which must never touch
+// the real credential store as a side effect of running) and for callers
+// that already hold validated credentials from elsewhere.
+func (m *Manager) SetCredentials(credentials Credentials) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cachedCredentials = credentials
+}
+
+func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
+	m.mu.Lock()
+	cached := m.cachedCredentials
+	m.mu.Unlock()
+	if cached != nil && m.strategy.ValidateCredentials(cached) {
+		return cached, nil
+	}
+
+	stored, ok, err := m.credentials.Get(credentialKey)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		var parsed Credentials
+		if err := json.Unmarshal([]byte(stored), &parsed); err == nil {
+			if m.strategy.ValidateCredentials(parsed) {
+				m.mu.Lock()
+				m.cachedCredentials = parsed
+				m.mu.Unlock()
+				return parsed, nil
+			}
+
+			refreshed, err := m.strategy.RefreshToken(ctx, parsed)
+			if err == nil {
+				m.mu.Lock()
+				m.cachedCredentials = refreshed
+				m.mu.Unlock()
+				if encoded, err := json.Marshal(refreshed); err == nil {
+					_ = m.credentials.Save(credentialKey, string(encoded))
+				}
+				return refreshed, nil
+			}
+			// Fall through to NewNoActiveCredentialsError below — a
+			// failed refresh means "no valid credentials", not a fatal
+			// error, mirroring `targets::python`'s auth_manager.py.
+		}
+	}
+
+	return nil, NewNoActiveCredentialsError(string(m.authMethod))
+}
+
+// ApplyAuthHeaders decorates outgoing request headers with the active
+// strategy's credentials. API-key placement (header vs. query, and the
+// header/param name) defaults to an `X-Api-Key` header here; a scheme
+// declaring a different location is one of Story G6's API-client
+// responsibilities to refine, not this manager's.
+func (m *Manager) ApplyAuthHeaders(ctx context.Context, headers map[string]string, method, url string) (map[string]string, error) {
+	credentials, err := m.GetCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m.authMethod == core.AuthMethodOAuth1 {
+		consumerKey, hasConsumerKey := credentials["consumer_key"]
+		privateKey, hasPrivateKey := credentials["private_key"]
+		if !hasConsumerKey || !hasPrivateKey {
+			return nil, NewMissingCredentialsError("consumer_key, private_key")
+		}
+		header, err := BuildOAuth1AuthorizationHeader(consumerKey, privateKey, credentials["token"], method, url)
+		if err != nil {
+			return nil, err
+		}
+		updated := copyHeaders(headers)
+		updated["Authorization"] = header
+		return updated, nil
+	}
+
+	updated := copyHeaders(headers)
+	if authHeader, ok := credentials["authorization_header"]; ok {
+		updated["Authorization"] = authHeader
+	} else if apiKey, ok := credentials["api_key"]; ok {
+		updated["X-Api-Key"] = apiKey
+	}
+	return updated, nil
+}
+
+func copyHeaders(headers map[string]string) map[string]string {
+	updated := make(map[string]string, len(headers))
+	for k, v := range headers {
+		updated[k] = v
+	}
+	return updated
+}
