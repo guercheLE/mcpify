@@ -1,0 +1,24 @@
+---
+source: tests/golden_csharp.rs
+expression: contents
+---
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Out.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// Wraps the official `ModelContextProtocol` SDK's own DI registration,
+    /// scanning this assembly for `[McpServerToolType]`-decorated classes
+    /// (`Tools/McpTools.cs`, Story C6). Deliberately transport-agnostic
+    /// here — Story C5 (`generate_transports_and_roles`) is what actually
+    /// calls `.WithStdioServerTransport()` / mounts the HTTP transport,
+    /// since which one is active is a per-invocation Harness Server
+    /// concern, not a fixed generation-time choice.
+    /// </summary>
+    static partial void AddMcpServer(IServiceCollection services)
+    {
+        services.AddMcpServer().WithToolsFromAssembly();
+    }
+}

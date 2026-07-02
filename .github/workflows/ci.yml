@@ -26,19 +26,21 @@ jobs:
       - run: cargo test
 
   e2e:
-    # The slow, real acceptance gate for all three targets (v1 Story 14 /
-    # v2 Story R8 / v3 Story P8, PRD REQ-2.5.1): the TypeScript test does
-    # npm install (including the @xenova/transformers model download) and
-    # npm test; the Rust test does cargo run --bin populate-embeddings
-    # (including the fastembed model download) and cargo test; the Python
-    # test does uv sync and uv run pytest (including the
-    # sentence-transformers all-mpnet-base-v2 model download during
-    # populate_embeddings) — all three against a generated project, all in
-    # tests/e2e_generation.rs, so this one `cargo test` invocation runs
-    # all three. Only on pushes to main, not every PR, to keep PR feedback
-    # fast — it takes minutes, not seconds. No separate Rust toolchain
-    # install needed here: this workflow already runs on Rust, since
-    # mcpify itself is Rust.
+    # The slow, real acceptance gate for all four targets (v1 Story 14 /
+    # v2 Story R8 / v3 Story P8 / v4 Story C8, PRD REQ-2.5.1): the
+    # TypeScript test does npm install (including the
+    # @xenova/transformers model download) and npm test; the Rust test
+    # does cargo run --bin populate-embeddings (including the fastembed
+    # model download) and cargo test; the Python test does uv sync and uv
+    # run pytest (including the sentence-transformers all-mpnet-base-v2
+    # model download during populate_embeddings); the C# test does
+    # dotnet restore, dotnet format, and dotnet test (which compiles both
+    # the main project and Tests/ as a prerequisite) — all four against a
+    # generated project, all in tests/e2e_generation.rs, so this one
+    # `cargo test` invocation runs all four. Only on pushes to main, not
+    # every PR, to keep PR feedback fast — it takes minutes, not seconds.
+    # No separate Rust toolchain install needed here: this workflow
+    # already runs on Rust, since mcpify itself is Rust.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -52,4 +54,7 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
       - run: cargo test --test e2e_generation -- --ignored
