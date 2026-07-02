@@ -1,0 +1,29 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>Tag applied to a health check whose failure should block startup/readiness (REQ-2.3.4).</summary>
+    public const string CriticalTag = "critical";
+
+    /// <summary>Tag applied to a health check whose failure only degrades, rather than blocks, the service (REQ-2.3.4).</summary>
+    public const string OptionalTag = "optional";
+
+    /// <summary>
+    /// REQ-2.3.4: a component health registry distinguishing critical vs.
+    /// optional components. `Microsoft.Extensions.Diagnostics.HealthChecks`
+    /// (ships with the ASP.NET Core shared framework
+    /// `Microsoft.NET.Sdk.Web` already references) is the first-party fit
+    /// here — C5 maps this onto a `/healthz` HTTP endpoint and C6 adds the
+    /// real per-component checks (the sqlite-vec store, the target API).
+    /// The "self" check registered here is the always-present baseline so
+    /// the registry is never empty even before those land.
+    /// </summary>
+    static partial void AddHealthChecks(IServiceCollection services)
+    {
+        services.AddHealthChecks()
+            .AddCheck("self", () => HealthCheckResult.Healthy(), tags: [CriticalTag]);
+    }
+}

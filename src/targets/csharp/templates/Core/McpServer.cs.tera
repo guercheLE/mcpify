@@ -1,0 +1,20 @@
+using Microsoft.Extensions.DependencyInjection;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// Wraps the official `ModelContextProtocol` SDK's own DI registration.
+    /// Deliberately transport-agnostic here — Story C5
+    /// (`generate_transports_and_roles`) is what actually calls
+    /// `.WithStdioServerTransport()` / wires the HTTP transport, since
+    /// which one is active is a per-invocation Harness Server concern, not
+    /// a fixed generation-time choice. Story C6 registers the `search`/
+    /// `get`/`call` tools onto the builder this method returns.
+    /// </summary>
+    static partial void AddMcpServer(IServiceCollection services)
+    {
+        services.AddMcpServer();
+    }
+}

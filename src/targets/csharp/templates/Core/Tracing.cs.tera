@@ -1,0 +1,31 @@
+using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// REQ-2.3.2: the name every <c>ActivitySource</c>/<c>Meter</c> this
+    /// project creates should share, and what traces/metrics are tagged
+    /// with at the OTLP exporter. Story C5/C6 add
+    /// <c>AddAspNetCoreInstrumentation</c>/<c>AddHttpClientInstrumentation</c>
+    /// here once the Kestrel transport and outbound API client they
+    /// instrument actually exist.
+    /// </summary>
+    public const string ServiceName = "{{ project_name }}";
+
+    static partial void AddTracing(IServiceCollection services)
+    {
+        services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService(ServiceName))
+            .WithTracing(tracing => tracing
+                .AddSource(ServiceName)
+                .AddOtlpExporter())
+            .WithMetrics(metrics => metrics
+                .AddMeter(ServiceName)
+                .AddOtlpExporter());
+    }
+}

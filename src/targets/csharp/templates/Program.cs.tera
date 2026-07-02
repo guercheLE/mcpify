@@ -1,6 +1,7 @@
 using {{ namespace }}.Core;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
 builder.Services.AddMcpifyServices();
 
 using var host = builder.Build();

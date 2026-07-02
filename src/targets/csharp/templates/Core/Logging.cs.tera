@@ -1,0 +1,59 @@
+using Microsoft.Extensions.DependencyInjection;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
+using Serilog.Formatting.Compact;
+
+namespace {{ namespace }}.Core;
+
+/// <summary>
+/// REQ-2.3.1: redacts well-known sensitive property names from every log
+/// event before it reaches a sink, so a stray <c>Log.Information("token={Token}",
+/// token)</c> call can never leak a secret into the structured log stream.
+/// </summary>
+public sealed class RedactionEnricher : ILogEventEnricher
+{
+    private static readonly string[] SensitiveNames =
+    [
+        "password", "token", "secret", "apikey", "api_key",
+        "clientsecret", "client_secret", "consumersecret", "consumer_secret",
+        "privatekey", "private_key", "authorization",
+    ];
+
+    public void Enrich(LogEvent logEvent, ILogEventPropertyFactory propertyFactory)
+    {
+        // Snapshot the keys first — `AddOrUpdateProperty` mutates the same
+        // dictionary `Properties.Keys` enumerates.
+        foreach (var propertyName in logEvent.Properties.Keys.ToList())
+        {
+            if (Array.Exists(SensitiveNames, name => string.Equals(name, propertyName, StringComparison.OrdinalIgnoreCase)))
+            {
+                logEvent.AddOrUpdateProperty(propertyFactory.CreateProperty(propertyName, "***REDACTED***"));
+            }
+        }
+    }
+}
+
+public static partial class ServiceCollectionExtensions
+{
+    static partial void AddLogging(IServiceCollection services)
+    {
+        var minimumLevel = ParseLevel(Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_LOG_LEVEL"));
+
+        services.AddSerilog((_, loggerConfiguration) => loggerConfiguration
+            .MinimumLevel.Is(minimumLevel)
+            .Enrich.With(new RedactionEnricher())
+            .Enrich.FromLogContext()
+            .WriteTo.Console(new CompactJsonFormatter()));
+    }
+
+    private static LogEventLevel ParseLevel(string? level) => level?.ToLowerInvariant() switch
+    {
+        "trace" or "verbose" => LogEventLevel.Verbose,
+        "debug" => LogEventLevel.Debug,
+        "warn" or "warning" => LogEventLevel.Warning,
+        "error" => LogEventLevel.Error,
+        "fatal" => LogEventLevel.Fatal,
+        _ => LogEventLevel.Information,
+    };
+}

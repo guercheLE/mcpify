@@ -1,0 +1,49 @@
+using System.Threading.RateLimiting;
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
+using Polly.CircuitBreaker;
+using Polly.RateLimiting;
+using Polly.Retry;
+
+namespace {{ namespace }}.Core;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// REQ-2.3.3: circuit breaker, retry-with-backoff, and rate limiting
+    /// around outbound calls to the target API, all in one Polly v8
+    /// resilience pipeline (adopted per v4-implementation-plan.md's own
+    /// "already-installed dependency solves it" steer, rather than
+    /// hand-rolling three separate modules) — C6's <c>HttpClient</c>-based
+    /// API client resolves this pipeline by <see cref="ResiliencePipelineKey"/>
+    /// via <c>ResiliencePipelineProvider&lt;string&gt;</c>.
+    /// </summary>
+    public const string ResiliencePipelineKey = "target-api";
+
+    static partial void AddCircuitBreaker(IServiceCollection services)
+    {
+        services.AddResiliencePipeline(ResiliencePipelineKey, builder =>
+        {
+            builder
+                .AddRateLimiter(new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+                {
+                    PermitLimit = 100,
+                    Window = TimeSpan.FromSeconds(1),
+                    SegmentsPerWindow = 4,
+                }))
+                .AddRetry(new RetryStrategyOptions
+                {
+                    MaxRetryAttempts = 3,
+                    BackoffType = DelayBackoffType.Exponential,
+                    UseJitter = true,
+                })
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+                {
+                    FailureRatio = 0.5,
+                    SamplingDuration = TimeSpan.FromSeconds(30),
+                    MinimumThroughput = 10,
+                    BreakDuration = TimeSpan.FromSeconds(30),
+                });
+        });
+    }
+}

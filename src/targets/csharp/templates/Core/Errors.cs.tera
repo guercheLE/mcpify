@@ -1,0 +1,44 @@
+namespace {{ namespace }}.Core;
+
+/// <summary>
+/// Base class for every error this project raises deliberately, mirroring
+/// `targets::python`'s `McpifyError` hierarchy — one exception type per
+/// error family, each carrying the literal <see cref="Code"/> string
+/// callers match on instead of branching on the exception's C# type.
+/// </summary>
+public abstract class McpifyException(string message) : Exception(message)
+{
+    public abstract string Code { get; }
+}
+
+public sealed class ConfigurationException(string message) : McpifyException(message)
+{
+    public override string Code => "CONFIGURATION_ERROR";
+}
+
+public sealed class AuthenticationException(string message) : McpifyException(message)
+{
+    public override string Code => "AUTHENTICATION_ERROR";
+}
+
+public sealed class ValidationException(string message, object? details = null) : McpifyException(message)
+{
+    public object? Details { get; } = details;
+
+    public override string Code => "VALIDATION_ERROR";
+}
+
+public sealed class McpifyNotFoundException(string message) : McpifyException(message)
+{
+    public override string Code => "NOT_FOUND";
+}
+
+public sealed class CircuitBreakerOpenException() : McpifyException("circuit breaker is open")
+{
+    public override string Code => "CIRCUIT_BREAKER_OPEN";
+}
+
+public sealed class RateLimitExceededException() : McpifyException("rate limit exceeded")
+{
+    public override string Code => "RATE_LIMIT_EXCEEDED";
+}

@@ -1,0 +1,116 @@
+using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+
+namespace {{ namespace }}.Core;
+
+public enum AuthMethod
+{
+{%- if auth_methods | length == 0 %}
+    None,
+{%- endif %}
+{%- for method in auth_methods %}
+    {{ method.class_name }},
+{%- endfor %}
+}
+
+public enum Transport
+{
+    Stdio,
+    Http,
+}
+
+/// <summary>
+/// Typed view of the resolved REQ-2.2 configuration cascade, bound from
+/// <see cref="IConfiguration"/> by <c>AddConfig</c> below.
+/// </summary>
+public sealed class McpifyOptions
+{
+    [Required]
+    public string Url { get; set; } = string.Empty;
+
+    public AuthMethod AuthMethod { get; set; }
+
+    public string LogLevel { get; set; } = "info";
+
+    public int RateLimit { get; set; } = 100;
+
+    public int TimeoutMs { get; set; } = 30_000;
+
+    public int CacheSize { get; set; } = 500;
+
+    public int RetryAttempts { get; set; } = 3;
+
+    public Transport Transport { get; set; } = Transport.Stdio;
+
+    public string Host { get; set; } = "127.0.0.1";
+
+    public int Port { get; set; } = 3000;
+
+    public string? CorsAllow { get; set; }
+}
+
+/// <summary>
+/// REQ-2.2's 7-tier configuration cascade (CLI flags &gt; env vars &gt;
+/// local file &gt; home file &gt; system file &gt; install-dir file &gt;
+/// built-in defaults), mapped directly onto <see cref="IConfiguration"/>'s
+/// own layered-provider model: each tier is one provider, registered
+/// lowest-priority-first, since a key resolves from the last-registered
+/// provider that defines it — the opposite order from the cascade's own
+/// stop-at-first-match framing, but the same effective precedence.
+/// Mirrors `targets::python::templates::core::config.py`'s cascade shape,
+/// substituting JSON files for YAML (the native .NET config-file
+/// convention) and `IConfiguration` providers for hand-rolled dict merging.
+/// </summary>
+public static class ConfigurationExtensions
+{
+    public static IConfigurationBuilder AddMcpifyConfiguration(
+        this IConfigurationBuilder configuration,
+        string projectName,
+        string[] args)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var installDir = AppContext.BaseDirectory;
+
+        return configuration
+            // Tier 7: built-in defaults.
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LogLevel"] = "info",
+                ["RateLimit"] = "100",
+                ["TimeoutMs"] = "30000",
+                ["CacheSize"] = "500",
+                ["RetryAttempts"] = "3",
+                ["Transport"] = "Stdio",
+                ["Host"] = "127.0.0.1",
+                ["Port"] = "3000",
+            })
+            // Tier 6: tool installation-directory config file.
+            .AddJsonFile(Path.Combine(installDir, "config.json"), optional: true)
+            // Tier 5: system-wide config file.
+            .AddJsonFile(Path.Combine("/etc", projectName, "config.json"), optional: true)
+            // Tier 4: user home-directory config file.
+            .AddJsonFile(Path.Combine(home, $".{projectName}", "config.json"), optional: true)
+            // Tier 3: local working-directory config file.
+            .AddJsonFile(
+                Path.Combine(Directory.GetCurrentDirectory(), $"{projectName}.config.json"),
+                optional: true)
+            // Tier 2: environment variables.
+            .AddEnvironmentVariables(prefix: "{{ tool_prefix_env }}_")
+            // Tier 1: CLI flags / direct tool-call parameters.
+            .AddCommandLine(args);
+    }
+}
+
+public static partial class ServiceCollectionExtensions
+{
+    static partial void AddConfig(IServiceCollection services)
+    {
+        services
+            .AddOptions<McpifyOptions>()
+            .BindConfiguration(string.Empty)
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+    }
+}
