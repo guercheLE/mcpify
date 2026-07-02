@@ -12,6 +12,7 @@ converted into an MCP error tool result by `FastMCP` itself — no manual
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -71,7 +72,7 @@ def build_server(db_path: Path, config: Config, auth_manager: AuthManager) -> Fa
 
 async def _run_tool(name: str, db_path: Path, fn: Any) -> str:
     async def run(conn: Any) -> Any:
-        return fn(conn)
+        return await fn(conn)
 
     return await _run_tool_async(name, db_path, run)
 
@@ -82,4 +83,4 @@ async def _run_tool_async(name: str, db_path: Path, fn: Any) -> str:
         result = await fn(conn)
     duration_ms = (time.monotonic() - started_at) * 1000
     log.info("tool executed", tool=name, duration_ms=round(duration_ms, 2))
-    return result if isinstance(result, str) else str(result)
+    return json.dumps(result, indent=2)
