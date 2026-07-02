@@ -1,0 +1,138 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"{{ module_path }}/internal/cli"
+	"{{ module_path }}/internal/core"
+)
+
+func main() {
+	rootCmd := &cobra.Command{
+		Use:   "{{ project_name }}",
+		Short: "{{ display_name }} MCP server",
+	}
+
+	var urlFlag, hostFlag, corsAllowFlag string
+	var portFlag int
+	rootCmd.PersistentFlags().StringVar(&urlFlag, "url", "", "target API base URL")
+	rootCmd.PersistentFlags().StringVar(&hostFlag, "host", "", "HTTP transport bind host")
+	rootCmd.PersistentFlags().IntVar(&portFlag, "port", 0, "HTTP transport bind port")
+	rootCmd.PersistentFlags().StringVar(&corsAllowFlag, "cors-allow", "", "Access-Control-Allow-Origin value")
+
+	overrides := func() core.CLIOverrides {
+		var o core.CLIOverrides
+		if urlFlag != "" {
+			o.URL = &urlFlag
+		}
+		if hostFlag != "" {
+			o.Host = &hostFlag
+		}
+		if portFlag != 0 {
+			o.Port = &portFlag
+		}
+		if corsAllowFlag != "" {
+			o.CorsAllow = &corsAllowFlag
+		}
+		return o
+	}
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "start",
+		Short: "Start the Harness Server over stdio (for agent hosts).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunStdioHarness(context.Background(), overrides())
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "http",
+		Short: "Start the Harness Server over HTTP (for agent hosts).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunHTTPHarness(context.Background(), overrides())
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the installed version.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cli.PrintVersion()
+			return nil
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "config",
+		Short: "Print the resolved configuration (secrets redacted).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.PrintConfig(overrides())
+		},
+	})
+
+	var searchLimit int
+	searchCmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Semantic search for operations matching a natural-language query.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunSearch(context.Background(), overrides(), args[0], searchLimit)
+		},
+	}
+	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 5, "maximum number of results")
+	rootCmd.AddCommand(searchCmd)
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "get <operationId>",
+		Short: "Show the schema, path, method, and documentation for one operation.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunGet(context.Background(), overrides(), args[0])
+		},
+	})
+
+	var callArgs string
+	callCmd := &cobra.Command{
+		Use:   "call <operationId>",
+		Short: "Validate arguments, invoke the live API, and validate the response.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunCall(context.Background(), overrides(), args[0], callArgs)
+		},
+	}
+	callCmd.Flags().StringVarP(&callArgs, "args", "a", "{}", "JSON-encoded operation arguments")
+	rootCmd.AddCommand(callCmd)
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "populate-embeddings",
+		Short: "Backfill the local semantic vector store.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunPopulateEmbeddings(context.Background(), overrides())
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "setup",
+		Short: "Interactively configure credentials and connection settings.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunSetup(context.Background(), overrides())
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "test-connection",
+		Short: "Verify the configured API URL and credentials are reachable.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunTestConnection(context.Background(), overrides())
+		},
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

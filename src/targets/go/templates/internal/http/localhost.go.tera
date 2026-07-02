@@ -1,0 +1,30 @@
+// Package httptransport implements this project's HTTP transport (the
+// package is named httptransport, not http, so files that need both this
+// package and the stdlib net/http never collide on the "http" identifier).
+package httptransport
+
+import (
+	"net"
+	"net/http"
+)
+
+// IsLocalhost reports whether remoteAddr (net/http's Request.RemoteAddr
+// shape, "host:port") names a loopback address. Requests from localhost
+// get relaxed auth requirements — the same localhost-vs-network binding
+// distinction proven useful in the reference servers (looser auth only
+// when bound to localhost, never over an exposed network interface).
+func IsLocalhost(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// ExtractAuthorizationHeader parses the Authorization header off an
+// incoming HTTP request, if present.
+func ExtractAuthorizationHeader(headers http.Header) (string, bool) {
+	value := headers.Get("Authorization")
+	return value, value != ""
+}

@@ -1,0 +1,50 @@
+package httptransport
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"go.opentelemetry.io/otel/metric"
+)
+
+// authGateMiddleware requires an Authorization header on /mcp for every
+// request except from localhost (see IsLocalhost) — enforced here, in
+// front of the mounted MCP endpoint, since this project's auth policy
+// isn't the MCP SDK's concern. Also increments the http_requests_total
+// counter for every request that reaches it.
+func authGateMiddleware(requestCounter metric.Int64Counter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCounter.Add(r.Context(), 1)
+
+			relaxed := IsLocalhost(r.RemoteAddr)
+			if !relaxed && strings.HasPrefix(r.URL.Path, "/mcp") {
+				if _, ok := ExtractAuthorizationHeader(r.Header); !ok {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing Authorization header"})
+					return
+				}
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// corsMiddleware sets Access-Control-Allow-Origin before the handler
+// runs (unlike a "set it after calling next" ordering, which would be
+// ignored once the handler has written a response body — net/http, unlike
+// some other stacks, drops header writes issued after the first Write
+// call).
+func corsMiddleware(corsAllow string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if corsAllow != "" {
+				w.Header().Set("Access-Control-Allow-Origin", corsAllow)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

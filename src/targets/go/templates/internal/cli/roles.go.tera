@@ -1,0 +1,260 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/mark3labs/mcp-go/server"
+
+	"{{ module_path }}/internal/auth"
+	"{{ module_path }}/internal/core"
+	"{{ module_path }}/internal/data"
+	httptransport "{{ module_path }}/internal/http"
+	"{{ module_path }}/internal/services"
+	"{{ module_path }}/internal/tools"
+)
+
+// Services bundles every dependency the Terminal Client / Harness Server
+// roles need — built once by newServices and shared across every
+// subcommand. mcpify always emits both stdio and HTTP capability;
+// transport *selection* is runtime config (REQ-2.2's cascade), not a
+// generation-time decision — mirrors `targets::python`'s
+// `_run_harness_server()`.
+type Services struct {
+	Config      core.Config
+	Store       *data.Store
+	EmbedSvc    *services.EmbeddingService
+	VectorStore *services.VectorStore
+	ApiClient   *services.ApiClient
+	AuthManager *auth.Manager
+	Health      *core.Registry
+	MCPServer   *server.MCPServer
+}
+
+func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, error) {
+	config, err := core.Load(overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := data.Open("mcp_store.db")
+	if err != nil {
+		return nil, err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	embedSvc, err := services.NewEmbeddingService(
+		ctx,
+		filepath.Join(home, ".{{ project_name }}", "models"),
+		services.ResolveSharedLibraryPath(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	vectorStore, err := services.NewVectorStore("mcp_store.chromem", embedSvc.Embed)
+	if err != nil {
+		return nil, err
+	}
+
+	credentialStore, err := core.NewCredentialStore()
+	if err != nil {
+		return nil, err
+	}
+	authManager, err := auth.NewManager(config.AuthMethod, auth.NewStrategies(), credentialStore)
+	if err != nil {
+		return nil, err
+	}
+
+	apiClient := services.NewApiClient(config)
+	health := core.NewRegistry()
+	mcpServer := core.NewMCPServer()
+	tools.Register(mcpServer, store, vectorStore, apiClient, authManager)
+
+	return &Services{
+		Config:      config,
+		Store:       store,
+		EmbedSvc:    embedSvc,
+		VectorStore: vectorStore,
+		ApiClient:   apiClient,
+		AuthManager: authManager,
+		Health:      health,
+		MCPServer:   mcpServer,
+	}, nil
+}
+
+func (s *Services) Close() {
+	_ = s.Store.Close()
+	_ = s.EmbedSvc.Close()
+}
+
+// RunStdioHarness starts the Harness Server over stdio.
+func RunStdioHarness(ctx context.Context, overrides core.CLIOverrides) error {
+	svc, err := newServices(ctx, overrides)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	return server.ServeStdio(svc.MCPServer)
+}
+
+// RunHTTPHarness starts the Harness Server over HTTP.
+func RunHTTPHarness(ctx context.Context, overrides core.CLIOverrides) error {
+	svc, err := newServices(ctx, overrides)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	mcpHandler := server.NewStreamableHTTPServer(svc.MCPServer)
+	handler, err := httptransport.NewHandler(mcpHandler, svc.Health, svc.Config.CorsAllow)
+	if err != nil {
+		return err
+	}
+
+	addr := fmt.Sprintf("%s:%d", svc.Config.Host, svc.Config.Port)
+	fmt.Printf("listening on http://%s\n", addr)
+	return http.ListenAndServe(addr, handler)
+}
+
+// PrintVersion prints the installed version.
+func PrintVersion() {
+	fmt.Println("1.0.0")
+}
+
+// PrintConfig prints the resolved configuration with secrets redacted
+// (REQ-2.3.1's redaction principle applied to this output too).
+func PrintConfig(overrides core.CLIOverrides) error {
+	config, err := core.Load(overrides)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("URL: %s\n", config.URL)
+	fmt.Printf("AuthMethod: %s\n", config.AuthMethod)
+	fmt.Println("Credentials: ***REDACTED***")
+	fmt.Printf("LogLevel: %s\n", config.LogLevel)
+	fmt.Printf("Transport: %s\n", config.Transport)
+	fmt.Printf("Host: %s\n", config.Host)
+	fmt.Printf("Port: %d\n", config.Port)
+	return nil
+}
+
+// RunSearch runs the search tool in-process, printing its result — the
+// same tool implementation the MCP-protocol path uses (Story G6's
+// tools.Search), just called directly instead of over stdio/HTTP.
+func RunSearch(ctx context.Context, overrides core.CLIOverrides, query string, limit int) error {
+	svc, err := newServices(ctx, overrides)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	results, err := tools.Search(ctx, svc.VectorStore, query, limit)
+	if err != nil {
+		return err
+	}
+	return printJSON(results)
+}
+
+// RunGet runs the get tool in-process, printing its result.
+func RunGet(ctx context.Context, overrides core.CLIOverrides, operationID string) error {
+	svc, err := newServices(ctx, overrides)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	result, err := tools.Get(svc.Store, operationID)
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+// RunCall runs the call tool in-process, printing its result.
+func RunCall(ctx context.Context, overrides core.CLIOverrides, operationID, argsJSON string) error {
+	svc, err := newServices(ctx, overrides)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	var args map[string]any
+	if argsJSON != "" {
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Errorf("invalid --args JSON: %w", err)
+		}
+	}
+
+	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, operationID, args)
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+// RunPopulateEmbeddings backfills the vector store, printing how many
+// operations were indexed.
+func RunPopulateEmbeddings(ctx context.Context, overrides core.CLIOverrides) error {
+	svc, err := newServices(ctx, overrides)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	count, err := services.PopulateEmbeddings(ctx, svc.Store, svc.VectorStore)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("populated %d embedding(s)\n", count)
+	return nil
+}
+
+// RunSetup will be replaced by Story G7 with an interactive credential
+// setup wizard (AlecAivazis/survey) — stubbed here so this story's own
+// output stays buildable in isolation, the same way every other target's
+// intermediate stories leave a forward-referenced piece stubbed rather
+// than unbuildable.
+func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
+	fmt.Println("interactive setup is not yet implemented — set config via --url/env vars/a config file for now")
+	return nil
+}
+
+// RunTestConnection verifies the configured API URL is reachable.
+func RunTestConnection(ctx context.Context, overrides core.CLIOverrides) error {
+	config, err := core.Load(overrides)
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, config.URL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("unreachable: %v\n", err)
+		return err
+	}
+	defer resp.Body.Close()
+	fmt.Printf("reachable (status %d)\n", resp.StatusCode)
+	return nil
+}
+
+func printJSON(value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(encoded))
+	return nil
+}

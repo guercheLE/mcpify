@@ -1,0 +1,52 @@
+package httptransport
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"{{ module_path }}/internal/core"
+)
+
+// NewHandler assembles the HTTP transport: /mcp is handled by mcpHandler
+// (mark3labs/mcp-go's own StreamableHTTPServer, mounted by Story G6 once
+// the tool registrations it serves exist), /healthz and /metrics are
+// plain endpoints alongside it, and the whole thing is wrapped in the
+// CORS/auth-gate middleware chain. Mirrors
+// `targets::csharp::templates::Http::HttpServer.cs.tera`'s
+// `HttpServer.Configure`.
+func NewHandler(mcpHandler http.Handler, healthRegistry *core.Registry, corsAllow string) (http.Handler, error) {
+	requestCounter, err := core.Meter().Int64Counter("http_requests_total")
+	if err != nil {
+		return nil, err
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", mcpHandler)
+	mux.HandleFunc("/healthz", healthzHandler(healthRegistry))
+	mux.Handle("/metrics", promhttp.Handler())
+
+	var handler http.Handler = mux
+	handler = authGateMiddleware(requestCounter)(handler)
+	handler = corsMiddleware(corsAllow)(handler)
+	return handler, nil
+}
+
+func healthzHandler(registry *core.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		healthy, results := registry.Report()
+		w.Header().Set("Content-Type", "application/json")
+		if !healthy {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		status := "Healthy"
+		if !healthy {
+			status = "Unhealthy"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":     status,
+			"components": len(results),
+		})
+	}
+}
