@@ -40,9 +40,10 @@ pub async fn render_and_write(
 mod tests {
     use super::*;
 
-    // Story R1 has no real `.tera` templates yet (those land in R2+), so
-    // these tests exercise `render_and_write` against a synthetic template
-    // registered directly, rather than one loaded through `render_engine()`.
+    // These tests exercise `render_and_write` against a synthetic template
+    // registered directly, rather than one loaded through `render_engine()`
+    // — keeps this module's tests independent of whatever real templates
+    // happen to exist under `templates/` at any given story.
     fn tera_with_greeting_template() -> Tera {
         let mut tera = Tera::default();
         tera.add_raw_template("greeting.tera", "Hello, {{ name }}!")

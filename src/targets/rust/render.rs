@@ -36,10 +36,10 @@ mod tests {
 
     #[test]
     fn loads_every_embedded_template_without_error() {
-        // No `.tera` templates exist yet (Story R1 only builds the engine;
-        // Story R2 adds the first real templates) — this just proves the
-        // embed+parse pipeline itself doesn't error on an empty/near-empty
-        // template set.
-        render_engine().unwrap();
+        let tera = render_engine().unwrap();
+        assert!(
+            tera.get_template_names()
+                .any(|name| name == "Cargo.toml.tera")
+        );
     }
 }
