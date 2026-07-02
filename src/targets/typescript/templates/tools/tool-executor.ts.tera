@@ -4,14 +4,11 @@
 // error handling, so search/get/call each only implement their own business
 // logic, not the MCP content-envelope boilerplate.
 
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+
 import { logger } from '../core/logger.js';
 
-export interface McpToolResult {
-  content: { type: 'text'; text: string }[];
-  isError?: boolean;
-}
-
-export async function executeTool(toolName: string, fn: () => Promise<unknown>): Promise<McpToolResult> {
+export async function executeTool(toolName: string, fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
     const result = await fn();
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };

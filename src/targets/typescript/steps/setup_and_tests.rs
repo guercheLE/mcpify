@@ -19,6 +19,10 @@ const SHARED_FILES: &[(&str, &str)] = &[
         "tests/helpers/mcp-test-client.ts",
     ),
     (
+        "tests/helpers/dummy-credentials.ts.tera",
+        "tests/helpers/dummy-credentials.ts",
+    ),
+    (
         "tests/helpers/log-capture.ts.tera",
         "tests/helpers/log-capture.ts",
     ),

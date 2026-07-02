@@ -11,7 +11,6 @@ use crate::context::GeneratorContext;
 /// corresponds 1:1 to a step of the Compile-Time Lifecycle (architecture.md §1).
 #[async_trait]
 pub trait McpServerTargetGenerator: Send + Sync {
-    #[allow(dead_code)] // ponytail: unused until build_registry() registers a real target (Story 7+)
     fn name(&self) -> &'static str;
     async fn bootstrap_project(&self, ctx: &GeneratorContext) -> Result<()>;
     async fn generate_enterprise_scaffolding(&self, ctx: &GeneratorContext) -> Result<()>;
@@ -50,10 +49,14 @@ pub trait McpServerTargetGenerator: Send + Sync {
 /// Dispatches on `--language` to the registered target implementation.
 pub type TargetRegistry = HashMap<&'static str, Box<dyn McpServerTargetGenerator>>;
 
-/// Target implementations (e.g. `TypeScriptTargetGenerator`) register here
-/// as they land; v1 ships only "typescript" (Story 7+).
+/// Target implementations register here as they land; v1 ships only
+/// "typescript".
 pub fn build_registry() -> TargetRegistry {
-    HashMap::new()
+    let mut registry: TargetRegistry = HashMap::new();
+    let typescript: Box<dyn McpServerTargetGenerator> =
+        Box::new(typescript::TypeScriptTargetGenerator);
+    registry.insert(typescript.name(), typescript);
+    registry
 }
 
 #[cfg(test)]
@@ -158,7 +161,9 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_starts_empty() {
-        assert!(build_registry().is_empty());
+    fn build_registry_registers_the_typescript_target() {
+        let registry = build_registry();
+        assert!(registry.contains_key("typescript"));
+        assert_eq!(registry.len(), 1);
     }
 }

@@ -10,7 +10,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import Ajv, { type ValidateFunction } from 'ajv';
+// Named import, not default: ajv ships no `exports` map (legacy CJS-only
+// package), which makes default-import interop unreliable under
+// "moduleResolution": "NodeNext" — the named `Ajv` class export sidesteps
+// that ambiguity entirely.
+import { Ajv, type ValidateFunction } from 'ajv';
 
 import { ValidationError } from '../core/errors.js';
 

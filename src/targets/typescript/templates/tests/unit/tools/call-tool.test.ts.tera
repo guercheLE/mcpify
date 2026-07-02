@@ -7,6 +7,7 @@ import type { Config } from '../../../src/core/config-schema.js';
 import { closeStore, getEndpoint, openStore } from '../../../src/data/store-repository.js';
 import { ApiClient } from '../../../src/services/api-client.js';
 import { callOperation } from '../../../src/tools/call-tool.js';
+import { buildDummyCredentials } from '../../helpers/dummy-credentials.js';
 import { startMockApiServer, type MockApiServer } from '../../helpers/mock-api-server.js';
 
 const store = openStore();
@@ -53,6 +54,7 @@ describe('callOperation', () => {
     // reject it — this test is only about the request actually reaching
     // the target with the right method/path/auth, not response shape.
     const authManager = new AuthManager(config.auth_method);
+    authManager.setCredentials(buildDummyCredentials());
     const endpoint = getEndpoint(store, '{{ operations.0.operation_id }}')!;
     const client = new ApiClient(config, authManager);
     await client.execute(endpoint, {});

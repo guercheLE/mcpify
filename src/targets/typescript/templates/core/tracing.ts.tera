@@ -4,7 +4,7 @@ import { registerInstrumentations } from '@opentelemetry/instrumentation';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
 import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { MeterProvider } from '@opentelemetry/sdk-metrics';
 import { NodeTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
@@ -17,7 +17,7 @@ let meterProvider: MeterProvider | undefined;
  * operation counts/durations, and auth attempt/failure counts are recorded
  * by the modules that own those events (auth-manager, tool-executor). */
 export function initTracing(): void {
-  const resource = new Resource({ [ATTR_SERVICE_NAME]: '{{ project_name }}' });
+  const resource = resourceFromAttributes({ [ATTR_SERVICE_NAME]: '{{ project_name }}' });
 
   tracerProvider = new NodeTracerProvider({
     resource,

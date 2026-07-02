@@ -62,6 +62,16 @@ export class AuthManager {
     return credentials;
   }
 
+  /**
+   * Seeds in-memory credentials directly, bypassing OS-keychain/file
+   * storage entirely — for tests (which must never touch the real OS
+   * keychain as a side effect of running) and for callers that already
+   * hold validated credentials from elsewhere.
+   */
+  setCredentials(credentials: Credentials): void {
+    this.cachedCredentials = credentials;
+  }
+
   async getCredentials(): Promise<Credentials> {
     if (this.cachedCredentials && this.strategy.validateCredentials(this.cachedCredentials)) {
       return this.cachedCredentials;
@@ -99,6 +109,13 @@ export class AuthManager {
       const oauth1 = strategies.oauth1 as OAuth1Strategy;
       return { ...headers, Authorization: oauth1.buildAuthorizationHeader(credentials, method, url) };
     }
+{%- else %}
+    // method/url are part of this method's fixed public signature (every
+    // active strategy's header-decoration needs them in principle), but
+    // only OAuth1's per-request signing actually consumes them — unused
+    // here since OAuth1 wasn't discovered for this deployment.
+    void method;
+    void url;
 {%- endif %}
     if (credentials.authorizationHeader) {
       return { ...headers, Authorization: credentials.authorizationHeader };

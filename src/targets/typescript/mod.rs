@@ -11,17 +11,9 @@ use crate::context::GeneratorContext;
 use crate::targets::McpServerTargetGenerator;
 
 /// The v1 output target (PRD REQ-1.1.4/1.1.5). Each method below corresponds
-/// to one step of the per-target lifecycle (architecture.md §1, steps 5-11);
-/// they're stubbed here so the trait compiles end to end, and filled in by
-/// Stories 8-14 in that order — enterprise scaffolding is generated before
-/// any tool-specific code, per architecture.md's explicit ordering rationale.
-///
-/// Deliberately NOT registered in `targets::build_registry()` yet: a stub
-/// that returns `Ok(())` for every step would make `mcpify -l typescript`
-/// silently "succeed" while generating nothing, which would violate the
-/// zero-placeholder quality bar (PRD REQ-2.5.1). It gets registered once
-/// `run_generated_tests` (Story 14) is real enough for a green run to mean
-/// something.
+/// to one step of the per-target lifecycle (architecture.md §1, steps 5-11)
+/// — enterprise scaffolding is generated before any tool-specific code, per
+/// architecture.md's explicit ordering rationale.
 #[derive(Debug, Default)]
 pub struct TypeScriptTargetGenerator;
 
@@ -55,8 +47,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         steps::setup_and_tests::generate_setup_wizard_and_tests(ctx).await
     }
 
-    async fn run_generated_tests(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn run_generated_tests(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::run_tests::run_generated_tests(ctx).await
     }
 }
 
