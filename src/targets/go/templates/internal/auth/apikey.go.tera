@@ -1,0 +1,18 @@
+package auth
+
+import "context"
+
+type ApiKeyStrategy struct{ NoRefresh }
+
+func (ApiKeyStrategy) Authenticate(ctx context.Context, config Credentials) (Credentials, error) {
+	apiKey, ok := config["api_key"]
+	if !ok || apiKey == "" {
+		return nil, NewMissingCredentialsError("api_key")
+	}
+	return Credentials{"api_key": apiKey}, nil
+}
+
+func (ApiKeyStrategy) ValidateCredentials(credentials Credentials) bool {
+	apiKey, ok := credentials["api_key"]
+	return ok && apiKey != ""
+}

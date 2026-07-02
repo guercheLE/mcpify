@@ -1,0 +1,29 @@
+package auth
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+)
+
+type BasicStrategy struct{ NoRefresh }
+
+func (BasicStrategy) Authenticate(ctx context.Context, config Credentials) (Credentials, error) {
+	username, hasUsername := config["username"]
+	password, hasPassword := config["password"]
+	if !hasUsername || username == "" || !hasPassword || password == "" {
+		return nil, NewMissingCredentialsError("username, password")
+	}
+
+	token := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password)))
+	return Credentials{
+		"username":             username,
+		"password":             password,
+		"authorization_header": fmt.Sprintf("Basic %s", token),
+	}, nil
+}
+
+func (BasicStrategy) ValidateCredentials(credentials Credentials) bool {
+	_, ok := credentials["authorization_header"]
+	return ok
+}

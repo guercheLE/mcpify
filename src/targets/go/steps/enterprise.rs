@@ -168,7 +168,8 @@ mod tests {
             .await
             .unwrap();
         assert!(contents.contains("type AuthMethod string"));
-        assert!(!contents.contains("const AuthMethod"));
+        assert!(contents.contains(r#"const AuthMethodNone AuthMethod = """#));
+        assert!(!contents.contains("const AuthMethodBasic"));
     }
 
     #[tokio::test]

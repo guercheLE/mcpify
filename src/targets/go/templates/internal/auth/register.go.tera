@@ -1,0 +1,19 @@
+package auth
+
+import "{{ module_path }}/internal/core"
+
+// NewStrategies builds the map[core.AuthMethod]Strategy registration every
+// discovered auth scheme contributes one entry to (REQ-1.2.2/REQ-1.2.3).
+// When no scheme was discovered, StubStrategy is registered under
+// `core.AuthMethodNone`, mirroring `targets::python`'s `strategy_for()`
+// dict-get-with-default.
+func NewStrategies() map[core.AuthMethod]Strategy {
+	strategies := map[core.AuthMethod]Strategy{}
+{%- if auth_methods | length == 0 %}
+	strategies[core.AuthMethodNone] = StubStrategy{}
+{%- endif %}
+{%- for method in auth_methods %}
+	strategies[core.AuthMethod{{ method.type_name }}] = {{ method.type_name }}Strategy{}
+{%- endfor %}
+	return strategies
+}

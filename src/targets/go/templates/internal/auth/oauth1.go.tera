@@ -1,0 +1,155 @@
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/dghubble/oauth1"
+)
+
+type OAuth1Strategy struct{ NoRefresh }
+
+func (OAuth1Strategy) Authenticate(ctx context.Context, config Credentials) (Credentials, error) {
+	consumerKey, hasConsumerKey := config["consumer_key"]
+	privateKey, hasPrivateKey := config["private_key"]
+	if !hasConsumerKey || consumerKey == "" || !hasPrivateKey || privateKey == "" {
+		return nil, NewMissingCredentialsError("consumer_key, private_key")
+	}
+
+	credentials := Credentials{
+		"consumer_key": consumerKey,
+		"private_key":  privateKey,
+	}
+	if token, ok := config["token"]; ok && token != "" {
+		credentials["token"] = token
+	}
+	return credentials, nil
+}
+
+func (OAuth1Strategy) ValidateCredentials(credentials Credentials) bool {
+	_, hasConsumerKey := credentials["consumer_key"]
+	_, hasPrivateKey := credentials["private_key"]
+	return hasConsumerKey && hasPrivateKey
+}
+
+// BuildOAuth1AuthorizationHeader computes the per-request Authorization
+// header for OAuth1 RSA-SHA1 (RFC 5849 §3.4.1). Unlike the other
+// strategies, OAuth1 signs the method + URL on every call, so this can't
+// be precomputed once in Authenticate — callers (the generated API
+// client, Story G6) call this immediately before dispatch. Reuses
+// `dghubble/oauth1`'s exported `PercentEncode` and `RSASigner` for
+// correct RFC 3986 encoding and PKCS1-v1.5 SHA1 signing rather than
+// hand-rolling either, while composing the base string and header
+// directly since the library's own `Config`/`Client` only exposes a full
+// round-tripping `http.Client`, not a standalone header value — verified
+// with a real RSA keypair sign/verify roundtrip during implementation,
+// the same bar `targets::csharp`'s `OAuth1Signer` was held to.
+func BuildOAuth1AuthorizationHeader(consumerKey, privateKeyPEM, token, method, rawURL string) (string, error) {
+	privateKey, err := parseRSAPrivateKey(privateKeyPEM)
+	if err != nil {
+		return "", err
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	baseURL := fmt.Sprintf("%s://%s%s", parsed.Scheme, parsed.Host, parsed.Path)
+
+	nonce, err := randomNonce()
+	if err != nil {
+		return "", err
+	}
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	params := map[string]string{
+		"oauth_consumer_key":     consumerKey,
+		"oauth_nonce":            nonce,
+		"oauth_signature_method": "RSA-SHA1",
+		"oauth_timestamp":        timestamp,
+		"oauth_version":          "1.0",
+	}
+	if token != "" {
+		params["oauth_token"] = token
+	}
+	for key, values := range parsed.Query() {
+		params[key] = values[0]
+	}
+
+	baseString := strings.Join([]string{
+		strings.ToUpper(method),
+		oauth1.PercentEncode(baseURL),
+		oauth1.PercentEncode(normalizedParameterString(params)),
+	}, "&")
+
+	signer := &oauth1.RSASigner{PrivateKey: privateKey}
+	signature, err := signer.Sign("", baseString)
+	if err != nil {
+		return "", err
+	}
+	params["oauth_signature"] = signature
+
+	headerKeys := []string{
+		"oauth_consumer_key", "oauth_nonce", "oauth_signature",
+		"oauth_signature_method", "oauth_timestamp", "oauth_version",
+	}
+	if token != "" {
+		headerKeys = append(headerKeys, "oauth_token")
+	}
+	sort.Strings(headerKeys)
+
+	pairs := make([]string, 0, len(headerKeys))
+	for _, key := range headerKeys {
+		pairs = append(pairs, fmt.Sprintf(`%s="%s"`, oauth1.PercentEncode(key), oauth1.PercentEncode(params[key])))
+	}
+	return "OAuth " + strings.Join(pairs, ", "), nil
+}
+
+func normalizedParameterString(params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, fmt.Sprintf("%s=%s", oauth1.PercentEncode(key), oauth1.PercentEncode(params[key])))
+	}
+	return strings.Join(pairs, "&")
+}
+
+func randomNonce() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", buf), nil
+}
+
+func parseRSAPrivateKey(pemData string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemData))
+	if block == nil {
+		return nil, fmt.Errorf("invalid PEM-encoded private key")
+	}
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse RSA private key: %w", err)
+	}
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key is not an RSA key")
+	}
+	return rsaKey, nil
+}

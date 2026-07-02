@@ -1,0 +1,27 @@
+package auth
+
+import "fmt"
+
+// Error is the base for every error this package's strategies/manager
+// raise deliberately, mirroring
+// `targets::csharp::templates::Auth::AuthErrors.cs.tera`'s
+// `AuthException` hierarchy as a single struct rather than a type
+// hierarchy — see `internal/core/errors.go`'s `Error` for why.
+type Error struct {
+	Message string
+}
+
+func (e *Error) Error() string { return e.Message }
+
+func NewMissingCredentialsError(fields string) *Error {
+	return &Error{Message: fmt.Sprintf("missing required credential field(s): %s", fields)}
+}
+
+func NewTokenExpiredError() *Error {
+	return &Error{Message: "access token expired and could not be refreshed"}
+}
+
+func NewNoActiveCredentialsError(authMethod string) *Error {
+	return &Error{Message: fmt.Sprintf(
+		"no valid credentials for auth method '%s'; run `{{ project_name }} setup`", authMethod)}
+}

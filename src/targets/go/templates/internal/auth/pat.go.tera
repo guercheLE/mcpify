@@ -1,0 +1,24 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+)
+
+type PatStrategy struct{ NoRefresh }
+
+func (PatStrategy) Authenticate(ctx context.Context, config Credentials) (Credentials, error) {
+	token, ok := config["token"]
+	if !ok || token == "" {
+		return nil, NewMissingCredentialsError("token")
+	}
+	return Credentials{
+		"token":                token,
+		"authorization_header": fmt.Sprintf("Bearer %s", token),
+	}, nil
+}
+
+func (PatStrategy) ValidateCredentials(credentials Credentials) bool {
+	token, ok := credentials["token"]
+	return ok && token != ""
+}

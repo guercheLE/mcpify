@@ -1,0 +1,116 @@
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+	"strconv"
+	"time"
+
+	"golang.org/x/oauth2"
+)
+
+type OAuth2Strategy struct{}
+
+func (OAuth2Strategy) Authenticate(ctx context.Context, config Credentials) (Credentials, error) {
+	clientID, hasClientID := config["client_id"]
+	tokenURL, hasTokenURL := config["token_url"]
+	if !hasClientID || clientID == "" || !hasTokenURL || tokenURL == "" {
+		return nil, NewMissingCredentialsError("client_id, token_url")
+	}
+
+	conf := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: config["client_secret"],
+		Endpoint:     oauth2.Endpoint{TokenURL: tokenURL},
+		RedirectURL:  config["redirect_uri"],
+	}
+
+	var opts []oauth2.AuthCodeOption
+	if verifier, ok := config["code_verifier"]; ok && verifier != "" {
+		opts = append(opts, oauth2.SetAuthURLParam("code_verifier", verifier))
+	}
+
+	token, err := conf.Exchange(ctx, config["authorization_code"], opts...)
+	if err != nil {
+		return nil, &Error{Message: fmt.Sprintf("oauth2 token exchange failed: %v", err)}
+	}
+
+	return credentialsFromToken(token, clientID, config["client_secret"], tokenURL), nil
+}
+
+func (OAuth2Strategy) RefreshToken(ctx context.Context, credentials Credentials) (Credentials, error) {
+	refreshToken, hasRefresh := credentials["refresh_token"]
+	tokenURL, hasTokenURL := credentials["token_url"]
+	if !hasRefresh || refreshToken == "" || !hasTokenURL || tokenURL == "" {
+		return nil, NewTokenExpiredError()
+	}
+
+	conf := &oauth2.Config{
+		ClientID:     credentials["client_id"],
+		ClientSecret: credentials["client_secret"],
+		Endpoint:     oauth2.Endpoint{TokenURL: tokenURL},
+	}
+
+	tokenSource := conf.TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken})
+	token, err := tokenSource.Token()
+	if err != nil {
+		return nil, NewTokenExpiredError()
+	}
+
+	return credentialsFromToken(token, credentials["client_id"], credentials["client_secret"], tokenURL), nil
+}
+
+func (OAuth2Strategy) ValidateCredentials(credentials Credentials) bool {
+	accessToken, ok := credentials["access_token"]
+	if !ok || accessToken == "" {
+		return false
+	}
+	expiresAtRaw, ok := credentials["expires_at"]
+	if !ok {
+		return true
+	}
+	expiresAt, err := strconv.ParseInt(expiresAtRaw, 10, 64)
+	if err != nil {
+		return true
+	}
+	return time.Now().UnixMilli() < expiresAt
+}
+
+func credentialsFromToken(token *oauth2.Token, clientID, clientSecret, tokenURL string) Credentials {
+	credentials := Credentials{
+		"authorization_header": "Bearer " + token.AccessToken,
+		"access_token":         token.AccessToken,
+	}
+	if token.RefreshToken != "" {
+		credentials["refresh_token"] = token.RefreshToken
+	}
+	if !token.Expiry.IsZero() {
+		credentials["expires_at"] = strconv.FormatInt(token.Expiry.UnixMilli(), 10)
+	}
+	if clientID != "" {
+		credentials["client_id"] = clientID
+	}
+	if clientSecret != "" {
+		credentials["client_secret"] = clientSecret
+	}
+	if tokenURL != "" {
+		credentials["token_url"] = tokenURL
+	}
+	return credentials
+}
+
+// NewPKCEPair generates an RFC 7636 code_verifier/code_challenge pair for
+// the setup wizard's (Story G7) authorization-code flow.
+func NewPKCEPair() (verifier, challenge string, err error) {
+	verifierBytes := make([]byte, 64)
+	if _, err := rand.Read(verifierBytes); err != nil {
+		return "", "", err
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(verifierBytes)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge = base64.RawURLEncoding.EncodeToString(sum[:])
+	return verifier, challenge, nil
+}

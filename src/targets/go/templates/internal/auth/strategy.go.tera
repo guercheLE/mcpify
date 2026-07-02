@@ -1,0 +1,32 @@
+package auth
+
+import "context"
+
+// Credentials is the flexible key/value bag every strategy authenticates
+// into and every consumer (the API client, Story G6) reads from — kept as
+// a map rather than a per-scheme struct since exactly one strategy is
+// active per deployment (REQ-1.2.3) and callers already know which shape
+// to expect from the strategy they're using, mirroring
+// `targets::csharp::templates::Auth::IAuthStrategy.cs.tera`'s
+// `Dictionary<string, string>`.
+type Credentials map[string]string
+
+// Strategy is one implementation per auth scheme discovered in the
+// OpenAPI spec (REQ-1.2.2).
+type Strategy interface {
+	Authenticate(ctx context.Context, config Credentials) (Credentials, error)
+	// RefreshToken is only implemented by OAuth2Strategy; every other
+	// strategy embeds NoRefresh to satisfy this method, since Go
+	// interfaces have no default-method mechanism (unlike C#'s
+	// `IAuthStrategy.RefreshTokenAsync` default implementation) to fall
+	// back on.
+	RefreshToken(ctx context.Context, credentials Credentials) (Credentials, error)
+	ValidateCredentials(credentials Credentials) bool
+}
+
+// NoRefresh is embedded by every strategy without a refresh flow.
+type NoRefresh struct{}
+
+func (NoRefresh) RefreshToken(ctx context.Context, credentials Credentials) (Credentials, error) {
+	return nil, &Error{Message: "this auth strategy does not support token refresh"}
+}

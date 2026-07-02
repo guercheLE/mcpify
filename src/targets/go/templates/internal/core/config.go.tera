@@ -13,6 +13,13 @@ import (
 // only the schemes this project actually discovered.
 type AuthMethod string
 
+// AuthMethodNone is the zero-configuration fallback when no auth scheme
+// was discovered — Story G4's StubStrategy is registered under it. Always
+// declared (unlike the per-scheme consts below) since Config.AuthMethod's
+// Go zero value ("") already equals it, so this just gives that zero
+// value a name rather than gating it on discovery.
+const AuthMethodNone AuthMethod = ""
+
 // Each discovered method gets its own ungrouped `const` statement rather
 // than one shared `const (...)` block — gofmt column-aligns every entry in
 // a grouped block by the longest identifier, which a Tera template can't

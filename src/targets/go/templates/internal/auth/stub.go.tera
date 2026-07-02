@@ -1,0 +1,16 @@
+package auth
+
+import "context"
+
+// StubStrategy is the no-op fallback strategy — the safe default when the
+// target API requires no authentication, or before `{{ project_name }}
+// setup` has configured a real scheme. Always emitted so Manager never has
+// to special-case a missing strategy, mirroring every other target's stub
+// strategy.
+type StubStrategy struct{ NoRefresh }
+
+func (StubStrategy) Authenticate(ctx context.Context, config Credentials) (Credentials, error) {
+	return Credentials{}, nil
+}
+
+func (StubStrategy) ValidateCredentials(credentials Credentials) bool { return true }
