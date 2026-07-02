@@ -8,7 +8,7 @@ use url::Url;
 pub fn build_api_url(
     base_url: &str,
     path: &str,
-    query: &[(&str, String)],
+    query: &[(String, String)],
 ) -> anyhow::Result<String> {
     let base = if base_url.ends_with('/') {
         base_url.to_string()
@@ -52,7 +52,7 @@ mod tests {
         let url = build_api_url(
             "https://api.example.com",
             "/widgets",
-            &[("limit", "10".to_string())],
+            &[("limit".to_string(), "10".to_string())],
         )
         .unwrap();
         assert_eq!(url, "https://api.example.com/widgets?limit=10");

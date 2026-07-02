@@ -14,6 +14,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use tokio::sync::Mutex;
 
+use {{ crate_name }}::auth::auth_manager::AuthManager;
 use {{ crate_name }}::core::component_registry::ComponentRegistry;
 use {{ crate_name }}::core::config_manager::load_config;
 use {{ crate_name }}::core::config_schema::Transport;
@@ -71,11 +72,9 @@ enum Command {
 }
 
 /// Bootstrap order (architecture.md's Runtime Target Architecture): config
-/// -> logger -> tracing -> registry -> shutdown-handler -> db -> McpServer
-/// -> pick transport -> health checks. Mirrors `targets::typescript`'s
-/// `index.ts` `main()`; auth-manager construction and tool registration
-/// (TS's `registerTools(server, { store, config, authManager })`) land in
-/// Story R6, once `McpifyServer` has somewhere to put them.
+/// -> logger -> tracing -> registry -> shutdown-handler -> db -> auth ->
+/// McpServer -> pick transport -> health checks. Mirrors
+/// `targets::typescript`'s `index.ts` `main()`.
 async fn run_harness_server() -> anyhow::Result<()> {
     let config = load_config(serde_json::Map::new())?;
 
@@ -120,6 +119,8 @@ async fn run_harness_server() -> anyhow::Result<()> {
         Box::pin(async move {})
     }));
 
+    let auth_manager = Arc::new(Mutex::new(AuthManager::new(config.auth_method)));
+
     if config.transport == Transport::Http {
         let http_config = HttpServerConfig {
             host: config.host.clone(),
@@ -127,14 +128,21 @@ async fn run_harness_server() -> anyhow::Result<()> {
             cors_allow: config.cors_allow.clone(),
         };
         let factory_db_path = db_path.clone();
+        let factory_config = config.clone();
         start_http_server(
-            move || Ok(McpifyServer::new(factory_db_path.clone())),
+            move || {
+                Ok(McpifyServer::new(
+                    factory_db_path.clone(),
+                    factory_config.clone(),
+                    auth_manager.clone(),
+                ))
+            },
             &http_config,
             registry,
         )
         .await?;
     } else {
-        connect_stdio(McpifyServer::new(db_path)).await?;
+        connect_stdio(McpifyServer::new(db_path, config, auth_manager)).await?;
     }
 
     Ok(())

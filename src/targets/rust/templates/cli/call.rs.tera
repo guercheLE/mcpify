@@ -2,16 +2,22 @@
 
 use {{ crate_name }}::auth::auth_manager::AuthManager;
 use {{ crate_name }}::core::config_manager::load_config;
-use {{ crate_name }}::data::store::open_store;
+use {{ crate_name }}::core::errors::McpifyError;
+use {{ crate_name }}::data::store::{get_endpoint, open_store};
 use {{ crate_name }}::tools::call_tool::call_operation;
 
 pub async fn run(operation_id: &str, args_json: &str) -> anyhow::Result<()> {
     let config = load_config(serde_json::Map::new())?;
-    let conn = open_store(std::path::Path::new("mcp_store.db"))?;
     let mut auth_manager = AuthManager::new(config.auth_method);
     let args: serde_json::Value = serde_json::from_str(args_json)?;
 
-    let result = call_operation(&conn, &config, &mut auth_manager, operation_id, args).await?;
+    let endpoint = {
+        let conn = open_store(std::path::Path::new("mcp_store.db"))?;
+        get_endpoint(&conn, operation_id)?
+            .ok_or_else(|| McpifyError::NotFound(format!("unknown operationId '{operation_id}'")))?
+    };
+
+    let result = call_operation(&endpoint, &config, &mut auth_manager, operation_id, args).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
