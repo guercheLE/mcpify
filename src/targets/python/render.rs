@@ -18,9 +18,6 @@ pub fn render_engine() -> Result<Tera> {
     let mut tera = Tera::default();
 
     for path in PyTemplates::iter() {
-        if path.ends_with(".gitkeep") {
-            continue;
-        }
         let file = PyTemplates::get(&path).with_context(|| {
             format!("embedded template '{path}' vanished between iter() and get()")
         })?;
@@ -38,9 +35,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_without_error_even_with_no_real_templates_yet() {
-        // Story P1 only stands up the engine; real `.tera` files land in
-        // P2+. This just proves the embed+parse pipeline itself works.
-        render_engine().unwrap();
+    fn loads_every_embedded_template_without_error() {
+        let tera = render_engine().unwrap();
+        assert!(
+            tera.get_template_names()
+                .any(|name| name == "pyproject.toml.tera")
+        );
     }
 }
