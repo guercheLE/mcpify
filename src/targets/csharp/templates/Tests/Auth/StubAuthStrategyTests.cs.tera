@@ -1,0 +1,22 @@
+using {{ namespace }}.Auth.Strategies;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Auth;
+
+public class StubAuthStrategyTests
+{
+    [Fact]
+    public async Task AlwaysAuthenticatesWithEmptyCredentials()
+    {
+        var strategy = new StubAuthStrategy();
+        var credentials = await strategy.AuthenticateAsync(new Dictionary<string, string>());
+        Assert.Empty(credentials);
+    }
+
+    [Fact]
+    public void AlwaysValidates()
+    {
+        var strategy = new StubAuthStrategy();
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string>()));
+    }
+}

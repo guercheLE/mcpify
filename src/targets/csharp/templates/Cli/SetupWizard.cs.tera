@@ -1,0 +1,157 @@
+using System.Text.Json;
+using Spectre.Console;
+using {{ namespace }}.Core;
+
+namespace {{ namespace }}.Cli;
+
+/// <summary>
+/// Interactive setup wizard (REQ-1.6): collects the API URL and the
+/// credentials the discovered auth scheme(s) need, then persists them per
+/// the operator's choice: a `.env` file, a `config.json` file, or a
+/// ready-to-run CLI invocation printed to stdout (nothing written to
+/// disk). Mirrors `targets::python::templates::cli::setup_wizard.py`.
+/// </summary>
+public static class SetupWizard
+{
+    public static async Task RunAsync(ICredentialStore credentialStore)
+    {
+        var url = await PromptBaseUrlAsync();
+        var authMethod = PromptAuthMethod();
+        var credentials = PromptCredentials(authMethod);
+
+        await credentialStore.SaveAsync("active-credentials", JsonSerializer.Serialize(credentials));
+
+        var env = new Dictionary<string, string>
+        {
+            ["{{ tool_prefix_env }}_URL"] = url,
+            ["{{ tool_prefix_env }}_AUTH_METHOD"] = authMethod.ToString(),
+        };
+        foreach (var (key, value) in credentials)
+        {
+            env[$"{{ tool_prefix_env }}_{key.ToUpperInvariant()}"] = value;
+        }
+
+        await PromptPersistenceAsync(env);
+        AnsiConsole.MarkupLine("[green]Setup complete![/] Run: [bold]{{ project_name }} start[/]");
+    }
+
+    private static async Task<string> PromptBaseUrlAsync()
+    {
+        var url = AnsiConsole.Ask<string>("{{ display_name }} base URL:");
+
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+            AnsiConsole.MarkupLine("[green]reachable[/]");
+        }
+        catch (Exception)
+        {
+            AnsiConsole.MarkupLine(
+                "[yellow]could not reach that URL yet — continuing anyway (fix it later with `test-connection`)[/]");
+        }
+
+        return url;
+    }
+
+    private static AuthMethod PromptAuthMethod()
+    {
+{%- if auth_methods | length <= 1 %}
+        // {% if auth_methods | length == 1 %}Exactly one scheme was discovered{% else %}No scheme was discovered{% endif %} — nothing to choose between.
+        return AuthMethod.{% if auth_methods | length == 1 %}{{ auth_methods.0.class_name }}{% else %}None{% endif %};
+{%- else %}
+        var choices = new Dictionary<string, AuthMethod>
+        {
+{%- for method in auth_methods %}
+            ["{{ method.key }}"] = AuthMethod.{{ method.class_name }},
+{%- endfor %}
+        };
+        var selection = AnsiConsole.Prompt(
+            new SelectionPrompt<string>().Title("Authentication method:").AddChoices(choices.Keys));
+        return choices[selection];
+{%- endif %}
+    }
+
+    private static Dictionary<string, string> PromptCredentials(AuthMethod authMethod)
+    {
+        var credentials = new Dictionary<string, string>();
+{%- if "basic" in auth_method_keys %}
+        if (authMethod == AuthMethod.Basic)
+        {
+            credentials["username"] = AnsiConsole.Ask<string>("Username:");
+            credentials["password"] = AnsiConsole.Prompt(new TextPrompt<string>("Password:").Secret());
+        }
+{%- endif %}
+{%- if "pat" in auth_method_keys %}
+        if (authMethod == AuthMethod.Pat)
+        {
+            credentials["token"] = AnsiConsole.Prompt(new TextPrompt<string>("Personal access token:").Secret());
+        }
+{%- endif %}
+{%- if "apiKey" in auth_method_keys %}
+        if (authMethod == AuthMethod.ApiKey)
+        {
+            credentials["api_key"] = AnsiConsole.Prompt(new TextPrompt<string>("API key:").Secret());
+        }
+{%- endif %}
+{%- if "oauth2" in auth_method_keys %}
+        if (authMethod == AuthMethod.OAuth2)
+        {
+            credentials["client_id"] = AnsiConsole.Ask<string>("OAuth2 client ID:");
+            var clientSecret = AnsiConsole.Prompt(
+                new TextPrompt<string>("OAuth2 client secret (leave blank if none):").Secret().AllowEmpty());
+            if (!string.IsNullOrEmpty(clientSecret))
+            {
+                credentials["client_secret"] = clientSecret;
+            }
+            credentials["token_url"] = AnsiConsole.Ask<string>("OAuth2 token URL:");
+            var authorizationCode = AnsiConsole.Prompt(
+                new TextPrompt<string>("Authorization code, if you already have one (leave blank to skip):")
+                    .AllowEmpty());
+            if (!string.IsNullOrEmpty(authorizationCode))
+            {
+                credentials["authorization_code"] = authorizationCode;
+            }
+        }
+{%- endif %}
+{%- if "oauth1" in auth_method_keys %}
+        if (authMethod == AuthMethod.OAuth1)
+        {
+            credentials["consumer_key"] = AnsiConsole.Ask<string>("OAuth1 consumer key:");
+            var privateKeyPath = AnsiConsole.Ask<string>("Path to RSA private key file:");
+            credentials["private_key"] = File.ReadAllText(privateKeyPath);
+        }
+{%- endif %}
+        return credentials;
+    }
+
+    private static async Task PromptPersistenceAsync(Dictionary<string, string> env)
+    {
+        var choices = new[]
+        {
+            "Write a .env file",
+            "Write a config.json file",
+            "Print a ready-to-run CLI invocation (nothing written to disk)",
+        };
+        var selection = AnsiConsole.Prompt(
+            new SelectionPrompt<string>().Title("How should these settings be saved?").AddChoices(choices));
+
+        if (selection == choices[0])
+        {
+            var contents = string.Join('\n', env.Select(kv => $"{kv.Key}={kv.Value}"));
+            await File.WriteAllTextAsync(".env", contents + "\n");
+            AnsiConsole.MarkupLine("Wrote .env");
+        }
+        else if (selection == choices[1])
+        {
+            await File.WriteAllTextAsync(
+                "config.json", JsonSerializer.Serialize(env, new JsonSerializerOptions { WriteIndented = true }));
+            AnsiConsole.MarkupLine("Wrote config.json");
+        }
+        else
+        {
+            var flags = string.Join(' ', env.Select(kv => $"--{kv.Key.ToLowerInvariant().Replace('_', '-')} \"{kv.Value}\""));
+            AnsiConsole.MarkupLine($"{{ project_name }} start {flags}");
+        }
+    }
+}

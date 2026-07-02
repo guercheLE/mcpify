@@ -1,0 +1,61 @@
+using System.Security.Cryptography;
+using System.Text;
+using {{ namespace }}.Auth;
+using {{ namespace }}.Auth.Strategies;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Auth;
+
+public class OAuth1SignerTests
+{
+    [Fact]
+    public void BuildsAnAuthorizationHeaderWhoseSignatureAKeypairsPublicKeyVerifies()
+    {
+        using var rsa = RSA.Create(2048);
+        var privateKeyPem = rsa.ExportRSAPrivateKeyPem();
+
+        var header = OAuth1Signer.BuildAuthorizationHeader(
+            "consumer123", privateKeyPem, "token456", "GET", "https://api.example.com/widgets?foo=bar");
+
+        Assert.StartsWith("OAuth ", header);
+        Assert.Contains("oauth_signature_method=\"RSA-SHA1\"", header);
+
+        // Header field values are percent-encoded (RFC 5849 §3.6) — the
+        // base64 signature commonly contains `+`/`/`/`=`, none of which
+        // are OAuth1's unreserved characters, so they come back encoded
+        // and must be unescaped before base64-decoding.
+        var signature = Uri.UnescapeDataString(ExtractQuotedValue(header, "oauth_signature"));
+        var nonce = ExtractQuotedValue(header, "oauth_nonce");
+        var timestamp = ExtractQuotedValue(header, "oauth_timestamp");
+
+        var parameters = new SortedDictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["foo"] = "bar",
+            ["oauth_consumer_key"] = "consumer123",
+            ["oauth_nonce"] = nonce,
+            ["oauth_signature_method"] = "RSA-SHA1",
+            ["oauth_timestamp"] = timestamp,
+            ["oauth_version"] = "1.0",
+            ["oauth_token"] = "token456",
+        };
+        var normalizedParams = string.Join("&", parameters.Select(kv => $"{kv.Key}={kv.Value}"));
+        var baseString = string.Join(
+            "&", "GET", Uri.EscapeDataString("https://api.example.com/widgets"), Uri.EscapeDataString(normalizedParams));
+
+        var verified = rsa.VerifyData(
+            Encoding.ASCII.GetBytes(baseString),
+            Convert.FromBase64String(signature),
+            HashAlgorithmName.SHA1,
+            RSASignaturePadding.Pkcs1);
+
+        Assert.True(verified, "the signature in the Authorization header must verify against the signing key's own public key");
+    }
+
+    private static string ExtractQuotedValue(string header, string key)
+    {
+        var marker = $"{key}=\"";
+        var start = header.IndexOf(marker, StringComparison.Ordinal) + marker.Length;
+        var end = header.IndexOf('"', start);
+        return header[start..end];
+    }
+}

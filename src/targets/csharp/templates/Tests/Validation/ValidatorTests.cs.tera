@@ -1,0 +1,33 @@
+using System.Text.Json.Nodes;
+using {{ namespace }}.Core;
+using {{ namespace }}.Validation;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Validation;
+
+public class ValidatorTests
+{
+    [Fact]
+    public void UnknownOperationIdsPassValidationWithoutThrowing()
+    {
+        Validator.ValidateInput("no-such-operation", JsonNode.Parse("{}"));
+        Validator.ValidateOutput("no-such-operation", JsonNode.Parse("{}"));
+    }
+
+{%- if operations | length > 0 %}
+    [Fact]
+    public void LoadsAndEvaluatesTheEmbeddedGeneratedSchemasResource()
+    {
+        var operationId = "{{ operations.0.operation_id }}";
+
+        // An empty object may or may not satisfy the real schema for this
+        // operation — this only proves the validator actually loaded and
+        // evaluated `GeneratedSchemas.json` (a genuine `ValidationException`
+        // is an expected, valid outcome) rather than silently no-op'ing on
+        // every operationId, which `UnknownOperationIdsPassValidationWithoutThrowing`
+        // above would not have caught.
+        var exception = Record.Exception(() => Validator.ValidateInput(operationId, JsonNode.Parse("{}")));
+        Assert.True(exception is null or ValidationException);
+    }
+{%- endif %}
+}

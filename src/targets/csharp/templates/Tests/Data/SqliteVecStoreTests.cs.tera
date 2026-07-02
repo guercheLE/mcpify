@@ -1,0 +1,21 @@
+using {{ namespace }}.Data;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Data;
+
+public class SqliteVecStoreTests
+{
+    [Fact]
+    public void SerializeFloat32RoundTripsThroughLittleEndianBytes()
+    {
+        float[] vector = [1.0f, -2.5f, 0.0f, 3.14159f];
+
+        var bytes = SqliteVecStore.SerializeFloat32(vector);
+
+        Assert.Equal(vector.Length * sizeof(float), bytes.Length);
+
+        var roundTripped = new float[vector.Length];
+        Buffer.BlockCopy(bytes, 0, roundTripped, 0, bytes.Length);
+        Assert.Equal(vector, roundTripped);
+    }
+}

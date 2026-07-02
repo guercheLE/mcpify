@@ -132,6 +132,32 @@ public static class Roles
         return 0;
     }
 
+    public static async Task<int> RunSetupAsync(string[] args)
+    {
+        using var host = BuildServicesHost(args);
+        await SetupWizard.RunAsync(host.Services.GetRequiredService<ICredentialStore>());
+        return 0;
+    }
+
+    public static async Task<int> RunTestConnectionAsync(string[] args)
+    {
+        using var host = BuildServicesHost(args);
+        var options = host.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
+
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, options.Url));
+            Console.WriteLine($"reachable (status {(int)response.StatusCode})");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"unreachable: {ex.Message}");
+            return 1;
+        }
+    }
+
     private static IHost BuildServicesHost(string[] args)
     {
         var builder = Host.CreateApplicationBuilder(args);

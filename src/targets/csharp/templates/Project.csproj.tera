@@ -60,4 +60,13 @@
     <EmbeddedResource Include="Validation\GeneratedSchemas.json" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tests/ is its own project (Tests/<Namespace>.Tests.csproj, Story
+         C7) — exclude it from this project's SDK-style implicit
+         globbing so its files aren't compiled into this assembly too. -->
+    <Compile Remove="Tests/**" />
+    <Content Remove="Tests/**" />
+    <None Remove="Tests/**" />
+  </ItemGroup>
+
 </Project>

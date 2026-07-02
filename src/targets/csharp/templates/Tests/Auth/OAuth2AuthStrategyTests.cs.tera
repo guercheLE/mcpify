@@ -1,0 +1,51 @@
+using {{ namespace }}.Auth.Strategies;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Auth;
+
+public class OAuth2AuthStrategyTests
+{
+    [Fact]
+    public void ValidCredentialsRequireAnAccessToken()
+    {
+        var strategy = new OAuth2AuthStrategy(new NoopHttpClientFactory());
+        Assert.False(strategy.ValidateCredentials(new Dictionary<string, string>()));
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string> { ["access_token"] = "abc" }));
+    }
+
+    [Fact]
+    public void CredentialsWithNoExpiryAreAlwaysValid()
+    {
+        var strategy = new OAuth2AuthStrategy(new NoopHttpClientFactory());
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string> { ["access_token"] = "abc" }));
+    }
+
+    [Fact]
+    public void ExpiredCredentialsAreInvalid()
+    {
+        var strategy = new OAuth2AuthStrategy(new NoopHttpClientFactory());
+        var pastMillis = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds().ToString();
+        Assert.False(strategy.ValidateCredentials(new Dictionary<string, string>
+        {
+            ["access_token"] = "abc",
+            ["expires_at"] = pastMillis,
+        }));
+    }
+
+    [Fact]
+    public void UnexpiredCredentialsAreValid()
+    {
+        var strategy = new OAuth2AuthStrategy(new NoopHttpClientFactory());
+        var futureMillis = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds().ToString();
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string>
+        {
+            ["access_token"] = "abc",
+            ["expires_at"] = futureMillis,
+        }));
+    }
+
+    private sealed class NoopHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
+    }
+}

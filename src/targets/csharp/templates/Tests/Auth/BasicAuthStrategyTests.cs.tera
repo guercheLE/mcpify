@@ -1,0 +1,39 @@
+using System.Text;
+using {{ namespace }}.Auth;
+using {{ namespace }}.Auth.Strategies;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Auth;
+
+public class BasicAuthStrategyTests
+{
+    [Fact]
+    public async Task EncodesUsernameAndPasswordAsBasicAuthorizationHeader()
+    {
+        var strategy = new BasicAuthStrategy();
+        var credentials = await strategy.AuthenticateAsync(new Dictionary<string, string>
+        {
+            ["username"] = "alice",
+            ["password"] = "s3cr3t",
+        });
+
+        var expected = Convert.ToBase64String(Encoding.UTF8.GetBytes("alice:s3cr3t"));
+        Assert.Equal($"Basic {expected}", credentials["authorization_header"]);
+    }
+
+    [Fact]
+    public async Task RejectsConfigMissingEitherField()
+    {
+        var strategy = new BasicAuthStrategy();
+        await Assert.ThrowsAsync<MissingCredentialsException>(
+            () => strategy.AuthenticateAsync(new Dictionary<string, string>()));
+    }
+
+    [Fact]
+    public void ValidatesCredentialsCarryingAnAuthorizationHeader()
+    {
+        var strategy = new BasicAuthStrategy();
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string> { ["authorization_header"] = "Basic abc" }));
+        Assert.False(strategy.ValidateCredentials(new Dictionary<string, string>()));
+    }
+}

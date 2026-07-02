@@ -1,0 +1,32 @@
+using {{ namespace }}.Auth;
+using {{ namespace }}.Auth.Strategies;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Auth;
+
+public class PatAuthStrategyTests
+{
+    [Fact]
+    public async Task EncodesTheTokenAsABearerAuthorizationHeader()
+    {
+        var strategy = new PatAuthStrategy();
+        var credentials = await strategy.AuthenticateAsync(new Dictionary<string, string> { ["token"] = "abc123" });
+        Assert.Equal("Bearer abc123", credentials["authorization_header"]);
+    }
+
+    [Fact]
+    public async Task RejectsConfigMissingTheToken()
+    {
+        var strategy = new PatAuthStrategy();
+        await Assert.ThrowsAsync<MissingCredentialsException>(
+            () => strategy.AuthenticateAsync(new Dictionary<string, string>()));
+    }
+
+    [Fact]
+    public void ValidatesCredentialsCarryingANonEmptyToken()
+    {
+        var strategy = new PatAuthStrategy();
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string> { ["token"] = "x" }));
+        Assert.False(strategy.ValidateCredentials(new Dictionary<string, string>()));
+    }
+}

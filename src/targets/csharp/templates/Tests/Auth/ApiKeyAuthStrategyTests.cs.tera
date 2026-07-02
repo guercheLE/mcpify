@@ -1,0 +1,32 @@
+using {{ namespace }}.Auth;
+using {{ namespace }}.Auth.Strategies;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Auth;
+
+public class ApiKeyAuthStrategyTests
+{
+    [Fact]
+    public async Task AuthenticatesWithTheProvidedApiKey()
+    {
+        var strategy = new ApiKeyAuthStrategy();
+        var credentials = await strategy.AuthenticateAsync(new Dictionary<string, string> { ["api_key"] = "secret-key" });
+        Assert.Equal("secret-key", credentials["api_key"]);
+    }
+
+    [Fact]
+    public async Task RejectsConfigMissingTheApiKey()
+    {
+        var strategy = new ApiKeyAuthStrategy();
+        await Assert.ThrowsAsync<MissingCredentialsException>(
+            () => strategy.AuthenticateAsync(new Dictionary<string, string>()));
+    }
+
+    [Fact]
+    public void ValidatesCredentialsCarryingANonEmptyApiKey()
+    {
+        var strategy = new ApiKeyAuthStrategy();
+        Assert.True(strategy.ValidateCredentials(new Dictionary<string, string> { ["api_key"] = "x" }));
+        Assert.False(strategy.ValidateCredentials(new Dictionary<string, string>()));
+    }
+}

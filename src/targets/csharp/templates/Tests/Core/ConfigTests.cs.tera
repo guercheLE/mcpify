@@ -1,0 +1,49 @@
+using Microsoft.Extensions.Configuration;
+using {{ namespace }}.Core;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Core;
+
+public class ConfigTests
+{
+    [Fact]
+    public void AppliesBuiltInDefaultsWhenNothingElseIsSet()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddMcpifyConfiguration("{{ project_name }}-test", [])
+            .Build();
+
+        Assert.Equal("info", configuration["LogLevel"]);
+        Assert.Equal("100", configuration["RateLimit"]);
+        Assert.Equal("3000", configuration["Port"]);
+    }
+
+    [Fact]
+    public void CommandLineFlagsWinOverEverythingElse()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddMcpifyConfiguration("{{ project_name }}-test", ["--LogLevel", "debug"])
+            .Build();
+
+        Assert.Equal("debug", configuration["LogLevel"]);
+    }
+
+    [Fact]
+    public void EnvironmentVariablesAreReadWhenNoCommandLineFlagOverridesThem()
+    {
+        var envVar = "{{ tool_prefix_env }}_LOG_LEVEL";
+        Environment.SetEnvironmentVariable(envVar, "warning");
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddMcpifyConfiguration("{{ project_name }}-test", [])
+                .Build();
+
+            Assert.Equal("warning", configuration["LogLevel"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
+}

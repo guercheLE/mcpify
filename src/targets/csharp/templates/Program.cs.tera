@@ -78,6 +78,14 @@ var populateEmbeddingsCommand = new Command(
 populateEmbeddingsCommand.SetAction((_, cancellationToken) => Roles.RunPopulateEmbeddingsAsync(args, cancellationToken));
 rootCommand.Subcommands.Add(populateEmbeddingsCommand);
 
-// Story C7 adds the `test-connection`/`setup` subcommands here.
+var setupCommand = new Command(
+    "setup", "Interactively configure {{ display_name }} credentials and connection settings.");
+setupCommand.SetAction((_, _) => Roles.RunSetupAsync(args));
+rootCommand.Subcommands.Add(setupCommand);
+
+var testConnectionCommand = new Command(
+    "test-connection", "Verify the configured API URL and credentials are reachable.");
+testConnectionCommand.SetAction((_, _) => Roles.RunTestConnectionAsync(args));
+rootCommand.Subcommands.Add(testConnectionCommand);
 
 return await rootCommand.Parse(args).InvokeAsync();
