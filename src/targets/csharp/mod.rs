@@ -13,12 +13,10 @@ use crate::targets::McpServerTargetGenerator;
 /// The v4 output target (`-l csharp`; docs/v4-implementation-plan.md).
 /// Mirrors `PythonTargetGenerator`'s / `RustTargetGenerator`'s structure:
 /// each method corresponds to one step of the per-target lifecycle
-/// (architecture.md §1, steps 5-11). Story C1 stands up the module shape
-/// and template engine only — every step below is a stub until its own
-/// story (C2-C8) lands. NOT registered in `targets::build_registry()` yet;
-/// per the v4 plan, that happens only once Story C8 (`run_generated_tests`)
-/// is real and green, mirroring how v3's Python target withheld
-/// registration until Story P8.
+/// (architecture.md §1, steps 5-11). Stories C1-C8 are all done and
+/// registered in `targets::build_registry()`, reachable from the CLI as
+/// of Story C8 — the v4 launch milestone — mirroring how v3's Python
+/// target withheld registration until Story P8.
 #[derive(Debug, Default)]
 pub struct CSharpTargetGenerator;
 

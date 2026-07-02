@@ -101,45 +101,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "manual sanity check: requires the dotnet SDK; not part of CI until C9 wires .NET into the pipeline"]
-    async fn scaffolded_project_with_enterprise_files_builds_with_dotnet() {
-        let parent = tempfile::tempdir().unwrap();
-        let dir = output_dir(&parent);
-        let ctx = ctx_with_schemes(
-            dir.clone(),
-            vec![AuthSchemeDescriptor {
-                name: "basicAuth".to_string(),
-                kind: AuthSchemeKind::Basic,
-            }],
-        );
-
-        crate::targets::csharp::steps::bootstrap::bootstrap_project(&ctx)
-            .await
-            .unwrap();
-        generate_enterprise_scaffolding(&ctx).await.unwrap();
-
-        let status = std::process::Command::new("dotnet")
-            .arg("build")
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "dotnet build failed for scaffolded project with enterprise files"
-        );
-
-        let format_status = std::process::Command::new("dotnet")
-            .args(["format", "--verify-no-changes"])
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            format_status.success(),
-            "dotnet format --verify-no-changes failed for scaffolded project"
-        );
-    }
-
-    #[tokio::test]
     async fn writes_every_core_file() {
         let parent = tempfile::tempdir().unwrap();
         let dir = output_dir(&parent);

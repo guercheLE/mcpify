@@ -78,7 +78,14 @@ public static class Validator
         }
 
         using var stream = assembly.GetManifestResourceStream(resourceName)!;
-        using var document = JsonDocument.Parse(stream);
+        // Deliberately not disposed: `JsonSchema.Build` keeps a live
+        // reference into this document's buffer rather than copying it,
+        // so disposing here (even via `using`) throws
+        // `ObjectDisposedException` the first time `Evaluate` runs after
+        // `LoadSchemas` returns — the built schemas need this document to
+        // stay alive for as long as `Schemas` itself does (the process
+        // lifetime, via the enclosing `Lazy<>`).
+        var document = JsonDocument.Parse(stream);
 
         var result = new Dictionary<string, (JsonSchema, JsonSchema)>();
         foreach (var property in document.RootElement.EnumerateObject())

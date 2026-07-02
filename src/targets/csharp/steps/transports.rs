@@ -78,45 +78,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "manual sanity check: requires the dotnet SDK; not part of CI until C9 wires .NET into the pipeline"]
-    async fn full_scaffold_through_c5_builds_with_dotnet() {
-        let parent = tempfile::tempdir().unwrap();
-        let dir = output_dir(&parent);
-        let generator_ctx = ctx(dir.clone());
-
-        crate::targets::csharp::steps::bootstrap::bootstrap_project(&generator_ctx)
-            .await
-            .unwrap();
-        crate::targets::csharp::steps::enterprise::generate_enterprise_scaffolding(&generator_ctx)
-            .await
-            .unwrap();
-        crate::targets::csharp::steps::auth::generate_auth_strategies(&generator_ctx)
-            .await
-            .unwrap();
-        generate_transports_and_roles(&generator_ctx).await.unwrap();
-
-        let status = std::process::Command::new("dotnet")
-            .arg("build")
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "dotnet build failed for the full C2-C5 scaffold"
-        );
-
-        let format_status = std::process::Command::new("dotnet")
-            .args(["format", "--verify-no-changes"])
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            format_status.success(),
-            "dotnet format --verify-no-changes failed for the full C2-C5 scaffold"
-        );
-    }
-
-    #[tokio::test]
     async fn writes_every_file() {
         let parent = tempfile::tempdir().unwrap();
         let dir = output_dir(&parent);

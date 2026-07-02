@@ -113,51 +113,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "manual sanity check: requires the dotnet SDK; not part of CI until C9 wires .NET into the pipeline"]
-    async fn scaffolded_project_with_all_four_auth_kinds_builds_with_dotnet() {
-        let parent = tempfile::tempdir().unwrap();
-        let dir = output_dir(&parent);
-        let ctx = ctx_with_schemes(
-            dir.clone(),
-            vec![
-                descriptor("basicAuth", AuthSchemeKind::Basic),
-                descriptor("apiKey", AuthSchemeKind::ApiKey),
-                descriptor("pat", AuthSchemeKind::BearerPat),
-                descriptor("oauth1", AuthSchemeKind::OAuth1),
-                descriptor("oauth2", AuthSchemeKind::OAuth2),
-            ],
-        );
-
-        crate::targets::csharp::steps::bootstrap::bootstrap_project(&ctx)
-            .await
-            .unwrap();
-        crate::targets::csharp::steps::enterprise::generate_enterprise_scaffolding(&ctx)
-            .await
-            .unwrap();
-        generate_auth_strategies(&ctx).await.unwrap();
-
-        let status = std::process::Command::new("dotnet")
-            .arg("build")
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "dotnet build failed for scaffolded project with all 5 auth kinds"
-        );
-
-        let format_status = std::process::Command::new("dotnet")
-            .args(["format", "--verify-no-changes"])
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            format_status.success(),
-            "dotnet format --verify-no-changes failed for scaffolded project"
-        );
-    }
-
-    #[tokio::test]
     async fn basic_and_oauth2_fixture_emits_exactly_the_expected_files() {
         let parent = tempfile::tempdir().unwrap();
         let dir = output_dir(&parent);

@@ -160,6 +160,18 @@ mod tests {
         dir.join(relative).is_file()
     }
 
+    /// The canonical manual `dotnet` sanity check for C2-C7 combined —
+    /// C2-C6 each previously had their own narrower version of this test
+    /// (bootstrap-only, bootstrap+enterprise, etc.), but every one of
+    /// them re-rendered `Program.cs.tera`/`Core/McpServer.cs.tera`/
+    /// `Http/HttpServer.cs.tera` (there is exactly one authored copy of
+    /// each, edited in place story-by-story), so once a later story
+    /// extended those templates (C5's `Cli.Roles` reference in
+    /// `Program.cs`, chiefly), the earlier stories' narrower tests
+    /// silently stopped reflecting a buildable state — they were removed
+    /// rather than kept in permanent lockstep with every later story's
+    /// edits. This one (plus `tests/e2e_generation.rs`'s real
+    /// `CSharpTargetGenerator::execute()` gate) is the one that matters.
     #[tokio::test]
     #[ignore = "manual sanity check: requires the dotnet SDK; not part of CI until C9 wires .NET into the pipeline"]
     async fn full_scaffold_through_c7_passes_dotnet_test() {

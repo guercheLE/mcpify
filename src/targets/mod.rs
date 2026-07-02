@@ -53,7 +53,8 @@ pub trait McpServerTargetGenerator: Send + Sync {
 pub type TargetRegistry = HashMap<&'static str, Box<dyn McpServerTargetGenerator>>;
 
 /// Target implementations register here as they land; v1 shipped
-/// "typescript", v2 (Story R8) added "rust", v3 (Story P8) adds "python".
+/// "typescript", v2 (Story R8) added "rust", v3 (Story P8) added "python",
+/// v4 (Story C8) adds "csharp".
 pub fn build_registry() -> TargetRegistry {
     let mut registry: TargetRegistry = HashMap::new();
     let typescript: Box<dyn McpServerTargetGenerator> =
@@ -63,6 +64,8 @@ pub fn build_registry() -> TargetRegistry {
     registry.insert(rust.name(), rust);
     let python: Box<dyn McpServerTargetGenerator> = Box::new(python::PythonTargetGenerator);
     registry.insert(python.name(), python);
+    let csharp: Box<dyn McpServerTargetGenerator> = Box::new(csharp::CSharpTargetGenerator);
+    registry.insert(csharp.name(), csharp);
     registry
 }
 
@@ -168,11 +171,12 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_registers_the_typescript_rust_and_python_targets() {
+    fn build_registry_registers_the_typescript_rust_python_and_csharp_targets() {
         let registry = build_registry();
         assert!(registry.contains_key("typescript"));
         assert!(registry.contains_key("rust"));
         assert!(registry.contains_key("python"));
-        assert_eq!(registry.len(), 3);
+        assert!(registry.contains_key("csharp"));
+        assert_eq!(registry.len(), 4);
     }
 }

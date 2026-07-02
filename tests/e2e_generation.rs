@@ -11,6 +11,7 @@
 
 use mcpify::pipeline::run_shared_pipeline;
 use mcpify::targets::McpServerTargetGenerator;
+use mcpify::targets::csharp::CSharpTargetGenerator;
 use mcpify::targets::python::PythonTargetGenerator;
 use mcpify::targets::rust::RustTargetGenerator;
 use mcpify::targets::typescript::TypeScriptTargetGenerator;
@@ -101,4 +102,39 @@ async fn generates_a_python_project_and_passes_its_own_test_suite() {
         .execute(&ctx)
         .await
         .expect("execute() must succeed, including run_generated_tests' real uv sync/pytest");
+}
+
+/// Story C8's analogous acceptance test for the C# target — this plan's
+/// "real gate": runs the full `CSharpTargetGenerator::execute()`
+/// lifecycle — including `run_generated_tests`' actual `dotnet restore`,
+/// `dotnet format`, and `dotnet test` (which compiles both the main
+/// project and `Tests/` as a prerequisite, so this one command proves
+/// build correctness and functional correctness together, per PRD
+/// REQ-2.5.1) — against the same fixture spec used for the TypeScript/
+/// Rust/Python e2e tests above, for direct comparability. Requires a
+/// .NET SDK (net10.0) and network access (NuGet restore), so it's
+/// ignored by default; run explicitly with:
+///
+/// ```sh
+/// cargo test --test e2e_generation -- --ignored
+/// ```
+#[tokio::test]
+#[ignore]
+async fn generates_a_csharp_project_and_passes_its_own_test_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("generated");
+
+    let ctx = run_shared_pipeline(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir,
+        false,
+        false,
+    )
+    .await
+    .expect("shared pipeline must succeed");
+
+    CSharpTargetGenerator
+        .execute(&ctx)
+        .await
+        .expect("execute() must succeed, including run_generated_tests' real dotnet test");
 }

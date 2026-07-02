@@ -1,12 +1,130 @@
-use anyhow::Result;
+use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::context::GeneratorContext;
 
-/// Story C8: shells out to `dotnet restore` (if not folded into build)
-/// then `dotnet test`, which itself compiles the generated project as a
-/// prerequisite — the "one signal proves both build and functional
-/// correctness" principle every other target's `run_generated_tests`
-/// follows. Stubbed in Story C1 pending that story.
-pub async fn run_generated_tests(_ctx: &GeneratorContext) -> Result<()> {
+/// Generous relative to other targets' install/build budgets: `dotnet
+/// restore` fetches this target's full toolchain (the MCP SDK, ONNX
+/// Runtime, OpenTelemetry, Serilog, etc.), several of which ship sizeable
+/// native binaries — mirrors `targets::python`'s 900s `uv sync` budget,
+/// which accounts for a comparably heavy dependency set.
+const DOTNET_TIMEOUT: Duration = Duration::from_secs(900);
+
+/// `run_generated_tests` (architecture.md §1, step 11): restores,
+/// auto-formats, and runs the emitted xUnit suite (`Tests/`) to
+/// completion. `dotnet test` compiles both the main project and `Tests/`
+/// as a prerequisite via the `ProjectReference` Story C7 wired up, so
+/// — like `targets::rust`'s `cargo test` — there's no separate "does it
+/// build" check needed. A run that generates code but whose tests fail
+/// (or don't run) is not a successful `execute()` (PRD REQ-2.5.1).
+///
+/// Deliberately does not shell out to `populate-embeddings` first (unlike
+/// `targets::python`'s equivalent step, which backfills
+/// `semantic_endpoints` before `pytest`): doing so here would require the
+/// sqlite-vec native `vec0` library to already be present next to the
+/// built assembly, which nothing in the generation pipeline fetches yet
+/// (see `Data/SqliteVecStore.cs`'s doc comment — the Dockerfile's build
+/// stage is the one place that's expected to provide it). The generated
+/// xUnit suite is deliberately hermetic (no DB/native-extension
+/// dependency) so this gate doesn't require that native library either;
+/// real search-quality verification against a populated store is a
+/// manual check (see this plan's Verification section), not part of this
+/// automated gate.
+pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
+    run_dotnet_command(&ctx.output_dir, &["restore"], "dotnet restore").await?;
+
+    // Templates are hand-formatted, not run through `dotnet format` at
+    // render time, so their exact style can drift from its defaults over
+    // time; auto-fixing here guarantees the generated project's own CI
+    // (which runs `dotnet format --verify-no-changes`) is never red on
+    // first push regardless — mirrors `targets::python`'s `ruff --fix`/
+    // `black` auto-fix in this same step.
+    run_dotnet_command(&ctx.output_dir, &["format"], "dotnet format").await?;
+
+    run_dotnet_command(&ctx.output_dir, &["test", "Tests"], "dotnet test Tests").await?;
+
     Ok(())
+}
+
+async fn run_dotnet_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
+    let mut command = Command::new("dotnet");
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn '{label}' in '{}'", cwd.display()))?;
+
+    let output = timeout(DOTNET_TIMEOUT, child.wait_with_output())
+        .await
+        .with_context(|| format!("'{label}' timed out after {}s", DOTNET_TIMEOUT.as_secs()))?
+        .with_context(|| format!("failed to run '{label}'"))?;
+
+    if !output.status.success() {
+        let stdout = tail(&String::from_utf8_lossy(&output.stdout), 4000);
+        let stderr = tail(&String::from_utf8_lossy(&output.stderr), 4000);
+        bail!(
+            "'{label}' failed (exit {:?})\n--- stdout (tail) ---\n{stdout}\n--- stderr (tail) ---\n{stderr}",
+            output.status.code(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Last `max_chars` characters of `s`, cut on a `char` boundary rather than
+/// a byte index (which could otherwise land mid-UTF-8-sequence and panic).
+fn tail(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        s.to_string()
+    } else {
+        chars[chars.len() - max_chars..].iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_returns_whole_string_when_shorter_than_limit() {
+        assert_eq!(tail("hello", 100), "hello");
+    }
+
+    #[test]
+    fn tail_truncates_to_the_last_n_chars() {
+        assert_eq!(tail("abcdefgh", 3), "fgh");
+    }
+
+    #[test]
+    fn tail_does_not_panic_on_multi_byte_characters() {
+        let s = "🦀".repeat(10);
+        assert_eq!(tail(&s, 3), "🦀".repeat(3));
+    }
+
+    #[tokio::test]
+    async fn run_generated_tests_fails_fast_when_output_dir_has_no_csproj() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = GeneratorContext {
+            openapi_input: "spec.yaml".to_string(),
+            output_dir: dir.path().to_path_buf(),
+            force: false,
+            output_dir_preexisted: true,
+            auth_schemes: Vec::new(),
+            normalized_operations: Vec::new(),
+            api_title: "Widget API".to_string(),
+        };
+
+        let err = run_generated_tests(&ctx).await.unwrap_err();
+        assert!(err.to_string().contains("dotnet restore"));
+    }
 }

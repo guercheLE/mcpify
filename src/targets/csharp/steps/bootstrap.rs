@@ -180,26 +180,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "manual sanity check: requires the dotnet SDK; not part of CI until C9 wires .NET into the pipeline"]
-    async fn scaffolded_project_restores_and_builds_with_dotnet() {
-        let parent = tempfile::tempdir().unwrap();
-        let dir = output_dir(&parent);
-        let ctx = ctx_with_schemes(dir.clone(), Vec::new());
-
-        bootstrap_project(&ctx).await.unwrap();
-
-        let status = std::process::Command::new("dotnet")
-            .arg("build")
-            .current_dir(&dir)
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "dotnet build failed for scaffolded project"
-        );
-    }
-
-    #[tokio::test]
     async fn env_example_only_lists_vars_for_discovered_schemes() {
         let parent = tempfile::tempdir().unwrap();
         let dir = output_dir(&parent);
