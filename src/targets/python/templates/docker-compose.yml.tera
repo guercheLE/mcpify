@@ -1,0 +1,24 @@
+services:
+  {{ project_name }}:
+    build: .
+    image: {{ project_name }}:latest
+    env_file:
+      - .env
+    volumes:
+      - ~/.{{ project_name }}:/root/.{{ project_name }}
+    stdin_open: true
+    tty: true
+
+  {{ project_name }}-http:
+    build: .
+    image: {{ project_name }}:latest
+    command: ["http", "--host", "0.0.0.0", "--port", "3000"]
+    env_file:
+      - .env
+    environment:
+      {{ tool_prefix_env }}_TRANSPORT: http
+      {{ tool_prefix_env }}_PORT: "3000"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ~/.{{ project_name }}:/root/.{{ project_name }}

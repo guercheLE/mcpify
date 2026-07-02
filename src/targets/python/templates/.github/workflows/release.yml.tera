@@ -1,0 +1,29 @@
+name: Release
+
+# Mirrors targets::rust's release.yml: this project is a generated
+# application tied to one specific API, not a reusable library, so
+# "release" means attaching a built wheel/sdist to a GitHub Release on a
+# version tag rather than publishing to PyPI.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - run: uv run pytest
+      - run: uv build
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
