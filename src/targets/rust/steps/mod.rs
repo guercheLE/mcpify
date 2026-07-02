@@ -2,5 +2,6 @@
 //! `McpServerTargetGenerator` method — mirrors
 //! `targets::typescript::steps`.
 
+pub mod auth;
 pub mod bootstrap;
 pub mod enterprise;

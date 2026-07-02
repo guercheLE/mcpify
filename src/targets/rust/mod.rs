@@ -14,9 +14,10 @@ use crate::targets::McpServerTargetGenerator;
 /// `TypeScriptTargetGenerator`'s structure: each method corresponds to one
 /// step of the per-target lifecycle (architecture.md §1, steps 5-11).
 /// Stubbed out per Story R1; each stub is replaced with a real
-/// `steps::*` call as its story (R2-R7) lands — R2 (`bootstrap_project`)
-/// and R3 (`generate_enterprise_scaffolding`) are done, R4-R7 remain
-/// stubbed. Deliberately **not**
+/// `steps::*` call as its story (R2-R7) lands — R2 (`bootstrap_project`),
+/// R3 (`generate_enterprise_scaffolding`), and R4
+/// (`generate_auth_strategies`) are done, R5-R7 remain stubbed. Deliberately
+/// **not**
 /// registered in `targets::build_registry()` yet — Story R8 registers it
 /// only once `run_generated_tests` is real and green, the same
 /// "don't register a target whose tests can't actually prove anything"
@@ -38,8 +39,8 @@ impl McpServerTargetGenerator for RustTargetGenerator {
         steps::enterprise::generate_enterprise_scaffolding(ctx).await
     }
 
-    async fn generate_auth_strategies(&self, _ctx: &GeneratorContext) -> Result<()> {
-        anyhow::bail!("rust target: generate_auth_strategies not yet implemented (Story R4)")
+    async fn generate_auth_strategies(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::auth::generate_auth_strategies(ctx).await
     }
 
     async fn generate_transports_and_roles(&self, _ctx: &GeneratorContext) -> Result<()> {
