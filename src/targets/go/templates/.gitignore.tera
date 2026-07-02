@@ -1,0 +1,7 @@
+/{{ project_name }}
+/dist/
+*.test
+*.out
+.env
+mcp_store.chromem/
+.DS_Store

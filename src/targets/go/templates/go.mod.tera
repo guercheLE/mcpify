@@ -1,0 +1,25 @@
+module {{ module_path }}
+
+go 1.26
+
+require (
+	github.com/AlecAivazis/survey/v2 v2.3.7
+	github.com/clems4ever/all-minilm-l6-v2-go v0.0.9
+	github.com/dghubble/oauth1 v0.7.3
+	github.com/mark3labs/mcp-go v0.55.1
+	github.com/mattn/go-sqlite3 v1.14.47
+	github.com/philippgille/chromem-go v0.7.0
+	github.com/sony/gobreaker v1.0.0
+	github.com/spf13/cobra v1.10.2
+	github.com/xeipuuv/gojsonschema v1.2.0
+	github.com/zalando/go-keyring v0.2.8
+	go.opentelemetry.io/otel v1.44.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
+	go.opentelemetry.io/otel/exporters/prometheus v0.66.0
+	go.opentelemetry.io/otel/metric v1.44.0
+	go.opentelemetry.io/otel/sdk v1.44.0
+	go.opentelemetry.io/otel/sdk/metric v1.44.0
+	go.opentelemetry.io/otel/trace v1.44.0
+	go.uber.org/zap v1.28.0
+	golang.org/x/oauth2 v0.36.0
+)
