@@ -29,8 +29,11 @@ const STATIC_FILES: &[(&str, &str)] = &[
 /// shared pipeline (Story 5/6), so this step only lays out the
 /// `internal/`-per-concern skeleton (Go convention favors `internal/` to
 /// prevent accidental external imports of implementation packages, unlike
-/// every other target's plain top-level folders) plus the `cmd/<binary>/`
-/// directory the entry point (Story G5) will populate. Mirrors
+/// every other target's plain top-level folders) plus two `cmd/` binary
+/// directories: `cmd/<binary>/` (the entry point, Story G5) and the
+/// sibling `cmd/populate-embeddings/` (Story G6/G8) — two separate `go
+/// build` targets, not one nested under the other, matching G8's own
+/// `go run ./cmd/populate-embeddings` invocation. Mirrors
 /// `targets::csharp::steps::bootstrap::bootstrap_project`'s
 /// folder-per-concern shape.
 pub async fn bootstrap_project(ctx: &GeneratorContext) -> Result<()> {
@@ -39,13 +42,8 @@ pub async fn bootstrap_project(ctx: &GeneratorContext) -> Result<()> {
     for subdir in INTERNAL_SUBDIRS {
         tokio::fs::create_dir_all(ctx.output_dir.join(subdir)).await?;
     }
-    tokio::fs::create_dir_all(
-        ctx.output_dir
-            .join("cmd")
-            .join(&view.project_name)
-            .join("populate-embeddings"),
-    )
-    .await?;
+    tokio::fs::create_dir_all(ctx.output_dir.join("cmd").join(&view.project_name)).await?;
+    tokio::fs::create_dir_all(ctx.output_dir.join("cmd").join("populate-embeddings")).await?;
 
     let tera = render_engine()?;
     let tera_ctx = tera::Context::from_serialize(&view)?;
@@ -108,12 +106,7 @@ mod tests {
         bootstrap_project(&ctx).await.unwrap();
 
         assert!(dir.join("cmd").join("output").is_dir());
-        assert!(
-            dir.join("cmd")
-                .join("output")
-                .join("populate-embeddings")
-                .is_dir()
-        );
+        assert!(dir.join("cmd").join("populate-embeddings").is_dir());
     }
 
     #[tokio::test]
@@ -142,7 +135,8 @@ mod tests {
         assert!(contents.contains("go 1.26"));
         assert!(contents.contains("github.com/mark3labs/mcp-go"));
         assert!(contents.contains("github.com/philippgille/chromem-go"));
-        assert!(contents.contains("github.com/clems4ever/all-minilm-l6-v2-go"));
+        assert!(contents.contains("github.com/yalue/onnxruntime_go"));
+        assert!(contents.contains("github.com/sugarme/tokenizer"));
     }
 
     #[tokio::test]

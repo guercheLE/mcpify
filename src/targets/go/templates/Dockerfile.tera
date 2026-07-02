@@ -22,7 +22,7 @@ COPY go.mod ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 go build -o /app/{{ project_name }} ./cmd/{{ project_name }}
-RUN CGO_ENABLED=1 go build -o /app/populate-embeddings ./cmd/{{ project_name }}/populate-embeddings
+RUN CGO_ENABLED=1 go build -o /app/populate-embeddings ./cmd/populate-embeddings
 
 FROM debian:bookworm-slim AS final
 WORKDIR /app

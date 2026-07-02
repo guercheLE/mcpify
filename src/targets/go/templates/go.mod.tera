@@ -4,14 +4,16 @@ go 1.26
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
-	github.com/clems4ever/all-minilm-l6-v2-go v0.0.9
 	github.com/dghubble/oauth1 v0.7.3
 	github.com/mark3labs/mcp-go v0.55.1
 	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/prometheus/client_golang v1.23.2
 	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/cobra v1.10.2
+	github.com/sugarme/tokenizer v0.3.0
 	github.com/xeipuuv/gojsonschema v1.2.0
+	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
