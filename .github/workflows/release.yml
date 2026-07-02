@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # The Homebrew tap mentioned in REQ-1.1.4 ("brew install
+      # guercheLE/tap/mcpify") is a separate, still-to-be-created repo
+      # (homebrew-tap) that this workflow would push a formula update to
+      # once it exists — out of scope for mcpify's own v1 code.
