@@ -1,0 +1,43 @@
+using Microsoft.Extensions.DependencyInjection;
+
+namespace {{ namespace }}.Core;
+
+// Single DI registration entry point every enterprise-scaffolding,
+// auth-strategy, and MCP-tool generation step (Stories C3-C6) extends by
+// implementing one of the partial methods below in its own file under
+// Core/ — the DI-first idiom's analog of the "import a module-level
+// singleton" pattern v1-v3's targets use (v4-implementation-plan.md's
+// "Context" section). Each `static partial void AddXxx` is a classic
+// (implicitly-private, unimplemented-is-a-no-op) partial method, so this
+// file compiles standalone in Story C2 even before any story implements
+// one — C3-C6 each add a sibling file with `static partial class
+// ServiceCollectionExtensions { static partial void AddXxx(...) { ... } }`
+// rather than editing this file.
+public static partial class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddMcpifyServices(this IServiceCollection services)
+    {
+        AddLogging(services);
+        AddTracing(services);
+        AddConfig(services);
+        AddCircuitBreaker(services);
+        AddCredentialStorage(services);
+        AddHealthChecks(services);
+        AddMcpServer(services);
+        AddDataStore(services);
+        AddApiClient(services);
+        AddAuthStrategies(services);
+        return services;
+    }
+
+    static partial void AddLogging(IServiceCollection services);
+    static partial void AddTracing(IServiceCollection services);
+    static partial void AddConfig(IServiceCollection services);
+    static partial void AddCircuitBreaker(IServiceCollection services);
+    static partial void AddCredentialStorage(IServiceCollection services);
+    static partial void AddHealthChecks(IServiceCollection services);
+    static partial void AddMcpServer(IServiceCollection services);
+    static partial void AddDataStore(IServiceCollection services);
+    static partial void AddApiClient(IServiceCollection services);
+    static partial void AddAuthStrategies(IServiceCollection services);
+}

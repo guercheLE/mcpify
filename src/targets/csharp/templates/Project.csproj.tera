@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!-- .NET 10 is the current LTS release (even-numbered releases are
+         LTS); framework-dependent publish per v4-implementation-plan.md's
+         open decision #4 — Native AOT's reflection constraints don't play
+         well with this target's DI-heavy dependency set (Serilog,
+         OpenTelemetry, the MCP SDK), so the simpler, safer default wins. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>{{ namespace }}</RootNamespace>
+    <AssemblyName>{{ namespace }}</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UserSecretsId>{{ namespace }}</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MCP SDK (toolchain: open decision #1) -->
+    <PackageReference Include="ModelContextProtocol" Version="1.4.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
+    <!-- DB driver + vector ext. NU1903 note: the transitive
+         SQLitePCLRaw.lib.e_sqlite3 dependency carries a known advisory
+         (GHSA-2m69-gcr7-jv3q) with no patched version published upstream
+         yet as of this writing — tracked for a future version bump once
+         one lands, not fixable by pinning today. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <!-- HTTP client resilience (wraps Polly; also covers the CircuitBreaker
+         core module, per architecture.md's "already-installed dependency
+         solves it" guidance) -->
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.7.0" />
+    <!-- Schema validation -->
+    <PackageReference Include="JsonSchema.Net" Version="9.2.2" />
+    <!-- Structured logging -->
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <!-- Tracing/metrics -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
+    <!-- Health checks: Microsoft.Extensions.Diagnostics.HealthChecks ships
+         as part of the Microsoft.AspNetCore.App shared framework that
+         Microsoft.NET.Sdk.Web already references, so no explicit
+         PackageReference is needed (one was tried and pruned by NuGet
+         with an NU1510 warning). -->
+    <!-- CLI invocation (Terminal Client / Harness Server dual-role entry point) -->
+    <PackageReference Include="System.CommandLine" Version="2.0.9" />
+    <!-- Interactive setup wizard -->
+    <PackageReference Include="Spectre.Console" Version="0.57.1" />
+    <!-- Embeddings (open decision #2) -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.27.0" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
+  </ItemGroup>
+
+</Project>

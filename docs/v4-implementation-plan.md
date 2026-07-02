@@ -1,6 +1,6 @@
 # mcpify: v4 C# (.NET) Target Implementation Plan
 
-> **Status: Not started.** This plan covers adding the C#/.NET output target (`-l csharp`) to the mcpify generator, per `docs/architecture.md`'s "Target Language Roadmap" (§3). It assumes `docs/v1-implementation-plan.md` is complete — the shared pipeline, CLI, `GeneratorContext`, `McpServerTargetGenerator` trait, rollback, and `TargetRegistry` are reused as-is. This plan only covers the new, C#-specific per-target work.
+> **Status: In progress (2026-07-02).** C1–C2 are implemented, committed, and verified (`cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, plus a real `dotnet restore && dotnet build` against the scaffolded output — green). `-l csharp` is **not yet** registered in `targets::build_registry()`; per this plan, that happens only once C8 is real and green. This plan covers adding the C#/.NET output target (`-l csharp`) to the mcpify generator, per `docs/architecture.md`'s "Target Language Roadmap" (§3). It assumes `docs/v1-implementation-plan.md` is complete — the shared pipeline, CLI, `GeneratorContext`, `McpServerTargetGenerator` trait, rollback, and `TargetRegistry` are reused as-is. This plan only covers the new, C#-specific per-target work.
 
 ## Context
 
@@ -25,10 +25,10 @@ Per architecture.md's rollout notes, C# follows Python *"matching demand from...
 
 ## Open decisions to resolve during implementation
 
-1. **MCP SDK package.** Search NuGet for the current official/community .NET MCP SDK before writing any template importing it. If none is production-ready, the fallback (implementing the JSON-RPC wire protocol directly) is more work in C# than in Rust/Python given less first-party async JSON-RPC tooling — budget for this risk explicitly if it materializes.
-2. **Embeddings.** `Microsoft.ML.OnnxRuntime` (ONNX Runtime for .NET) + a tokenizer package (`Microsoft.ML.Tokenizers`, or a BERT-family tokenizer implementation if that package's coverage doesn't include the target model's tokenizer) is the direct C# analog of v2 Rust's `ort`/`fastembed-rs` path. Same one-code-path principle as every other target: the module/service that embeds text must be the exact one both the populate-step and the live `search` tool inject via DI, not two independent implementations of "call ONNX Runtime."
-3. **Test framework.** `xunit` is the more common modern default; `NUnit` is a defensible alternative. Pick one and use it consistently — don't let this become a per-contributor preference in generated output.
-4. **Native AOT vs. framework-dependent publish.** .NET's Native AOT publishing produces a single self-contained binary (closer to Rust's/Go's deployment story) but has real constraints (reflection-heavy libraries, including some JSON/DI patterns, don't always AOT-compile cleanly). Decide whether `run_generated_tests`/the Dockerfile target a standard framework-dependent build (simpler, safer default) or Native AOT (leaner image, more constrained tooling choices upstream) — this affects which MCP SDK, logging, and JSON libraries are even viable choices, so resolve it before P3, not after.
+1. **MCP SDK package — RESOLVED (2026-07-02).** [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) (+ `ModelContextProtocol.AspNetCore` for the Kestrel/HTTP transport) — the official .NET MCP SDK (`csharp.sdk.modelcontextprotocol.io`), verified on NuGet: 16M+ total downloads, stable `1.4.0` release (not prerelease), first-party `Microsoft.Extensions.DependencyInjection` hosting extensions built in, matching this target's DI-first idiom directly. Production-ready; the hand-rolled-JSON-RPC fallback risk did not materialize.
+2. **Embeddings.** `Microsoft.ML.OnnxRuntime` (ONNX Runtime for .NET) + a tokenizer package (`Microsoft.ML.Tokenizers`, or a BERT-family tokenizer implementation if that package's coverage doesn't include the target model's tokenizer) is the direct C# analog of v2 Rust's `ort`/`fastembed-rs` path. Same one-code-path principle as every other target: the module/service that embeds text must be the exact one both the populate-step and the live `search` tool inject via DI, not two independent implementations of "call ONNX Runtime." Both packages are already referenced in the C2 `.csproj.tera` (versions `1.27.0` / `2.0.0`); the actual embedding-service *implementation* is still open, deferred to C6.
+3. **Test framework — RESOLVED (2026-07-02).** `xunit` (`2.9.3`, + `xunit.runner.visualstudio` `3.1.5`, + `Microsoft.NET.Test.Sdk` `18.7.0`), per the plan's own "more common modern default" steer. To be wired into a generated `<Namespace>.Tests.csproj` in C7.
+4. **Native AOT vs. framework-dependent publish — RESOLVED (2026-07-02).** Framework-dependent (standard `dotnet build`/`dotnet publish`), per the plan's own "simpler, safer default" framing — Native AOT's reflection constraints are a poor fit for this target's DI-heavy, reflection-touching dependency set (Serilog, OpenTelemetry, the MCP SDK's own hosting extensions). `Project.csproj.tera` targets `net10.0` (current LTS; every even-numbered .NET release is LTS) with no `PublishAot` property set. This resolves which MCP SDK/logging/JSON libraries are viable — confirmed C2's full toolchain package set actually restores and builds via a real `dotnet build` against the scaffolded skeleton (see C2 below).
 
 ## Story breakdown
 
@@ -36,14 +36,14 @@ Target-local numbering (C1, C2, ...), mirroring v1's Story 7→14 shape.
 
 ---
 
-### C1 — Target scaffolding & template engine
+### C1 — Target scaffolding & template engine ✅ Done
 **Goal:** `src/targets/csharp/mod.rs`: `CSharpTargetGenerator`, `name() -> "csharp"`, 6 stubbed methods. `CsTemplateContext` (mirrors the other targets' context structs). `naming.rs` for C#'s conventions (`PascalCase` for types/methods/properties, `camelCase` for locals/parameters — a two-case system like Rust's, but with the case assignment flipped by convention). Own embedded `templates/` + `tera`/`rust-embed` render/emit pair.
 
 **Depends on:** v1 Stories 0–6 (reused).
 
 ---
 
-### C2 — `bootstrap_project`
+### C2 — `bootstrap_project` ✅ Done
 **Goal:** `<ProjectName>.csproj.tera` (target framework, package references from the toolchain table, resolved per open decision #4), `Program.cs.tera` skeleton, project folder skeleton (`Auth/`, `Cli/`, `Core/`, `Data/`, `Http/`, `Services/`, `Tools/`, `Validation/` — C# convention capitalizes folder/namespace names, unlike the lowercase folders every other target uses), `.gitignore`, `README.md`. Given the DI-first idiom, this step should also emit the skeleton `IServiceCollection` registration method (e.g. `AddMcpifyServices(this IServiceCollection services)`) that later steps (C3–C6) each extend, rather than each step wiring its own ad-hoc singleton.
 
 **Depends on:** C1.

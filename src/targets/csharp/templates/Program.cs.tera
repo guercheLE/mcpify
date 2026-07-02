@@ -1,0 +1,11 @@
+using {{ namespace }}.Core;
+
+var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddMcpifyServices();
+
+using var host = builder.Build();
+
+// Story C5 replaces this skeleton with the real Terminal Client / Harness
+// Server dual-role dispatch (branching on a CLI subcommand via
+// System.CommandLine, per v4-implementation-plan.md's C5 goal).
+await host.RunAsync();
