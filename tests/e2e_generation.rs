@@ -11,6 +11,7 @@
 
 use mcpify::pipeline::run_shared_pipeline;
 use mcpify::targets::McpServerTargetGenerator;
+use mcpify::targets::python::PythonTargetGenerator;
 use mcpify::targets::rust::RustTargetGenerator;
 use mcpify::targets::typescript::TypeScriptTargetGenerator;
 
@@ -66,4 +67,38 @@ async fn generates_a_rust_project_and_passes_its_own_test_suite() {
         .execute(&ctx)
         .await
         .expect("execute() must succeed, including run_generated_tests' real cargo test");
+}
+
+/// Story P8's analogous acceptance test for the Python target: runs the
+/// full `PythonTargetGenerator::execute()` lifecycle — including
+/// `run_generated_tests`' actual `uv sync` and `uv run pytest` (with the
+/// `sentence-transformers` `all-mpnet-base-v2` model download during
+/// `populate_embeddings`) — against the same fixture spec used for the
+/// TypeScript/Rust e2e tests above, for direct comparability. Requires
+/// `uv` (already present in CI alongside the Rust/Node toolchains — see
+/// the plan's CI notes) and network access, so it's ignored by default;
+/// run explicitly with:
+///
+/// ```sh
+/// cargo test --test e2e_generation -- --ignored
+/// ```
+#[tokio::test]
+#[ignore]
+async fn generates_a_python_project_and_passes_its_own_test_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("generated");
+
+    let ctx = run_shared_pipeline(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir,
+        false,
+        false,
+    )
+    .await
+    .expect("shared pipeline must succeed");
+
+    PythonTargetGenerator
+        .execute(&ctx)
+        .await
+        .expect("execute() must succeed, including run_generated_tests' real uv sync/pytest");
 }

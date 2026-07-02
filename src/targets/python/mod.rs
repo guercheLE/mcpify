@@ -13,9 +13,8 @@ use crate::targets::McpServerTargetGenerator;
 /// The v3 output target (`-l python`; docs/v3-implementation-plan.md).
 /// Mirrors `RustTargetGenerator`'s structure: each method corresponds to
 /// one step of the per-target lifecycle (architecture.md §1, steps 5-11).
-/// Story P1 stubs all 7 methods; not yet registered in
-/// `targets::build_registry()` — that happens in Story P8, the v3 launch
-/// milestone, once `run_generated_tests` is real and green.
+/// Stories P1-P8 are all done; registered in `targets::build_registry()`
+/// as of Story P8, the v3 launch milestone.
 #[derive(Debug, Default)]
 pub struct PythonTargetGenerator;
 
