@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Output targets `mcpify` knows how to generate. Only "typescript" ships in
-/// v1 (PRD REQ-1.1.4); rust/python/csharp/go are rejected until their target
-/// generators land.
-pub const SUPPORTED_LANGUAGES: &[&str] = &["typescript"];
+/// Output targets `mcpify` knows how to generate. "typescript" shipped in
+/// v1 (PRD REQ-1.1.4); "rust" joined in v2. python/csharp/go are rejected
+/// until their target generators land.
+pub const SUPPORTED_LANGUAGES: &[&str] = &["typescript", "rust"];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -22,7 +22,7 @@ pub struct Cli {
     #[arg(short = 'o', long = "output")]
     pub output: PathBuf,
 
-    /// Target stack (v1: "typescript" only; reserved for future targets)
+    /// Target stack ("typescript" or "rust"; reserved for future targets)
     #[arg(short = 'l', long = "language", default_value = "typescript")]
     pub language: String,
 
@@ -85,8 +85,14 @@ mod tests {
     }
 
     #[test]
+    fn accepts_rust_language() {
+        let cli = parse(&["-i", "spec.yaml", "-o", "./out", "-l", "rust"]).unwrap();
+        assert!(cli.validate_language().is_ok());
+    }
+
+    #[test]
     fn rejects_unsupported_language() {
-        for lang in ["rust", "python", "csharp", "go"] {
+        for lang in ["python", "csharp", "go"] {
             let cli = parse(&["-i", "spec.yaml", "-o", "./out", "-l", lang]).unwrap();
             let err = cli.validate_language().unwrap_err();
             assert!(err.to_string().contains("not yet supported"));

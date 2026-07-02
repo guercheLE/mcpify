@@ -50,13 +50,15 @@ pub trait McpServerTargetGenerator: Send + Sync {
 /// Dispatches on `--language` to the registered target implementation.
 pub type TargetRegistry = HashMap<&'static str, Box<dyn McpServerTargetGenerator>>;
 
-/// Target implementations register here as they land; v1 ships only
-/// "typescript".
+/// Target implementations register here as they land; v1 shipped
+/// "typescript", v2 (Story R8) adds "rust".
 pub fn build_registry() -> TargetRegistry {
     let mut registry: TargetRegistry = HashMap::new();
     let typescript: Box<dyn McpServerTargetGenerator> =
         Box::new(typescript::TypeScriptTargetGenerator);
     registry.insert(typescript.name(), typescript);
+    let rust: Box<dyn McpServerTargetGenerator> = Box::new(rust::RustTargetGenerator);
+    registry.insert(rust.name(), rust);
     registry
 }
 
@@ -162,9 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_registers_the_typescript_target() {
+    fn build_registry_registers_the_typescript_and_rust_targets() {
         let registry = build_registry();
         assert!(registry.contains_key("typescript"));
-        assert_eq!(registry.len(), 1);
+        assert!(registry.contains_key("rust"));
+        assert_eq!(registry.len(), 2);
     }
 }

@@ -20,20 +20,34 @@ static REGISTER_VEC_EXTENSION: Once = Once::new();
 
 const ENDPOINT_COLUMNS: &str = "operation_id, path, method, summary, description, input_schema, output_schema, auth_scheme_ref";
 
-/// Registers the `sqlite-vec` extension once per process — via
-/// `sqlite3_auto_extension`, matching the pattern the `sqlite-vec` crate
-/// itself documents for `rusqlite` — then opens `mcp_store.db` read-only:
-/// this crate's binaries only ever read it, except `populate-embeddings`
-/// (a separate `[[bin]]`), which opens its own read-write connection.
-pub fn open_store(path: &Path) -> Result<Connection> {
+/// Registers the `sqlite-vec` extension once per process, via
+/// `sqlite3_auto_extension` — matching the pattern the `sqlite-vec` crate
+/// itself documents for `rusqlite`.
+fn register_vec_extension() {
     REGISTER_VEC_EXTENSION.call_once(|| unsafe {
         #[allow(clippy::missing_transmute_annotations)]
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
             sqlite_vec::sqlite3_vec_init as *const (),
         )));
     });
+}
 
+/// Opens `mcp_store.db` read-only: this crate's binaries only ever read
+/// it, except `populate-embeddings` (a separate `[[bin]]`), which uses
+/// `open_store_read_write` instead.
+pub fn open_store(path: &Path) -> Result<Connection> {
+    register_vec_extension();
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("failed to open '{}'", path.display()))
+}
+
+/// Read-write counterpart to `open_store` — for `bin/populate_embeddings.rs`,
+/// the one binary that actually writes to `mcp_store.db` (backfilling
+/// `semantic_endpoints`, whose table every other caller only ever reads
+/// from).
+pub fn open_store_read_write(path: &Path) -> Result<Connection> {
+    register_vec_extension();
+    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
         .with_context(|| format!("failed to open '{}'", path.display()))
 }
 

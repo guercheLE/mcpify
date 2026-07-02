@@ -13,16 +13,8 @@ use crate::targets::McpServerTargetGenerator;
 /// The v2 output target (`-l rust`; docs/v2-implementation-plan.md). Mirrors
 /// `TypeScriptTargetGenerator`'s structure: each method corresponds to one
 /// step of the per-target lifecycle (architecture.md §1, steps 5-11).
-/// Stubbed out per Story R1; each stub is replaced with a real
-/// `steps::*` call as its story (R2-R7) lands — R2 (`bootstrap_project`),
-/// R3 (`generate_enterprise_scaffolding`), R4 (`generate_auth_strategies`),
-/// R5 (`generate_transports_and_roles`), R6 (`generate_mcp_tools`), and R7
-/// (`generate_setup_wizard_and_tests`) are done — every step but
-/// `run_generated_tests` (Story R8). Deliberately **not**
-/// registered in `targets::build_registry()` yet — Story R8 registers it
-/// only once `run_generated_tests` is real and green, the same
-/// "don't register a target whose tests can't actually prove anything"
-/// discipline v1 followed for `TypeScriptTargetGenerator`.
+/// Stories R1-R8 are all done; registered in `targets::build_registry()`
+/// as of Story R8, the v2 launch milestone.
 #[derive(Debug, Default)]
 pub struct RustTargetGenerator;
 
@@ -56,8 +48,8 @@ impl McpServerTargetGenerator for RustTargetGenerator {
         steps::setup_and_tests::generate_setup_wizard_and_tests(ctx).await
     }
 
-    async fn run_generated_tests(&self, _ctx: &GeneratorContext) -> Result<()> {
-        anyhow::bail!("rust target: run_generated_tests not yet implemented (Story R8)")
+    async fn run_generated_tests(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::run_tests::run_generated_tests(ctx).await
     }
 }
 

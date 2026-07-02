@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use {{ crate_name }}::data::store::open_store;
+use {{ crate_name }}::data::store::open_store_read_write;
 use {{ crate_name }}::services::embedding_service::embed;
 
 struct EndpointRow {
@@ -32,7 +32,7 @@ fn vector_to_le_bytes(vector: &[f32]) -> Vec<u8> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let conn = open_store(Path::new("mcp_store.db"))?;
+    let conn = open_store_read_write(Path::new("mcp_store.db"))?;
 
     let mut select =
         conn.prepare("SELECT operation_id, path, method, summary, description FROM endpoints")?;
