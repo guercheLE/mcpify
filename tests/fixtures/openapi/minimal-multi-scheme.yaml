@@ -1,0 +1,44 @@
+openapi: 3.0.0
+info:
+  title: Multi Scheme API
+  version: "1.0.0"
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      summary: List widgets
+      responses:
+        "200":
+          description: OK
+  /widgets/{id}:
+    get:
+      operationId: getWidget
+      summary: Get a widget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    patAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PAT
+    oauth2Auth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://example.com/oauth/token
+          scopes: {}
+    oauth1Auth:
+      type: http
+      scheme: oauth
+      x-auth-type: oauth1
