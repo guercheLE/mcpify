@@ -4,12 +4,11 @@ use clap::Parser;
 
 /// Output targets `mcpify` knows how to generate. "typescript" shipped in
 /// v1 (PRD REQ-1.1.4); "rust" joined in v2, "python" in v3, "csharp" in
-/// v4. go is rejected until its target generator lands. ("python" was
-/// registered in `targets::build_registry()` back in v3 Story P8 but
-/// missed being added here — a pre-existing gap fixed alongside "csharp"
-/// since both need this list updated to actually be reachable from the
-/// CLI.)
-pub const SUPPORTED_LANGUAGES: &[&str] = &["typescript", "rust", "python", "csharp"];
+/// v4, "go" in v5. ("python" was registered in `targets::build_registry()`
+/// back in v3 Story P8 but missed being added here — a pre-existing gap
+/// fixed alongside "csharp" since both needed this list updated to
+/// actually be reachable from the CLI.)
+pub const SUPPORTED_LANGUAGES: &[&str] = &["typescript", "rust", "python", "csharp", "go"];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -26,7 +25,7 @@ pub struct Cli {
     #[arg(short = 'o', long = "output")]
     pub output: PathBuf,
 
-    /// Target stack ("typescript", "rust", "python", or "csharp")
+    /// Target stack ("typescript", "rust", "python", "csharp", or "go")
     #[arg(short = 'l', long = "language", default_value = "typescript")]
     pub language: String,
 
@@ -107,8 +106,14 @@ mod tests {
     }
 
     #[test]
+    fn accepts_go_language() {
+        let cli = parse(&["-i", "spec.yaml", "-o", "./out", "-l", "go"]).unwrap();
+        assert!(cli.validate_language().is_ok());
+    }
+
+    #[test]
     fn rejects_unsupported_language() {
-        for lang in ["go", "java"] {
+        for lang in ["ruby", "java"] {
             let cli = parse(&["-i", "spec.yaml", "-o", "./out", "-l", lang]).unwrap();
             let err = cli.validate_language().unwrap_err();
             assert!(err.to_string().contains("not yet supported"));

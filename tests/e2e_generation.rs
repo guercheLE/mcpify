@@ -12,6 +12,7 @@
 use mcpify::pipeline::run_shared_pipeline;
 use mcpify::targets::McpServerTargetGenerator;
 use mcpify::targets::csharp::CSharpTargetGenerator;
+use mcpify::targets::go::GoTargetGenerator;
 use mcpify::targets::python::PythonTargetGenerator;
 use mcpify::targets::rust::RustTargetGenerator;
 use mcpify::targets::typescript::TypeScriptTargetGenerator;
@@ -137,4 +138,42 @@ async fn generates_a_csharp_project_and_passes_its_own_test_suite() {
         .execute(&ctx)
         .await
         .expect("execute() must succeed, including run_generated_tests' real dotnet test");
+}
+
+/// Story G8's analogous acceptance test for the Go target — this plan's
+/// "real gate": runs the full `GoTargetGenerator::execute()` lifecycle —
+/// including `run_generated_tests`' actual `go mod tidy`, `go build
+/// ./...`, `go run ./cmd/populate-embeddings` (the real `~90MB`
+/// `Xenova/all-MiniLM-L6-v2` ONNX model download plus a real ONNX Runtime
+/// inference session), and `go test -tags=integration ./...` — against
+/// the same fixture spec used for the TypeScript/Rust/Python/C# e2e tests
+/// above, for direct comparability. Requires a Go toolchain, network
+/// access, and the `ONNXRUNTIME_SHARED_LIBRARY_PATH` env var pointing at
+/// a real ONNX Runtime shared library for your platform (see
+/// v5-implementation-plan.md's open decision #2), so it's ignored by
+/// default; run explicitly with:
+///
+/// ```sh
+/// ONNXRUNTIME_SHARED_LIBRARY_PATH=/path/to/libonnxruntime.dylib \
+///     cargo test --test e2e_generation -- --ignored
+/// ```
+#[tokio::test]
+#[ignore]
+async fn generates_a_go_project_and_passes_its_own_test_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("generated");
+
+    let ctx = run_shared_pipeline(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir,
+        false,
+        false,
+    )
+    .await
+    .expect("shared pipeline must succeed");
+
+    GoTargetGenerator
+        .execute(&ctx)
+        .await
+        .expect("execute() must succeed, including run_generated_tests' real go test");
 }
