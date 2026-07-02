@@ -51,8 +51,8 @@ impl McpServerTargetGenerator for TypeScriptTargetGenerator {
         steps::tools::generate_mcp_tools(ctx).await
     }
 
-    async fn generate_setup_wizard_and_tests(&self, _ctx: &GeneratorContext) -> Result<()> {
-        Ok(())
+    async fn generate_setup_wizard_and_tests(&self, ctx: &GeneratorContext) -> Result<()> {
+        steps::setup_and_tests::generate_setup_wizard_and_tests(ctx).await
     }
 
     async fn run_generated_tests(&self, _ctx: &GeneratorContext) -> Result<()> {
