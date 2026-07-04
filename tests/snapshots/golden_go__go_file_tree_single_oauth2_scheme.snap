@@ -51,4 +51,6 @@ expression: file_tree(&output_dir)
     "internal/validation/generated_schemas.json",
     "internal/validation/validator.go",
     "mcp_store.db",
+    "scripts/coverage.sh",
+    "scripts/profile.sh",
 ]

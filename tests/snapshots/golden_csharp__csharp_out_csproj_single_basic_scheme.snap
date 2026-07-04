@@ -71,6 +71,15 @@ expression: contents
     <Compile Remove="Tests/**" />
     <Content Remove="Tests/**" />
     <None Remove="Tests/**" />
+    <!-- Tools/Profiler is its own project too (v6 Part PROF) — same reason:
+         it has its own top-level-statement Program.cs, which would collide
+         with this project's entry point if implicitly globbed in. Scoped to
+         Tools/Profiler/** specifically, not all of Tools/**, since
+         Tools/McpTools.cs (Story C6) is real source for *this* project and
+         must stay compiled in. -->
+    <Compile Remove="Tools/Profiler/**" />
+    <Content Remove="Tools/Profiler/**" />
+    <None Remove="Tools/Profiler/**" />
   </ItemGroup>
 
 </Project>

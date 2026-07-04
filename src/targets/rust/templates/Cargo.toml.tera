@@ -11,8 +11,7 @@ license = "UNLICENSED" # TODO: set a real SPDX license identifier
 repository = "https://example.com/TODO" # TODO: set your repository URL
 {% else -%}
 publish = false
-{% endif -%}
-
+{% endif %}
 [lib]
 name = "{{ crate_name }}"
 path = "src/lib.rs"

@@ -56,8 +56,13 @@ expression: file_tree(&output_dir)
     "Tests/Out.Tests.csproj",
     "Tests/Validation/ValidatorTests.cs",
     "Tools/McpTools.cs",
+    "Tools/Profiler/Profiler.csproj",
+    "Tools/Profiler/Program.cs",
     "Validation/GeneratedSchemas.json",
     "Validation/Validator.cs",
     "docker-compose.yml",
     "mcp_store.db",
+    "scripts/coverage.sh",
+    "scripts/profile.sh",
+    "scripts/speedscope_to_text.py",
 ]

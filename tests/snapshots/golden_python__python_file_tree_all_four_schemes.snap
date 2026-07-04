@@ -14,6 +14,8 @@ expression: file_tree(&output_dir)
     "main.py",
     "mcp_store.db",
     "pyproject.toml",
+    "scripts/coverage.sh",
+    "scripts/profile.sh",
     "src/out/__init__.py",
     "src/out/auth/__init__.py",
     "src/out/auth/auth_manager.py",
