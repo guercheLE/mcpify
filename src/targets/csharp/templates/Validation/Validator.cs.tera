@@ -18,12 +18,22 @@ namespace {{ namespace }}.Validation;
 /// </summary>
 public static class Validator
 {
-    private static readonly Lazy<Dictionary<string, (JsonSchema Input, JsonSchema Output)>> Schemas = new(LoadSchemas);
-
-    /// <summary>Throws <see cref="ValidationException"/> if <paramref name="data"/> doesn't satisfy <paramref name="operationId"/>'s input schema.</summary>
-    public static void ValidateInput(string operationId, JsonNode? data)
+    // mcpify:versions:begin
+    private static readonly Dictionary<string, string> VersionSchemasFiles = new()
     {
-        var errors = ValidateAgainst(operationId, data, useInputSchema: true);
+{%- for v in version_entries %}
+        ["{{ v.label }}"] = "{{ v.schemas_file }}",
+{%- endfor %}
+    };
+    // mcpify:versions:end
+
+    private static readonly Dictionary<string, Dictionary<string, (JsonSchema Input, JsonSchema Output)>> SchemasByVersion = [];
+    private static readonly Lock SchemasByVersionLock = new();
+
+    /// <summary>Throws <see cref="ValidationException"/> if <paramref name="data"/> doesn't satisfy <paramref name="operationId"/>'s input schema, for the given <paramref name="apiVersion"/>.</summary>
+    public static void ValidateInput(string apiVersion, string operationId, JsonNode? data)
+    {
+        var errors = ValidateAgainst(apiVersion, operationId, data, useInputSchema: true);
         if (errors.Count > 0)
         {
             throw new ValidationException($"invalid input for '{operationId}'", errors);
@@ -35,20 +45,20 @@ public static class Validator
     /// doesn't satisfy <paramref name="operationId"/>'s output schema —
     /// surfaces upstream API drift as a structured error rather than
     /// silently returning a mismatched response (architecture.md's `call`
-    /// pipeline).
+    /// pipeline). Validates against the given <paramref name="apiVersion"/>'s schema.
     /// </summary>
-    public static void ValidateOutput(string operationId, JsonNode? data)
+    public static void ValidateOutput(string apiVersion, string operationId, JsonNode? data)
     {
-        var errors = ValidateAgainst(operationId, data, useInputSchema: false);
+        var errors = ValidateAgainst(apiVersion, operationId, data, useInputSchema: false);
         if (errors.Count > 0)
         {
             throw new ValidationException($"unexpected response shape for '{operationId}'", errors);
         }
     }
 
-    private static List<string> ValidateAgainst(string operationId, JsonNode? data, bool useInputSchema)
+    private static List<string> ValidateAgainst(string apiVersion, string operationId, JsonNode? data, bool useInputSchema)
     {
-        if (!Schemas.Value.TryGetValue(operationId, out var pair))
+        if (!SchemasFor(apiVersion).TryGetValue(operationId, out var pair))
         {
             return [];
         }
@@ -67,11 +77,28 @@ public static class Validator
             .ToList();
     }
 
-    private static Dictionary<string, (JsonSchema Input, JsonSchema Output)> LoadSchemas()
+    private static Dictionary<string, (JsonSchema Input, JsonSchema Output)> SchemasFor(string apiVersion)
+    {
+        lock (SchemasByVersionLock)
+        {
+            if (SchemasByVersion.TryGetValue(apiVersion, out var cached))
+            {
+                return cached;
+            }
+
+            var loaded = VersionSchemasFiles.TryGetValue(apiVersion, out var resourceSuffix)
+                ? LoadSchemas(resourceSuffix)
+                : [];
+            SchemasByVersion[apiVersion] = loaded;
+            return loaded;
+        }
+    }
+
+    private static Dictionary<string, (JsonSchema Input, JsonSchema Output)> LoadSchemas(string resourceSuffix)
     {
         var assembly = Assembly.GetExecutingAssembly();
         var resourceName = assembly.GetManifestResourceNames()
-            .FirstOrDefault(name => name.EndsWith("GeneratedSchemas.json", StringComparison.Ordinal));
+            .FirstOrDefault(name => name.EndsWith(resourceSuffix, StringComparison.Ordinal));
         if (resourceName is null)
         {
             return [];
@@ -83,8 +110,8 @@ public static class Validator
         // so disposing here (even via `using`) throws
         // `ObjectDisposedException` the first time `Evaluate` runs after
         // `LoadSchemas` returns — the built schemas need this document to
-        // stay alive for as long as `Schemas` itself does (the process
-        // lifetime, via the enclosing `Lazy<>`).
+        // stay alive for as long as `SchemasByVersion`'s cached entry does
+        // (the process lifetime).
         var document = JsonDocument.Parse(stream);
 
         var result = new Dictionary<string, (JsonSchema, JsonSchema)>();

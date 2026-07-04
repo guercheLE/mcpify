@@ -1,6 +1,5 @@
 ---
 source: tests/golden_csharp.rs
-assertion_line: 96
 expression: file_tree(&output_dir)
 ---
 [
@@ -17,6 +16,7 @@ expression: file_tree(&output_dir)
     "Auth/Strategies/StubAuthStrategy.cs",
     "Cli/Roles.cs",
     "Cli/SetupWizard.cs",
+    "Cli/VersionsCommand.cs",
     "Core/ApiClient.cs",
     "Core/AuthStrategies.cs",
     "Core/CircuitBreaker.cs",

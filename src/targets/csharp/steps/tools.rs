@@ -1,5 +1,4 @@
-use anyhow::{Context, Result};
-use serde_json::{Map, Value};
+use anyhow::Result;
 
 use crate::context::GeneratorContext;
 use crate::targets::csharp::context::CsTemplateContext;
@@ -24,6 +23,7 @@ const FILES: &[(&str, &str)] = &[
     ("Core/DataStore.cs.tera", "Core/DataStore.cs"),
     ("Core/EmbeddingService.cs.tera", "Core/EmbeddingService.cs"),
     ("Core/ApiClient.cs.tera", "Core/ApiClient.cs"),
+    ("Cli/VersionsCommand.cs.tera", "Cli/VersionsCommand.cs"),
 ];
 
 /// Re-rendered here even though earlier stories' steps already wrote
@@ -40,7 +40,7 @@ const RERENDERED_FILES: &[(&str, &str)] = &[
     ("Http/HttpServer.cs.tera", "Http/HttpServer.cs"),
 ];
 
-const GENERATED_SCHEMAS_PATH: &str = "Validation/GeneratedSchemas.json";
+pub(crate) const GENERATED_SCHEMAS_PATH: &str = "Validation/GeneratedSchemas.json";
 
 /// `generate_mcp_tools` (architecture.md §1, step 9): the data-access
 /// layer, embedding/API-client services, validator, and the `search`/
@@ -65,41 +65,19 @@ pub async fn generate_mcp_tools(ctx: &GeneratorContext) -> Result<()> {
     Ok(())
 }
 
-/// Built directly with `serde_json` rather than through a Tera loop: the
-/// per-operation JSON Schema documents (already `$ref`-resolved) are
-/// genuine data, not boilerplate text, and a hundreds-of-operations spec
-/// would make a loop-heavy `.tera` template slow to render and unreadable
-/// to maintain — mirrors
-/// `targets::rust::steps::tools::write_generated_schemas`.
 async fn write_generated_schemas(ctx: &GeneratorContext) -> Result<()> {
-    let mut schemas = Map::new();
-    for operation in &ctx.normalized_operations {
-        schemas.insert(
-            operation.operation_id.clone(),
-            serde_json::json!({
-                "inputSchema": operation.validation_input_schema,
-                "outputSchema": operation.validation_output_schema,
-            }),
-        );
-    }
-
-    let json_text = serde_json::to_string_pretty(&Value::Object(schemas))
-        .context("failed to serialize GeneratedSchemas.json")?;
-
-    let out_path = ctx.output_dir.join(GENERATED_SCHEMAS_PATH);
-    if let Some(parent) = out_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
-    }
-    tokio::fs::write(&out_path, json_text)
-        .await
-        .with_context(|| format!("failed to write '{}'", out_path.display()))
+    crate::schemas_asset::write_schemas_json_at(
+        &ctx.normalized_operations,
+        &ctx.output_dir.join(GENERATED_SCHEMAS_PATH),
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    use serde_json::{Map, Value};
 
     use super::*;
     use crate::openapi::NormalizedOperation;
@@ -117,6 +95,7 @@ mod tests {
             auth_schemes: Vec::new(),
             normalized_operations,
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 
@@ -196,6 +175,7 @@ mod tests {
             "\"get\"",
             "\"call\"",
             "\"populate-embeddings\"",
+            "\"versions\"",
         ] {
             assert!(contents.contains(command), "missing {command} subcommand");
         }

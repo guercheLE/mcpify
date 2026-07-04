@@ -10,8 +10,14 @@ public class ValidatorTests
     [Fact]
     public void UnknownOperationIdsPassValidationWithoutThrowing()
     {
-        Validator.ValidateInput("no-such-operation", JsonNode.Parse("{}"));
-        Validator.ValidateOutput("no-such-operation", JsonNode.Parse("{}"));
+        Validator.ValidateInput("{{ default_version_label }}", "no-such-operation", JsonNode.Parse("{}"));
+        Validator.ValidateOutput("{{ default_version_label }}", "no-such-operation", JsonNode.Parse("{}"));
+    }
+
+    [Fact]
+    public void UnknownApiVersionsAlsoPassValidationWithoutThrowing()
+    {
+        Validator.ValidateInput("no-such-version", "no-such-operation", JsonNode.Parse("{}"));
     }
 
 {%- if operations | length > 0 %}
@@ -26,7 +32,7 @@ public class ValidatorTests
         // is an expected, valid outcome) rather than silently no-op'ing on
         // every operationId, which `UnknownOperationIdsPassValidationWithoutThrowing`
         // above would not have caught.
-        var exception = Record.Exception(() => Validator.ValidateInput(operationId, JsonNode.Parse("{}")));
+        var exception = Record.Exception(() => Validator.ValidateInput("{{ default_version_label }}", operationId, JsonNode.Parse("{}")));
         Assert.True(exception is null or ValidationException);
     }
 {%- endif %}

@@ -18,6 +18,7 @@ public static class SetupWizard
         var url = await PromptBaseUrlAsync();
         var authMethod = PromptAuthMethod();
         var credentials = PromptCredentials(authMethod);
+        var apiVersion = PromptApiVersion();
 
         await credentialStore.SaveAsync("active-credentials", JsonSerializer.Serialize(credentials));
 
@@ -25,6 +26,7 @@ public static class SetupWizard
         {
             ["{{ tool_prefix_env }}_URL"] = url,
             ["{{ tool_prefix_env }}_AUTH_METHOD"] = authMethod.ToString(),
+            ["{{ tool_prefix_env }}_API_VERSION"] = apiVersion,
         };
         foreach (var (key, value) in credentials)
         {
@@ -71,6 +73,26 @@ public static class SetupWizard
         return choices[selection];
 {%- endif %}
     }
+
+    // mcpify:versions:begin
+    private static string PromptApiVersion()
+    {
+{%- if version_entries | length <= 1 %}
+        // Only one version is available — nothing to choose between.
+        return "{{ version_entries.0.label }}";
+{%- else %}
+        var choices = new Dictionary<string, string>
+        {
+{%- for v in version_entries %}
+            ["{{ v.label }}{% if v.label == default_version_label %} (default/latest){% endif %}"] = "{{ v.label }}",
+{%- endfor %}
+        };
+        var selection = AnsiConsole.Prompt(
+            new SelectionPrompt<string>().Title("API version to use:").AddChoices(choices.Keys));
+        return choices[selection];
+{%- endif %}
+    }
+    // mcpify:versions:end
 
     private static Dictionary<string, string> PromptCredentials(AuthMethod authMethod)
     {

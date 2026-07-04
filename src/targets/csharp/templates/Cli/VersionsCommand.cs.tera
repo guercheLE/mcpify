@@ -1,0 +1,22 @@
+namespace {{ namespace }}.Cli;
+
+/// <summary>
+/// v8 multi-version support: the OpenAPI spec versions this project
+/// currently has a store for (added at `generate`/`mcpify add-version`
+/// time). Listing logic lives in <see cref="Roles.PrintVersionsAsync"/>;
+/// this type only holds the marker-delimited data table `add-version`
+/// re-renders.
+/// </summary>
+public static class VersionsCommand
+{
+    public sealed record VersionRow(string Label, bool IsDefault);
+
+    // mcpify:versions:begin
+    public static readonly IReadOnlyList<VersionRow> KnownVersions =
+    [
+{%- for v in version_entries %}
+        new VersionRow("{{ v.label }}", {% if v.label == default_version_label %}true{% else %}false{% endif %}),
+{%- endfor %}
+    ];
+    // mcpify:versions:end
+}

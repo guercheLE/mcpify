@@ -1,6 +1,5 @@
 ---
 source: tests/golden_csharp.rs
-assertion_line: 139
 expression: contents
 ---
 <Project Sdk="Microsoft.NET.Sdk.Web">
@@ -63,11 +62,14 @@ expression: contents
 
   <ItemGroup>
     <!-- Written directly by the Rust generator (not templated) — baked
-         into the compiled assembly as an embedded resource rather than
+         into the compiled assembly as embedded resources rather than
          read from disk at runtime, mirroring
          `targets::rust::templates::validation::validator.rs`'s
-         `include_str!` approach. -->
-    <EmbeddedResource Include="Validation\GeneratedSchemas.json" />
+         `include_str!` approach. A glob (rather than one explicit
+         `Include` per file) so a later `mcpify add-version` call's new
+         `GeneratedSchemas_v<label>.json` sibling is picked up on the next
+         build without needing this project file re-rendered too. -->
+    <EmbeddedResource Include="Validation\GeneratedSchemas*.json" />
   </ItemGroup>
 
   <ItemGroup>

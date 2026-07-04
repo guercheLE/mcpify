@@ -34,6 +34,10 @@ public sealed class McpifyOptions
 
     public AuthMethod AuthMethod { get; set; }
 
+    // mcpify:versions:begin
+    public string ApiVersion { get; set; } = "default";
+    // mcpify:versions:end
+
     public string LogLevel { get; set; } = "info";
 
     public int RateLimit { get; set; } = 100;
@@ -83,6 +87,7 @@ public static class ConfigurationExtensions
     [
         ("Url", "URL"),
         ("AuthMethod", "AUTH_METHOD"),
+        ("ApiVersion", "API_VERSION"),
         ("LogLevel", "LOG_LEVEL"),
         ("Transport", "TRANSPORT"),
         ("Host", "HOST"),
@@ -106,6 +111,12 @@ public static class ConfigurationExtensions
             // Tier 7: built-in defaults.
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
+                // ApiVersion is deliberately not listed here (unlike the
+                // other optional fields below): its default lives only on
+                // the `McpifyOptions.ApiVersion` property declaration
+                // above (inside the `mcpify:versions:begin/:end` marker),
+                // so `add-version --set-default` has a single place to
+                // update rather than two that could drift out of sync.
                 ["LogLevel"] = "info",
                 ["RateLimit"] = "100",
                 ["TimeoutMs"] = "30000",

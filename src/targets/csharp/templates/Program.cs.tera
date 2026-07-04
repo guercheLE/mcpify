@@ -41,6 +41,14 @@ configCommand.SetAction(async (_, cancellationToken) =>
 });
 rootCommand.Subcommands.Add(configCommand);
 
+var versionsCommand = new Command("versions", "List the API spec versions available in this project.");
+versionsCommand.SetAction(async (_, cancellationToken) =>
+{
+    await Roles.PrintVersionsAsync(args, cancellationToken);
+    return 0;
+});
+rootCommand.Subcommands.Add(versionsCommand);
+
 var queryArgument = new Argument<string>("query");
 var limitOption = new Option<int>("--limit") { DefaultValueFactory = _ => 5 };
 limitOption.Aliases.Add("-l");

@@ -32,6 +32,28 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
 
     private const string SqliteVecVersion = "0.1.9";
 
+    // mcpify:versions:begin
+    private static readonly Dictionary<string, string> VersionStoreFiles = new()
+    {
+{%- for v in version_entries %}
+        ["{{ v.label }}"] = "{{ v.db_file }}",
+{%- endfor %}
+    };
+    // mcpify:versions:end
+
+    /// <summary>
+    /// Resolves the active `ApiVersion` (from the config cascade) to its
+    /// store file — the default version's data always lives in the
+    /// project-root `mcp_store.db` this target has always used; every
+    /// other version lives in its own `mcp_store_v&lt;label&gt;.db` sibling,
+    /// added by a later `mcpify add-version` call.
+    /// </summary>
+    public static string ResolveStorePath(string apiVersion) =>
+        VersionStoreFiles.TryGetValue(apiVersion, out var fileName)
+            ? fileName
+            : throw new ArgumentException(
+                $"unknown api_version '{apiVersion}' — run the 'versions' command to see what's available");
+
     private readonly Lazy<string> _vecExtensionPath = new(ResolveExtensionPath);
 
     /// <summary>Every caller except <see cref="OpenReadWrite"/>'s one consumer (`Services/PopulateEmbeddingsService.cs`) uses this.</summary>

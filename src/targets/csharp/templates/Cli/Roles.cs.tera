@@ -92,6 +92,28 @@ public static class Roles
         return Task.CompletedTask;
     }
 
+    /// <summary>Lists the API spec versions this project has a store for (v8 multi-version support), showing which is default/active.</summary>
+    public static Task PrintVersionsAsync(string[] args, CancellationToken cancellationToken)
+    {
+        using var host = BuildServicesHost(args);
+        var options = host.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
+
+        foreach (var row in VersionsCommand.KnownVersions)
+        {
+            var markers = new List<string>();
+            if (row.IsDefault)
+            {
+                markers.Add("default");
+            }
+            if (row.Label == options.ApiVersion)
+            {
+                markers.Add("active");
+            }
+            Console.WriteLine(markers.Count > 0 ? $"{row.Label} ({string.Join(", ", markers)})" : row.Label);
+        }
+        return Task.CompletedTask;
+    }
+
     public static async Task<int> RunSearchAsync(string[] args, string query, int limit)
     {
         using var host = BuildServicesHost(args);
@@ -118,6 +140,7 @@ public static class Roles
         var result = await McpTools.Call(
             host.Services.GetRequiredService<SqliteVecStore>(),
             host.Services.GetRequiredService<ApiClient>(),
+            host.Services.GetRequiredService<IOptions<McpifyOptions>>(),
             operationId,
             callArgs);
         Console.WriteLine(result);

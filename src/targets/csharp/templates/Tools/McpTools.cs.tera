@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using {{ namespace }}.Core;
 using {{ namespace }}.Data;
@@ -49,6 +50,7 @@ public static class McpTools
     public static async Task<string> Call(
         SqliteVecStore store,
         ApiClient apiClient,
+        IOptions<McpifyOptions> options,
         [Description("The operationId to invoke")] string operationId,
         [Description("JSON object of arguments for the operation")] string args)
     {
@@ -56,12 +58,12 @@ public static class McpTools
             ?? throw new McpifyNotFoundException($"unknown operationId '{operationId}'");
 
         var argsNode = JsonNode.Parse(args) as JsonObject ?? [];
-        Validator.ValidateInput(operationId, argsNode);
+        Validator.ValidateInput(options.Value.ApiVersion, operationId, argsNode);
 
         var argsDict = argsNode.ToDictionary(kv => kv.Key, kv => kv.Value);
         var response = await apiClient.ExecuteAsync(endpoint, argsDict);
 
-        Validator.ValidateOutput(operationId, response);
+        Validator.ValidateOutput(options.Value.ApiVersion, operationId, response);
         return response?.ToJsonString() ?? "null";
     }
 }
