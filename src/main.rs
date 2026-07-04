@@ -9,6 +9,9 @@ use mcpify::targets;
 
 #[tokio::main]
 async fn main() {
+    #[cfg(feature = "profiling")]
+    console_subscriber::init();
+
     if let Err(err) = run().await {
         eprintln!("error: {err:#}");
         std::process::exit(1);

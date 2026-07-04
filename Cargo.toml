@@ -28,6 +28,14 @@ tera = "1"
 rust-embed = "8"
 inquire = "0.7"
 heck = "0.5"
+console-subscriber = { version = "0.4", optional = true }
+
+[features]
+# Opt-in tokio-console support for debugging concurrency-shaped bottlenecks
+# (remote spec fetch, embeddings, per-target file writes all run under
+# tokio). Requires building with `RUSTFLAGS="--cfg tokio_unstable"` — see
+# docs/profiling.md. Zero cost when the feature isn't enabled.
+profiling = ["dep:console-subscriber"]
 
 [dev-dependencies]
 tempfile = "3"
