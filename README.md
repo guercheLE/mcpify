@@ -48,7 +48,7 @@ mcpify -i ./specs/enterprise-api.yaml -o ./my-api-mcp
 Options:
   -i, --input <PATH_OR_URL>  Path or remote URL to the source OpenAPI specification (JSON/YAML)
   -o, --output <PATH>        Destination directory where the project will be generated
-  -l, --language <LANG>      Target stack (v1: "typescript" only; reserved for future targets)
+  -l, --language <LANG>      Target stack: "typescript" (default), "rust", "python", "csharp", or "go"
   -f, --force                Overwrite the destination folder if it already contains files
   -h, --help                 Print help information
 ```
