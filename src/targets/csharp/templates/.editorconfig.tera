@@ -1,0 +1,13 @@
+root = true
+
+[*.cs]
+# RCS1194 ("Implement exception constructors") wants every exception type to
+# carry the general-purpose 4-constructor pattern (parameterless, message,
+# message+innerException, serialization). This codebase deliberately uses
+# concise, purpose-specific domain exceptions instead (e.g.
+# `MissingCredentialsException(string fields)`), so the rule is just noise
+# here — worse, its "fix" doesn't understand C# 12's semicolon-bodied
+# primary-constructor classes (`public class AuthException(string message) :
+# Exception(message);`) and corrupts them when auto-applied via
+# `dotnet format`.
+dotnet_diagnostic.RCS1194.severity = none

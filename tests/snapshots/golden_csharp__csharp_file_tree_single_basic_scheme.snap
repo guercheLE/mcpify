@@ -1,8 +1,10 @@
 ---
 source: tests/golden_csharp.rs
+assertion_line: 80
 expression: file_tree(&output_dir)
 ---
 [
+    ".editorconfig",
     ".env.example",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-build.yml",

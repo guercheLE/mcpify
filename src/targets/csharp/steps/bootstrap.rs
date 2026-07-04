@@ -18,6 +18,7 @@ const SOURCE_SUBDIRS: &[&str] = &[
 
 const STATIC_FILES: &[(&str, &str)] = &[
     (".gitignore.tera", ".gitignore"),
+    (".editorconfig.tera", ".editorconfig"),
     (".env.example.tera", ".env.example"),
     ("README.md.tera", "README.md"),
 ];

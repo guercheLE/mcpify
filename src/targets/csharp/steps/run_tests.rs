@@ -46,7 +46,27 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     // `black` auto-fix in this same step.
     run_dotnet_command(&ctx.output_dir, &["format"], "dotnet format").await?;
 
-    run_dotnet_command(&ctx.output_dir, &["test", "Tests"], "dotnet test Tests").await?;
+    // `-p:TreatWarningsAsErrors=true` makes Roslynator (and any other
+    // analyzer) violations fail this step, without adding
+    // `TreatWarningsAsErrors` to the shipped `.csproj` itself — an end
+    // user's own local `dotnet build` stays unaffected. `WarningsNotAsErrors`
+    // carves out NU1903 specifically: Project.csproj.tera's own NU1903 note
+    // already documents this as a known, currently-unpatchable advisory on a
+    // transitive dependency (SQLitePCLRaw.lib.e_sqlite3) — without this
+    // carve-out, the blanket warnaserror flag turns that pre-existing,
+    // deliberately-tolerated warning into a hard failure on every
+    // generation, which isn't what this gate is meant to catch.
+    run_dotnet_command(
+        &ctx.output_dir,
+        &[
+            "test",
+            "Tests",
+            "-p:TreatWarningsAsErrors=true",
+            "-p:WarningsNotAsErrors=NU1903",
+        ],
+        "dotnet test Tests",
+    )
+    .await?;
 
     Ok(())
 }
