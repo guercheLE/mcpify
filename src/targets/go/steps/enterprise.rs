@@ -47,6 +47,7 @@ const CORE_FILES: &[(&str, &str)] = &[
 const ROOT_FILES: &[(&str, &str)] = &[
     ("Dockerfile.tera", "Dockerfile"),
     ("docker-compose.yml.tera", "docker-compose.yml"),
+    (".golangci.yml.tera", ".golangci.yml"),
     (".github/workflows/ci.yml.tera", ".github/workflows/ci.yml"),
     (
         ".github/workflows/docker-build.yml.tera",

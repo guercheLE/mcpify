@@ -1,0 +1,20 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - opinionated
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

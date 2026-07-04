@@ -66,10 +66,10 @@ func promptBaseURL(ctx context.Context) (string, error) {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, http.NoBody)
 	if err == nil {
 		if resp, err := client.Do(req); err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			fmt.Println("reachable")
 		} else {
 			fmt.Println("could not reach that URL yet — continuing anyway (fix it later with `test-connection`)")

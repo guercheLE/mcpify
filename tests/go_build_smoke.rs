@@ -1,10 +1,12 @@
 //! A fast, non-ignored sanity check that the Go target's templated
-//! output actually compiles — deliberately narrower than
-//! `e2e_generation.rs`'s real acceptance gate: no `go test`, no
-//! `populate-embeddings`, and therefore no ONNX Runtime shared library or
-//! ~90MB model download needed, just `go mod tidy` (a small, fast
-//! dependency-graph fetch, no bigger than any other target's npm
-//! install/dotnet restore) + `gofmt -l` + `go vet` + `go build ./...`.
+//! output actually compiles and passes static analysis — deliberately
+//! narrower than `e2e_generation.rs`'s real acceptance gate: no
+//! `go test`, no `populate-embeddings`, and therefore no ONNX Runtime
+//! shared library or ~90MB model download needed, just `go mod tidy` (a
+//! small, fast dependency-graph fetch, no bigger than any other target's
+//! npm install/dotnet restore) + `gofmt -l` + `go vet` +
+//! `golangci-lint run` (gocritic enabled via the generated
+//! `.golangci.yml`) + `go build ./...`.
 //! Exists because two of this target's real implementation bugs (a
 //! literal `{{` in a Go composite literal parsed as a Tera expression,
 //! and gofmt's column-alignment of grouped `const`/map-literal
@@ -85,6 +87,17 @@ async fn generated_go_project_gofmt_vet_and_build_cleanly() {
         vet.status.success(),
         "go vet failed: {}",
         String::from_utf8_lossy(&vet.stderr)
+    );
+
+    let golangci_lint = Command::new("golangci-lint")
+        .args(["run", "./..."])
+        .current_dir(&output_dir)
+        .output()
+        .expect("failed to run golangci-lint — is it installed?");
+    assert!(
+        golangci_lint.status.success(),
+        "golangci-lint failed:\n{}",
+        String::from_utf8_lossy(&golangci_lint.stdout)
     );
 
     let build = Command::new("go")

@@ -229,7 +229,7 @@ func RunTestConnection(ctx context.Context, overrides core.CLIOverrides) error {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, config.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, config.URL, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func RunTestConnection(ctx context.Context, overrides core.CLIOverrides) error {
 		fmt.Printf("unreachable: %v\n", err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	fmt.Printf("reachable (status %d)\n", resp.StatusCode)
 	return nil
 }

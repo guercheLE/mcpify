@@ -172,7 +172,7 @@ func (c *ApiClient) Execute(
 		}
 	}
 
-	result, err := c.circuitBreaker.Execute(func() (interface{}, error) {
+	result, err := c.circuitBreaker.Execute(func() (any, error) {
 		return c.dispatchWithRetries(ctx, endpoint.Method, requestURL, body, headers)
 	})
 	if err != nil {
@@ -211,7 +211,7 @@ func (c *ApiClient) dispatch(ctx context.Context, method, requestURL string, bod
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {

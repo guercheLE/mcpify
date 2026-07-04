@@ -19,40 +19,46 @@ import (
 // and by run_generated_tests (Story G8) before the test suite runs, the
 // same way v1 sequences populate-embeddings before npm test.
 func main() {
+	// Split into `run` so `defer`s below actually execute before exit —
+	// `os.Exit` in the same scope as a `defer` would skip it (gocritic
+	// `exitAfterDefer`).
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
 
 	store, err := data.Open("mcp_store.db")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open mcp_store.db: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to open mcp_store.db: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to resolve home directory: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to resolve home directory: %w", err)
 	}
 	cacheDir := filepath.Join(home, ".{{ project_name }}", "models")
 
 	embedSvc, err := services.NewEmbeddingService(ctx, cacheDir, services.ResolveSharedLibraryPath())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize embedding service: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize embedding service: %w", err)
 	}
-	defer embedSvc.Close()
+	defer func() { _ = embedSvc.Close() }()
 
 	vectorStore, err := services.NewVectorStore("mcp_store.chromem", embedSvc.Embed)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open vector store: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to open vector store: %w", err)
 	}
 
 	count, err := services.PopulateEmbeddings(ctx, store, vectorStore)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to populate embeddings: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to populate embeddings: %w", err)
 	}
 
 	fmt.Printf("populated %d embedding(s)\n", count)
+	return nil
 }

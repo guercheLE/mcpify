@@ -109,7 +109,7 @@ func BuildOAuth1AuthorizationHeader(consumerKey, privateKeyPEM, token, method, r
 
 	pairs := make([]string, 0, len(headerKeys))
 	for _, key := range headerKeys {
-		pairs = append(pairs, fmt.Sprintf(`%s="%s"`, oauth1.PercentEncode(key), oauth1.PercentEncode(params[key])))
+		pairs = append(pairs, fmt.Sprintf(`%s=%q`, oauth1.PercentEncode(key), oauth1.PercentEncode(params[key])))
 	}
 	return "OAuth " + strings.Join(pairs, ", "), nil
 }

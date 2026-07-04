@@ -35,6 +35,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+      # `tests/go_build_smoke.rs` now also runs `golangci-lint run ./...`
+      # against the rendered fixture (gocritic enabled), so this job
+      # needs the binary on PATH — same tier as `cargo`/`clippy` above.
+      # Installed directly (not via golangci-lint-action) since that
+      # action expects to lint a real Go module at the repo root, and
+      # this repo's root is Rust, not Go. `go install` (not a piped
+      # shell-install script) keeps this in line with the Go toolchain's
+      # own dependency-fetch mechanism, same trust boundary as `go mod
+      # tidy` already fetching this target's dependencies elsewhere.
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.0.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

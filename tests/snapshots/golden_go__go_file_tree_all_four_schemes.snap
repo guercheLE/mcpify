@@ -1,5 +1,6 @@
 ---
 source: tests/golden_go.rs
+assertion_line: 104
 expression: file_tree(&output_dir)
 ---
 [
@@ -8,6 +9,7 @@ expression: file_tree(&output_dir)
     ".github/workflows/docker-build.yml",
     ".github/workflows/release.yml",
     ".gitignore",
+    ".golangci.yml",
     "Dockerfile",
     "README.md",
     "cmd/out/main.go",

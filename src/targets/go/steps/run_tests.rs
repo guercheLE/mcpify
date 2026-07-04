@@ -34,18 +34,36 @@ const GO_TIMEOUT: Duration = Duration::from_secs(900);
 /// in the test environment, open decision #2) → `go test -tags=integration
 /// ./...` (the `integration` tag is included here deliberately, unlike a
 /// plain `go test ./...` — this is the one gate meant to catch a broken
-/// embeddings pipeline for real, not just compile it).
+/// embeddings pipeline for real, not just compile it). `golangci-lint run
+/// ./...` (gocritic enabled via the generated `.golangci.yml`) runs
+/// between the build and embeddings steps, mirroring the generated
+/// project's own CI.
 pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
-    run_go_command(&ctx.output_dir, &["mod", "tidy"], "go mod tidy").await?;
-    run_go_command(&ctx.output_dir, &["build", "./..."], "go build ./...").await?;
-    run_go_command(
+    run_command(&ctx.output_dir, "go", &["mod", "tidy"], "go mod tidy").await?;
+    run_command(&ctx.output_dir, "go", &["build", "./..."], "go build ./...").await?;
+    // Mirrors the generated project's own CI (`ci.yml.tera`'s
+    // `golangci-lint-action` step, gocritic enabled via `.golangci.yml`)
+    // so a template that introduces a lint violation fails generation
+    // itself, instead of only being caught downstream in the end user's
+    // CI. Placed before the slower embeddings/model-download step so a
+    // lint failure surfaces fast.
+    run_command(
         &ctx.output_dir,
+        "golangci-lint",
+        &["run", "./..."],
+        "golangci-lint run",
+    )
+    .await?;
+    run_command(
+        &ctx.output_dir,
+        "go",
         &["run", "./cmd/populate-embeddings"],
         "go run ./cmd/populate-embeddings",
     )
     .await?;
-    run_go_command(
+    run_command(
         &ctx.output_dir,
+        "go",
         &["test", "-tags=integration", "./..."],
         "go test -tags=integration ./...",
     )
@@ -54,8 +72,8 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     Ok(())
 }
 
-async fn run_go_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
-    let mut command = Command::new("go");
+async fn run_command(cwd: &Path, program: &str, args: &[&str], label: &str) -> Result<()> {
+    let mut command = Command::new(program);
     command
         .args(args)
         .current_dir(cwd)

@@ -73,7 +73,7 @@ func NewEmbeddingService(ctx context.Context, cacheDir, onnxRuntimeLibPath strin
 
 	tk, err := pretrained.FromFile(tokenizerPath)
 	if err != nil {
-		session.Destroy()
+		_ = session.Destroy()
 		return nil, fmt.Errorf("loading tokenizer: %w", err)
 	}
 
@@ -115,24 +115,24 @@ func (s *EmbeddingService) Embed(ctx context.Context, text string) ([]float32, e
 	if err != nil {
 		return nil, err
 	}
-	defer inputIdsTensor.Destroy()
+	defer func() { _ = inputIdsTensor.Destroy() }()
 	attentionMaskTensor, err := ort.NewTensor(shape, attentionMask)
 	if err != nil {
 		return nil, err
 	}
-	defer attentionMaskTensor.Destroy()
+	defer func() { _ = attentionMaskTensor.Destroy() }()
 	tokenTypeIdsTensor, err := ort.NewTensor(shape, tokenTypeIds)
 	if err != nil {
 		return nil, err
 	}
-	defer tokenTypeIdsTensor.Destroy()
+	defer func() { _ = tokenTypeIdsTensor.Destroy() }()
 
 	outputShape := ort.NewShape(1, int64(seqLen), embeddingDim)
 	output, err := ort.NewEmptyTensor[float32](outputShape)
 	if err != nil {
 		return nil, err
 	}
-	defer output.Destroy()
+	defer func() { _ = output.Destroy() }()
 
 	err = s.session.Run(
 		[]ort.Value{inputIdsTensor, attentionMaskTensor, tokenTypeIdsTensor},
@@ -181,7 +181,7 @@ func downloadIfMissing(ctx context.Context, url, path string) error {
 		return nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -189,7 +189,7 @@ func downloadIfMissing(ctx context.Context, url, path string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d downloading %s", resp.StatusCode, url)
 	}
@@ -200,12 +200,12 @@ func downloadIfMissing(ctx context.Context, url, path string) error {
 		return err
 	}
 	if _, err := io.Copy(out, resp.Body); err != nil {
-		out.Close()
-		os.Remove(tmpPath)
+		_ = out.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := out.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, path)

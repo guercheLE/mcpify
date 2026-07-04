@@ -93,6 +93,7 @@ func Load(overrides CLIOverrides) (Config, error) {
 	if installDir, err := os.Executable(); err == nil {
 		applyFile(&cfg, filepath.Join(filepath.Dir(installDir), "config.json"))
 	}
+	//nolint:gocritic // "/etc" is intentionally an absolute directory, not a mistaken multi-segment literal
 	applyFile(&cfg, filepath.Join("/etc", "{{ project_name }}", "config.json"))
 	if home, err := os.UserHomeDir(); err == nil {
 		applyFile(&cfg, filepath.Join(home, ".{{ project_name }}", "config.json"))

@@ -86,7 +86,7 @@ func (s *Store) ListEndpoints() ([]EndpointRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []EndpointRecord
 	for rows.Next() {
