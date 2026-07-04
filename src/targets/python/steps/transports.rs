@@ -28,6 +28,7 @@ const PACKAGE_FILES: &[(&str, &str)] = &[
     ("cli/test_connection.py.tera", "cli/test_connection.py"),
     ("cli/config.py.tera", "cli/config.py"),
     ("cli/version.py.tera", "cli/version.py"),
+    ("cli/versions.py.tera", "cli/versions.py"),
     ("http/__init__.py.tera", "http/__init__.py"),
     ("http/types.py.tera", "http/types.py"),
     (
@@ -73,6 +74,7 @@ mod tests {
             auth_schemes: Vec::new(),
             normalized_operations: Vec::new(),
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 
@@ -114,7 +116,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cli_dispatches_all_nine_subcommands() {
+    async fn cli_dispatches_all_ten_subcommands() {
         let parent = tempfile::tempdir().unwrap();
         let dir = output_dir(&parent);
         generate_transports_and_roles(&ctx(dir.clone()))
@@ -139,6 +141,7 @@ mod tests {
             "def test_connection",
             "def config",
             "def version",
+            "def versions",
         ] {
             assert!(
                 cli_init.contains(command),

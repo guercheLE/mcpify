@@ -25,10 +25,10 @@ async def call_operation(
     operation_id: str,
     args: dict[str, Any],
 ) -> Any:
-    validate_input(operation_id, args)
+    validate_input(config.api_version, operation_id, args)
 
     client = ApiClient(config)
     response = await client.execute(endpoint, args, auth_manager)
 
-    validate_output(operation_id, response)
+    validate_output(config.api_version, operation_id, response)
     return response

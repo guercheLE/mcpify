@@ -51,6 +51,23 @@ async def _prompt_auth_method() -> AuthMethod:
 {%- endif %}
 
 
+# mcpify:versions:begin
+async def _prompt_api_version() -> str:
+{%- if version_entries | length == 1 %}
+    # Only one version is available — nothing to choose between.
+    return "{{ version_entries.0.label }}"
+{%- else %}
+    choices = [
+    {%- for v in version_entries %}
+        "{{ v.label }}{% if v.label == default_version_label %} (default/latest){% endif %}",
+    {%- endfor %}
+    ]
+    selection = await questionary.select("API version to use:", choices).ask_async()
+    return selection.split(" ")[0]
+{%- endif %}
+# mcpify:versions:end
+
+
 async def _prompt_credentials(auth_method: AuthMethod) -> dict[str, str]:
     credentials: dict[str, str] = {}
 {%- if "basic" in auth_method_keys %}
@@ -116,12 +133,14 @@ async def run_setup_wizard() -> None:
     url = await _prompt_base_url()
     auth_method = await _prompt_auth_method()
     credentials = await _prompt_credentials(auth_method)
+    api_version = await _prompt_api_version()
 
     save_credential("active-credentials", json.dumps(credentials))
 
     env: dict[str, str] = {
         "{{ tool_prefix_env }}_URL": url,
         "{{ tool_prefix_env }}_AUTH_METHOD": auth_method.value,
+        "{{ tool_prefix_env }}_API_VERSION": api_version,
     }
     for key, value in credentials.items():
         env[f"{{ tool_prefix_env }}_{_to_env_key(key)}"] = value

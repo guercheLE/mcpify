@@ -6,5 +6,9 @@ from {{ module_name }}.validation.validator import validate_input, validate_outp
 
 
 def test_an_unknown_operation_id_falls_back_to_an_always_valid_schema() -> None:
-    validate_input("__unknown_operation__", {"anything": True})
-    validate_output("__unknown_operation__", 42)
+    validate_input("{{ default_version_label }}", "__unknown_operation__", {"anything": True})
+    validate_output("{{ default_version_label }}", "__unknown_operation__", 42)
+
+
+def test_an_unknown_api_version_also_falls_back_to_an_always_valid_schema() -> None:
+    validate_input("__unknown_version__", "__unknown_operation__", {"anything": True})

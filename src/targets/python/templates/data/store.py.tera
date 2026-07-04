@@ -23,6 +23,29 @@ _ENDPOINT_COLUMNS = (
     "input_schema, output_schema, auth_scheme_ref"
 )
 
+# mcpify:versions:begin
+_VERSION_STORE_FILES: dict[str, str] = {
+{%- for v in version_entries %}
+    "{{ v.label }}": "{{ v.db_file }}",
+{%- endfor %}
+}
+# mcpify:versions:end
+
+
+def resolve_store_path(api_version: str) -> Path:
+    """Resolves the active `api_version` (from the config cascade) to its
+    store file — the default version's data always lives in the
+    project-root `mcp_store.db` this target has always used; every other
+    version lives in its own `mcp_store_v<label>.db` sibling, added by a
+    later `mcpify add-version` call.
+    """
+    file_name = _VERSION_STORE_FILES.get(api_version)
+    if file_name is None:
+        raise ValueError(
+            f"unknown api_version '{api_version}' — run the 'versions' command to see what's available"
+        )
+    return Path(file_name)
+
 
 async def _load_vec_extension(conn: aiosqlite.Connection) -> None:
     await conn.enable_load_extension(True)

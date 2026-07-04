@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-from ..data.store import open_store
+from ..core.config import load_config
+from ..data.store import open_store, resolve_store_path
 from ..tools.get_tool import get_operation
 
 
 async def run(operation_id: str) -> None:
-    async with open_store(Path("mcp_store.db")) as conn:
+    config = load_config()
+    async with open_store(resolve_store_path(config.api_version)) as conn:
         result = await get_operation(conn, operation_id)
     print(json.dumps(result, indent=2))

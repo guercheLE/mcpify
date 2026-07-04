@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::naming::{pascal_case, screaming_snake_case, snake_case};
 use crate::auth_profile::AuthSchemeKind;
-use crate::context::GeneratorContext;
+use crate::context::{GeneratorContext, VersionEntryView};
 
 /// One discovered auth scheme, in the shape templates need: `method_key` is
 /// the literal string value the generated `auth_method` config field takes
@@ -76,6 +76,9 @@ pub struct PyTemplateContext {
     /// v6 Part PUB: `--publish-registry` — whether `release.yml` emits a
     /// real `uv publish` step instead of GitHub-Release-only.
     pub publish_registry: bool,
+    /// v8 multi-version support — see `targets::typescript::context::TsTemplateContext::version_entries`.
+    pub version_entries: Vec<VersionEntryView>,
+    pub default_version_label: String,
 }
 
 impl PyTemplateContext {
@@ -128,6 +131,17 @@ impl PyTemplateContext {
             })
             .collect();
 
+        let schemas_relative = format!(
+            "src/{}/{}",
+            module_name,
+            super::steps::tools::GENERATED_SCHEMAS_RELATIVE_PATH
+        );
+        let version_entries = vec![VersionEntryView::from_project_relative_paths(
+            &ctx.version_label,
+            crate::db::STORE_FILE_NAME,
+            &schemas_relative,
+        )];
+
         Self {
             package_name: project_name.clone(),
             module_name,
@@ -141,6 +155,8 @@ impl PyTemplateContext {
             auth_methods,
             operations,
             publish_registry: ctx.publish_registry,
+            version_entries,
+            default_version_label: ctx.version_label.clone(),
         }
     }
 }
@@ -212,6 +228,7 @@ mod tests {
                 validation_output_schema: serde_json::json!({}),
             }],
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 

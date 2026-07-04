@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 from typing import Optional
 
 import typer
@@ -21,7 +20,7 @@ from ..core.health_check import ComponentRegistry, HealthCheckManager
 from ..core.logger import get_logger, init_logging
 from ..core.mcp_server import build_server
 from ..core.tracing import build_tracer_provider, shutdown_tracing
-from ..data.store import open_store
+from ..data.store import open_store, resolve_store_path
 from ..http.server import build_http_app, start_http_server
 from ..http.types import HttpServerConfig
 from . import call as cli_call
@@ -31,6 +30,7 @@ from . import search as cli_search
 from . import setup as cli_setup
 from . import test_connection as cli_test_connection
 from . import version as cli_version
+from . import versions as cli_versions
 
 app = typer.Typer(name="{{ project_name }}", help="{{ display_name }} MCP server")
 
@@ -103,6 +103,12 @@ def version() -> None:
     cli_version.run()
 
 
+@app.command()
+def versions() -> None:
+    """List the API spec versions available in this project."""
+    cli_versions.run()
+
+
 async def _run_harness_server() -> None:
     """Bootstrap order (architecture.md's Runtime Target Architecture):
     config -> logger -> tracing -> registry -> db -> auth -> McpServer ->
@@ -117,7 +123,7 @@ async def _run_harness_server() -> None:
         log.warning("failed to initialize tracing", error=str(err))
         tracer_provider = None
 
-    db_path = Path("mcp_store.db")
+    db_path = resolve_store_path(config_value.api_version)
     registry = ComponentRegistry()
     health_checks = HealthCheckManager(registry)
 

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from ..auth.auth_manager import AuthManager
 from ..core.config import load_config
 from ..core.errors import NotFoundError
-from ..data.store import get_endpoint, open_store
+from ..data.store import get_endpoint, open_store, resolve_store_path
 from ..tools.call_tool import call_operation
 
 
@@ -17,7 +16,7 @@ async def run(operation_id: str, args_json: str) -> None:
     auth_manager = AuthManager(config.auth_method)
     args = json.loads(args_json)
 
-    async with open_store(Path("mcp_store.db")) as conn:
+    async with open_store(resolve_store_path(config.api_version)) as conn:
         endpoint = await get_endpoint(conn, operation_id)
     if endpoint is None:
         raise NotFoundError(f"unknown operationId '{operation_id}'")

@@ -36,6 +36,7 @@ expression: file_tree(&output_dir)
     "src/out/cli/setup_wizard.py",
     "src/out/cli/test_connection.py",
     "src/out/cli/version.py",
+    "src/out/cli/versions.py",
     "src/out/core/__init__.py",
     "src/out/core/cache.py",
     "src/out/core/circuit_breaker.py",
