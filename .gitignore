@@ -1,1 +1,4 @@
 /target
+# insta's pending/unreviewed snapshot proposals — never the reviewed .snap
+# files themselves, which are meant to be committed.
+*.snap.new
