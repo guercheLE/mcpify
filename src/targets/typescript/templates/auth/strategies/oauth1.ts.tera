@@ -11,8 +11,14 @@ function buildOauth(consumerKey: string, privateKey: string): OAuth {
   return new OAuth({
     consumer: { key: consumerKey, secret: privateKey },
     signature_method: 'RSA-SHA1',
-    hash_function(baseString: string, key: string) {
-      return createSign('RSA-SHA1').update(baseString).sign(key, 'base64');
+    // oauth-1.0a's `getSigningKey()` always percent-encodes `consumer.secret`
+    // before passing it here — correct for HMAC-SHA1 (a literal shared
+    // secret) but not for RSA-SHA1, where the secret is a PEM private key:
+    // percent-encoding mangles its spaces/newlines into `%20`/`%0A`, which
+    // OpenSSL then fails to decode. Ignore the corrupted `key` argument and
+    // sign with the real `privateKey` from the closure instead.
+    hash_function(baseString: string) {
+      return createSign('RSA-SHA1').update(baseString).sign(privateKey, 'base64');
     },
   });
 }
