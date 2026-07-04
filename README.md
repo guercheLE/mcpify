@@ -46,14 +46,18 @@ mcpify -i ./specs/enterprise-api.yaml -o ./my-api-mcp
 
 ```text
 Options:
-  -i, --input <PATH_OR_URL>  Path or remote URL to the source OpenAPI specification (JSON/YAML)
-  -o, --output <PATH>        Destination directory where the project will be generated
-  -l, --language <LANG>      Target stack: "typescript" (default), "rust", "python", "csharp", or "go"
-  -f, --force                Overwrite the destination folder if it already contains files
-  -h, --help                 Print help information
+  -i, --input <PATH_OR_URL>   Path or remote URL to the source OpenAPI specification (JSON/YAML)
+  -o, --output <PATH>         Destination directory where the project will be generated
+  -l, --language <LANG>       Target stack: "typescript" (default), "rust", "python", "csharp", or "go"
+  -f, --force                 Overwrite the destination folder if it already contains files
+      --publish-registry     Emit a registry-publish step in the generated release workflow
+      --api-version <LABEL>  Label for the spec version ingested by this run (default: "default")
+  -h, --help                  Print help information
 ```
 
 If the output directory is non-empty, `mcpify` aborts with a warning unless `--force` is passed.
+
+If you expect to layer more spec versions onto this project later (see [Multi-Version OpenAPI Specs](#multi-version-openapi-specs) below), pass `--api-version` explicitly at generate time (e.g. `--api-version 11.3`) rather than relying on the default sentinel.
 
 ---
 
@@ -123,6 +127,39 @@ Values resolve through a strict, stop-at-first-match cascade:
 ```text
 CLI flags → env vars → local file (./) → home file (~/.<tool>/) →
 system file (/etc/<tool>/) → install-dir file → built-in defaults
+```
+
+---
+
+## Multi-Version OpenAPI Specs
+
+Some APIs ship one spec forever (e.g. a Bamboo server); others publish a new spec per release (Jira, Bitbucket, Confluence often have 10+ historical versions). `mcpify` supports both without regenerating the project from scratch.
+
+### Adding a version
+
+```bash
+mcpify add-version --project ./my-api-mcp --version 11.2 -i ./specs/api-v11.2.yaml
+```
+
+This ingests the spec, writes an extra, independently-queryable store (`mcp_store_v11.2.db` alongside the existing `mcp_store.db`), and re-renders only the handful of version-aware files (config, data layer, validator, setup wizard, `versions` command) — auth strategies, enterprise scaffolding, transports, and tests are untouched. For Rust/C#/Go, whose schemas are compiled into the binary, rebuild the project afterward for the new version's schemas to take effect; TypeScript/Python read schemas from disk, so no rebuild is required.
+
+### Promoting a version to default
+
+```bash
+mcpify add-version --project ./my-api-mcp --version 11.3 -i ./specs/api-v11.3.yaml --set-default
+```
+
+`--set-default` promotes the new version to be the project's default/latest. The version it replaces is never destroyed — it's demoted to its own sibling store file (e.g. `mcp_store_v11.2.db`), so its data stays queryable under its old label.
+
+Every version's bookkeeping (labels, file paths, which one is default) lives in a generator-only `.mcpify/versions.json` ledger inside the generated project — it's never read by the generated runtime code itself.
+
+### Selecting a version in the generated project
+
+When a project has more than one version, its interactive `setup` wizard prompts for which one to use (defaulting to the default/latest); a single-version project skips this prompt entirely. The generated CLI also gains a `versions` subcommand listing every version and marking the active/default one:
+
+```bash
+my-api-mcp setup      # prompts for an API version when more than one exists
+my-api-mcp versions    # lists all versions, e.g. "11.3 (default, active)", "11.2", "10.7"
 ```
 
 ## License
