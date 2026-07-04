@@ -95,6 +95,12 @@ Steps 1–4 are shared Rust code in the generator, run once before dispatching t
 10. **`generate_setup_wizard_and_tests`** *(per-target)*. Emit the interactive `setup` command and the generated test suite (unit/integration/e2e) exercising steps 5–9.
 11. **`run_generated_tests`** *(per-target)*. Install dependencies and run the test suite emitted in step 10 to completion; the run only counts as a success once those tests pass. No separate build/compile step exists — running the tests already requires the project to build (or, for interpreted targets, to type-check/import cleanly), so a green test run is the single source of truth for the zero-placeholder quality bar (PRD REQ-2.5.1). On failure at any of steps 5–11, and only if `output_dir_preexisted` is `false`, `execute` removes `output_dir` before returning the error, so a failed run never leaves a broken half-generated project on disk blocking the next attempt.
 
+`generate` always seeds a version ledger (§5) as an implicit step 12 after `execute()` succeeds, recording the just-ingested spec under a label (`"default"` unless `--api-version` was passed). This is the only change v8 makes to the lifecycle above — everything else about `generate` is unchanged.
+
+### `add-version`: a lighter, separate lifecycle
+
+`mcpify add-version` (§5) extends an *already-generated* project with another spec version, without running steps 2–3 or 5–11 above: no directory guard (the project already exists), no auth re-profiling (auth strategies are version-independent), and none of `bootstrap_project` through `run_generated_tests` re-run. It only reuses step 1 (ingest & parse) and a parameterized form of step 4 (store assembly, targeting a version-suffixed path instead of the hardcoded `mcp_store.db`), then re-renders a small, fixed set of "version-aware" files per target (§5) — never auth strategies, enterprise scaffolding, transports, or tests.
+
 ---
 
 ## 2. Runtime Target Architecture (v1: TypeScript/Node.js)
@@ -115,11 +121,14 @@ Steps 1–4 are shared Rust code in the generator, run once before dispatching t
                     Configuration Resolver
         (CLI flags → env → local file → home file →
           system file → install-dir file → defaults)
+             includes `api_version` (v8) alongside
+                    `auth_method` — one active
+                 version/strategy each, per process
                                  ▼
                      Unified Facade Engine
                   ┌──────────────┴──────────────┐
                   ▼                              ▼
-         mcp_store.db (sqlite-vec)       Auth Strategy (active)
+    mcp_store[_v<label>].db (sqlite-vec)  Auth Strategy (active)
          [search: vector match]          [Basic|PAT|OAuth1|OAuth2]
          [get: relational lookup]                 │
                   │                                │
@@ -180,6 +189,8 @@ Every step above emits structured logs and OpenTelemetry spans/metrics by defaul
 
 Contrary to the split-file approach used in the two reference servers (`embeddings.db` + `operations.json` + `schemas.json`), mcpify emits a **single `mcp_store.db`** containing both the relational `endpoints` table and the `sqlite-vec` virtual table `semantic_endpoints`. This keeps every generated project self-contained in one artifact, at the cost of losing the ability to regenerate embeddings independently of relational data — an acceptable trade-off given generation is cheap and re-runnable end to end.
 
+**v8 multi-version support** extends this with one store *per version* rather than a version column inside a shared store: the default version keeps the exact `mcp_store.db` path above; every additional version (added via `mcpify add-version`, §5) gets its own `mcp_store_v<label>.db` sibling, selected at runtime by the `api_version` config field exactly the way `auth_method` already selects one active auth strategy from several discovered ones. The per-target "generated schemas" JSON asset (§1 step 9, used by input/output validation) follows the same one-file-per-version pattern.
+
 ---
 
 ## 3. Target Language Roadmap
@@ -200,10 +211,59 @@ Rollout notes:
 * **Shared generator code.** All six per-target trait methods (`bootstrap_project` through `run_generated_tests`) are re-implemented per target; OpenAPI ingestion, auth profiling, and `mcp_store.db` assembly (§1, steps 1–4) are entirely shared Rust code in the generator, run once regardless of `--language`.
 * **CLI invocation of generated output** differs per target and must be documented in each generated project's own `README.md`: `node dist/index.js` (TypeScript, after `npm run build`), `./<binary> --server` (Rust/Go, static binaries, no runtime needed), `python main.py --server` (Python, inside a venv), `dotnet <assembly>.dll --server` or a self-contained executable (C#).
 * **Generated test tooling per target**, run by `run_generated_tests`: `vitest` (TypeScript, as already proven by the two reference servers), `cargo test` (Rust), `pytest` (Python), `dotnet test` (C#), `go test` (Go).
+* **v8 multi-version support** (§5) is tracked as its own phased rollout in `docs/v8-implementation-plan.md`, in the same TypeScript→Rust→Python→C#→Go order as the original target rollout above, layered on top of it rather than renumbering it.
 
 ---
 
-## 4. Testing Strategy
+## 5. Multi-Version Spec Support (v8)
+
+Lets an operator layer additional OpenAPI spec versions onto an already-generated project via `mcpify add-version --project <dir> --version <label> --input <file-or-url> [--set-default] [--force]`, without regenerating the project. See `docs/v8-implementation-plan.md` for the full implementation history; this section is the authoritative reference for the design itself.
+
+### Ledger
+
+Every generated project carries a generator-only bookkeeping file, `.mcpify/versions.json`:
+
+```json
+{
+  "schema_version": 1,
+  "language": "typescript",
+  "display_name": "Jira Software",
+  "project_name": "jira-mcp",
+  "default_version": "11.3",
+  "versions": {
+    "11.3": { "db_file": "mcp_store.db", "schemas_file": "src/validation/generated-schemas.json", "source": "...", "added_at": 1700000000 },
+    "11.2": { "db_file": "mcp_store_v11.2.db", "schemas_file": "src/validation/generated-schemas_v11.2.json", "source": "...", "added_at": 1700000100 }
+  }
+}
+```
+
+`language`/`display_name`/`project_name` are written once by `generate` and never re-derived from a later spec. **The generated project's own runtime code never reads this file** — it exists purely so the stateless `mcpify` process can recover a project's version state across separate `add-version` invocations, deliberately avoiding a JSON-manifest-parsing dependency in 5 different languages.
+
+### Version-aware regions
+
+Each target has a small, fixed set of generated files (config schema, the data-layer store-path resolver, the validator's schemas-file resolver, the setup wizard's version prompt, and a `versions` CLI subcommand) with exactly one marker-delimited region each:
+
+```
+// mcpify:versions:begin
+... a small, pure-data code literal (a label→file map, or a list of choices) ...
+// mcpify:versions:end
+```
+
+`generate` renders these regions the normal way, via Tera, using the ledger's initial single-entry state. `add-version` re-renders **only** these regions — via direct Rust string patching (`add_version::marker_region::patch_marked_region`), not Tera — without reconstructing the full original rendering context (auth schemes, project name, etc.), since the region is always pure data. Everything else in the project (auth strategies, enterprise scaffolding, transports, tests) is version-independent and untouched by `add-version`.
+
+Compile-time-embedding targets (Rust's `include_str!`, C#'s embedded resources, Go's `go:embed`) require **a rebuild after `add-version`** before a newly added version actually works, since the schemas asset is baked into the binary. TypeScript and Python read their schemas asset from disk at runtime, so `add-version` alone is enough for those two.
+
+### `--set-default`
+
+Promotes a version to become the project's new default: demotes the outgoing default to its own suffixed files (`rename`, not delete — its data is never silently destroyed) unless this is a self-promotion (the label being promoted is already default, which just refreshes it in place), ingests the new spec straight to the canonical (unsuffixed) paths, and re-renders the version-aware regions. Promoting a label that was already `add-version`'d earlier as non-default is handled explicitly: its now-superseded suffixed files are removed only *after* the new data safely lands at the canonical paths.
+
+### `versions` subcommand
+
+Every generated project (all 5 targets) exposes a `versions` subcommand listing every known version, marking which is `default` and which is `active` for the current process (read from the resolved `api_version` config value) — the runtime-visible counterpart to the ledger, useful for an operator or an agent to discover what's available without inspecting `.mcpify/versions.json` directly.
+
+---
+
+## 6. Testing Strategy
 
 Two independent test suites exist and both are required to pass — neither substitutes for the other:
 
