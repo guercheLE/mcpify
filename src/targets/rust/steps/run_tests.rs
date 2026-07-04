@@ -30,6 +30,16 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     // (which runs `cargo fmt --check`) is never red on first push
     // regardless.
     run_cargo_command(&ctx.output_dir, &["fmt"], "cargo fmt").await?;
+    // Mirrors the generated project's own CI (`ci.yml.tera`'s
+    // `cargo clippy --all-targets -- -D warnings`) so a template that
+    // introduces a clippy violation fails generation itself, instead of
+    // only being caught downstream in the end user's CI.
+    run_cargo_command(
+        &ctx.output_dir,
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
+        "cargo clippy",
+    )
+    .await?;
     // mcp_store.db leaves the shared pipeline (Story 5/6) with an empty
     // semantic_endpoints table — vectors are computed here, not by
     // mcpify itself (see the plan's embeddings decision), so this must
