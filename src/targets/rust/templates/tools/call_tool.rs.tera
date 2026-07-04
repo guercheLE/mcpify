@@ -26,11 +26,11 @@ pub async fn call_operation(
     operation_id: &str,
     args: serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
-    validate_input(operation_id, &args)?;
+    validate_input(&config.api_version, operation_id, &args)?;
 
     let client = ApiClient::new(config.clone());
     let response = client.execute(endpoint, &args, auth_manager).await?;
 
-    validate_output(operation_id, &response)?;
+    validate_output(&config.api_version, operation_id, &response)?;
     Ok(response)
 }

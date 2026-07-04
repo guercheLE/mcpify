@@ -9,7 +9,7 @@
 // tables — mcpify's shared pipeline (Story 5/6) already wrote
 // mcp_store.db's schema before any generated code runs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 use anyhow::{Context, Result};
@@ -17,6 +17,27 @@ use rusqlite::{Connection, OpenFlags, Row};
 use serde::Serialize;
 
 static REGISTER_VEC_EXTENSION: Once = Once::new();
+
+// mcpify:versions:begin
+const VERSION_STORE_FILES: &[(&str, &str)] = &[
+{%- for v in version_entries %}
+    ("{{ v.label }}", "{{ v.db_file }}"),
+{%- endfor %}
+];
+// mcpify:versions:end
+
+/// Resolves the active `api_version` (from the config cascade) to its
+/// store file — the default version's data always lives in the
+/// project-root `mcp_store.db` this target has always used; every other
+/// version lives in its own `mcp_store_v<label>.db` sibling, added by a
+/// later `mcpify add-version` call.
+pub fn resolve_store_path(api_version: &str) -> Result<PathBuf> {
+    VERSION_STORE_FILES
+        .iter()
+        .find(|(label, _)| *label == api_version)
+        .map(|(_, file)| PathBuf::from(file))
+        .with_context(|| format!("unknown api_version '{api_version}' — run the 'versions' command to see what's available"))
+}
 
 const ENDPOINT_COLUMNS: &str = "operation_id, path, method, summary, description, input_schema, output_schema, auth_scheme_ref";
 

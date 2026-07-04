@@ -58,6 +58,31 @@ async fn prompt_auth_method() -> anyhow::Result<AuthMethod> {
     {%- endif %}
 }
 
+// mcpify:versions:begin
+async fn prompt_api_version() -> anyhow::Result<String> {
+    {%- if version_entries | length == 1 %}
+    Ok("{{ version_entries.0.label }}".to_string())
+    {%- else %}
+    let choices = vec![
+    {%- for v in version_entries %}
+        "{{ v.label }}{% if v.label == default_version_label %} (default/latest){% endif %}",
+    {%- endfor %}
+    ];
+    let selection = tokio::task::spawn_blocking(move || {
+        inquire::Select::new("API version to use:", choices).prompt()
+    })
+    .await??;
+
+    Ok(match selection {
+    {%- for v in version_entries %}
+        "{{ v.label }}{% if v.label == default_version_label %} (default/latest){% endif %}" => "{{ v.label }}".to_string(),
+    {%- endfor %}
+        other => other.to_string(),
+    })
+    {%- endif %}
+}
+// mcpify:versions:end
+
 async fn prompt_credentials(auth_method: AuthMethod) -> anyhow::Result<HashMap<String, String>> {
     tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
         let mut credentials = HashMap::new();
@@ -184,6 +209,7 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
     let url = prompt_base_url().await?;
     let auth_method = prompt_auth_method().await?;
     let credentials = prompt_credentials(auth_method).await?;
+    let api_version = prompt_api_version().await?;
 
     save_credential("active-credentials", &serde_json::to_string(&credentials)?)?;
 
@@ -196,6 +222,7 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
             .unwrap_or_default()
             .to_string(),
     );
+    env.insert("{{ tool_prefix_env }}_API_VERSION".to_string(), api_version);
     for (key, value) in &credentials {
         env.insert(format!("{{ tool_prefix_env }}_{}", to_env_key(key)), value.clone());
     }

@@ -37,6 +37,7 @@ expression: file_tree(&output_dir)
     "src/cli/setup_wizard.rs",
     "src/cli/test_connection.rs",
     "src/cli/version.rs",
+    "src/cli/versions.rs",
     "src/core/api_url_builder.rs",
     "src/core/cache_manager.rs",
     "src/core/circuit_breaker.rs",

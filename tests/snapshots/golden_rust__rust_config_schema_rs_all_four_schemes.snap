@@ -52,10 +52,23 @@ fn default_port() -> u16 {
     3000
 }
 
+// mcpify:versions:begin
+fn default_api_version() -> String {
+    "default".to_string()
+}
+// mcpify:versions:end
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub url: String,
     pub auth_method: AuthMethod,
+    /// v8 multi-version support: an opaque label (not a compile-time enum
+    /// like `AuthMethod` — version labels are arbitrary operator-supplied
+    /// strings such as `"10.2.14"`, which can't cleanly become Rust
+    /// identifiers), validated at runtime against the known version list
+    /// in `data::store::resolve_store_path`/`validation::validator`.
+    #[serde(default = "default_api_version")]
+    pub api_version: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
     #[serde(default = "default_rate_limit")]

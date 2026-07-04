@@ -22,6 +22,7 @@ const FILES: &[(&str, &str)] = &[
     ("cli/test_connection.rs.tera", "src/cli/test_connection.rs"),
     ("cli/config.rs.tera", "src/cli/config.rs"),
     ("cli/version.rs.tera", "src/cli/version.rs"),
+    ("cli/versions.rs.tera", "src/cli/versions.rs"),
     ("http/mod.rs.tera", "src/http/mod.rs"),
     ("http/types.rs.tera", "src/http/types.rs"),
     (
@@ -62,6 +63,7 @@ mod tests {
             auth_schemes: Vec::new(),
             normalized_operations: Vec::new(),
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 
@@ -78,7 +80,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn main_rs_dispatches_all_eight_subcommands() {
+    async fn main_rs_dispatches_all_nine_subcommands() {
         let dir = tempfile::tempdir().unwrap();
         generate_transports_and_roles(&ctx(dir.path().to_path_buf()))
             .await
@@ -97,6 +99,7 @@ mod tests {
             "TestConnection",
             "Config",
             "Version",
+            "Versions",
         ] {
             assert!(main_rs.contains(variant), "main.rs must declare {variant}");
         }

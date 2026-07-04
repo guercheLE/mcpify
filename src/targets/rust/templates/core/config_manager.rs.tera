@@ -36,6 +36,7 @@ fn env_overrides() -> Map<String, Value> {
     for (config_key, env_suffix) in [
         ("url", "URL"),
         ("auth_method", "AUTH_METHOD"),
+        ("api_version", "API_VERSION"),
         ("log_level", "LOG_LEVEL"),
         ("transport", "TRANSPORT"),
         ("host", "HOST"),

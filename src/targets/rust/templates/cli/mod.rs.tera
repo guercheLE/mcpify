@@ -11,3 +11,4 @@ pub mod setup;
 pub mod setup_wizard;
 pub mod test_connection;
 pub mod version;
+pub mod versions;
