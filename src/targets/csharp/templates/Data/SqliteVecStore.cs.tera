@@ -1,3 +1,6 @@
+using System.Formats.Tar;
+using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 
@@ -15,17 +18,21 @@ namespace {{ namespace }}.Data;
 /// Python's `sqlite-vec` PyPI package, both of which bundle the native
 /// extension) — the loadable `vec0` native library is expected alongside
 /// the built assembly (`{{ tool_prefix_env }}_SQLITE_VEC_PATH` overrides
-/// the path), fetched by the Dockerfile's build stage for container
-/// deployments.
+/// the path). When that override isn't set and no `vec0` library sits next
+/// to the assembly already, it's downloaded from sqlite-vec's GitHub
+/// releases on first use and cached there — the same on-first-use fetch
+/// this target's `Services/EmbeddingService.cs` already does for its ONNX
+/// model, so both the local `dotnet run` flow and the Dockerfile's
+/// `populate-embeddings` build step work without any manual setup.
 /// </summary>
 public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
 {
     private const string Columns =
         "operation_id, path, method, summary, description, input_schema, output_schema, auth_scheme_ref";
 
-    private readonly string _vecExtensionPath =
-        Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_SQLITE_VEC_PATH")
-            ?? Path.Combine(AppContext.BaseDirectory, "vec0");
+    private const string SqliteVecVersion = "0.1.9";
+
+    private readonly Lazy<string> _vecExtensionPath = new(ResolveExtensionPath);
 
     /// <summary>Every caller except <see cref="OpenReadWrite"/>'s one consumer (`Services/PopulateEmbeddingsService.cs`) uses this.</summary>
     public SqliteConnection OpenReadOnly() => Open(SqliteOpenMode.ReadOnly);
@@ -112,8 +119,68 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
         var connection = new SqliteConnection(connectionString);
         connection.Open();
         connection.EnableExtensions(true);
-        connection.LoadExtension(_vecExtensionPath);
+        connection.LoadExtension(_vecExtensionPath.Value);
         return connection;
+    }
+
+    /// <summary>Resolves the path <see cref="Open"/> passes to <c>LoadExtension</c> — SQLite appends the platform-specific suffix (.dylib/.so/.dll) itself, so this stays extension-less.</summary>
+    private static string ResolveExtensionPath()
+    {
+        var overridePath = Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_SQLITE_VEC_PATH");
+        if (overridePath is not null)
+        {
+            return overridePath;
+        }
+
+        var basePath = Path.Combine(AppContext.BaseDirectory, "vec0");
+        if (!File.Exists(basePath + NativeLibraryExtension()))
+        {
+            DownloadSqliteVecExtension(AppContext.BaseDirectory);
+        }
+        return basePath;
+    }
+
+    private static string NativeLibraryExtension() =>
+        OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so";
+
+    private static void DownloadSqliteVecExtension(string destinationDir)
+    {
+        var assetName = ReleaseAssetName();
+        var url = $"https://github.com/asg017/sqlite-vec/releases/download/v{SqliteVecVersion}/{assetName}";
+
+        using var client = new HttpClient();
+        using var response = client.GetAsync(url).GetAwaiter().GetResult();
+        response.EnsureSuccessStatusCode();
+        using var responseStream = response.Content.ReadAsStream();
+        using var gzip = new GZipStream(responseStream, CompressionMode.Decompress);
+        using var tar = new TarReader(gzip);
+
+        Directory.CreateDirectory(destinationDir);
+        while (tar.GetNextEntry() is { EntryType: TarEntryType.RegularFile } entry)
+        {
+            var destinationPath = Path.Combine(destinationDir, Path.GetFileName(entry.Name));
+            var tempPath = $"{destinationPath}.download";
+            using (var file = File.Create(tempPath))
+            {
+                entry.DataStream!.CopyTo(file);
+            }
+            File.Move(tempPath, destinationPath, overwrite: true);
+        }
+    }
+
+    /// <summary>Maps the running platform to one of sqlite-vec's published `loadable-&lt;os&gt;-&lt;arch&gt;` release assets.</summary>
+    private static string ReleaseAssetName()
+    {
+        var os = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux";
+        var arch = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.Arm64 => "aarch64",
+            Architecture.X64 => "x86_64",
+            var other => throw new PlatformNotSupportedException(
+                $"sqlite-vec publishes no prebuilt loadable extension for {os}/{other}; " +
+                $"set {{ tool_prefix_env }}_SQLITE_VEC_PATH to a locally built vec0 library instead."),
+        };
+        return $"sqlite-vec-{SqliteVecVersion}-loadable-{os}-{arch}.tar.gz";
     }
 
     private static EndpointRecord ReadEndpoint(SqliteDataReader reader) => new(

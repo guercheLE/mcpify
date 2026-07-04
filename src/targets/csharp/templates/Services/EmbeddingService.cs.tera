@@ -50,20 +50,27 @@ public sealed class EmbeddingService : IDisposable
         var ids = tokenizer.EncodeToIds(text, considerPreTokenization: true, considerNormalization: true);
         var inputIds = new DenseTensor<long>([1, ids.Count]);
         var attentionMask = new DenseTensor<long>([1, ids.Count]);
-        var tokenTypeIds = new DenseTensor<long>([1, ids.Count]);
         for (var i = 0; i < ids.Count; i++)
         {
             inputIds[0, i] = ids[i];
             attentionMask[0, i] = 1;
-            tokenTypeIds[0, i] = 0;
         }
 
         var inputs = new List<NamedOnnxValue>
         {
             NamedOnnxValue.CreateFromTensor("input_ids", inputIds),
             NamedOnnxValue.CreateFromTensor("attention_mask", attentionMask),
-            NamedOnnxValue.CreateFromTensor("token_type_ids", tokenTypeIds),
         };
+
+        // Not every sentence-transformer ONNX export declares `token_type_ids`
+        // (e.g. some all-MiniLM/all-mpnet exports only take input_ids +
+        // attention_mask), so only feed it when the loaded model actually
+        // expects it — otherwise OnnxRuntime throws InvalidArgument.
+        if (session.InputMetadata.ContainsKey("token_type_ids"))
+        {
+            var tokenTypeIds = new DenseTensor<long>([1, ids.Count]);
+            inputs.Add(NamedOnnxValue.CreateFromTensor("token_type_ids", tokenTypeIds));
+        }
 
         using var results = session.Run(inputs);
         var lastHiddenState = results.First(v => v.Name == "last_hidden_state").AsTensor<float>();
