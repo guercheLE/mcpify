@@ -13,6 +13,19 @@
     <AssemblyName>{{ namespace }}</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UserSecretsId>{{ namespace }}</UserSecretsId>
+{%- if publish_registry %}
+    <!-- Generated with the publish-registry flag: pack as a dotnet global
+         tool (`dotnet tool install -g`), the .NET-ecosystem equivalent of
+         npx/cargo install/pip install for the other targets. Fill in a
+         real Authors/PackageId before the first real `dotnet nuget push`
+         — see release.yml. -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>{{ project_name }}</ToolCommandName>
+    <PackageId>{{ namespace }}</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>TODO: set your name or organization</Authors>
+{%- endif %}
   </PropertyGroup>
 
   <ItemGroup>

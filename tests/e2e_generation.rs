@@ -28,6 +28,7 @@ async fn generates_a_project_and_passes_its_own_test_suite() {
         output_dir,
         false,
         false,
+        false,
     )
     .await
     .expect("shared pipeline must succeed");
@@ -59,6 +60,7 @@ async fn generates_a_rust_project_and_passes_its_own_test_suite() {
     let ctx = run_shared_pipeline(
         "tests/fixtures/openapi/minimal-with-auth.yaml",
         output_dir,
+        false,
         false,
         false,
     )
@@ -95,6 +97,7 @@ async fn generates_a_python_project_and_passes_its_own_test_suite() {
         output_dir,
         false,
         false,
+        false,
     )
     .await
     .expect("shared pipeline must succeed");
@@ -128,6 +131,7 @@ async fn generates_a_csharp_project_and_passes_its_own_test_suite() {
     let ctx = run_shared_pipeline(
         "tests/fixtures/openapi/minimal-with-auth.yaml",
         output_dir,
+        false,
         false,
         false,
     )
@@ -166,6 +170,7 @@ async fn generates_a_go_project_and_passes_its_own_test_suite() {
     let ctx = run_shared_pipeline(
         "tests/fixtures/openapi/minimal-with-auth.yaml",
         output_dir,
+        false,
         false,
         false,
     )

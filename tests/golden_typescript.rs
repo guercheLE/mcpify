@@ -18,7 +18,7 @@ use mcpify::targets::typescript::steps::{
 };
 
 async fn generate(fixture: &str, output_dir: PathBuf) -> GeneratorContext {
-    let ctx = run_shared_pipeline(fixture, output_dir, false, false)
+    let ctx = run_shared_pipeline(fixture, output_dir, false, false, false)
         .await
         .expect("shared pipeline must succeed");
     bootstrap::bootstrap_project(&ctx)

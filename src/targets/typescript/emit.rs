@@ -42,6 +42,7 @@ mod tests {
 
     fn sample_ctx(output_dir: PathBuf, api_title: &str) -> GeneratorContext {
         GeneratorContext {
+            publish_registry: false,
             openapi_input: "spec.yaml".to_string(),
             output_dir,
             force: false,

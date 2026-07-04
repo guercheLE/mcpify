@@ -51,6 +51,7 @@ async fn fresh_dir_created_by_dir_guard_is_removed_on_failure() {
     assert!(output_dir.is_dir());
 
     let ctx = GeneratorContext {
+        publish_registry: false,
         openapi_input: "spec.yaml".to_string(),
         output_dir: output_dir.clone(),
         force: false,
@@ -83,6 +84,7 @@ async fn forced_preexisting_dir_survives_failure_with_partial_content_intact() {
     );
 
     let ctx = GeneratorContext {
+        publish_registry: false,
         openapi_input: "spec.yaml".to_string(),
         output_dir: dir.path().to_path_buf(),
         force: true,

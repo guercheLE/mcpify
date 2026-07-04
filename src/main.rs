@@ -32,6 +32,7 @@ async fn run() -> anyhow::Result<()> {
         PathBuf::from(&cli.output),
         cli.force,
         interactive,
+        cli.publish_registry,
     )
     .await?;
 

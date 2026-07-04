@@ -1,9 +1,19 @@
 name: Release
 
+{% if publish_registry -%}
+# Generated with --publish-registry: this project packs as a dotnet global
+# tool and publishes to NuGet in addition to attaching a published
+# framework-dependent build to a GitHub Release. Requires a NUGET_API_KEY
+# repo secret. Fill in Project.csproj's Authors placeholder before the
+# first real push.
+{% else -%}
 # Mirrors targets::python's/targets::rust's release.yml: this project is a
 # generated application tied to one specific API, not a reusable library,
 # so "release" means attaching a published framework-dependent build to a
-# GitHub Release on a version tag rather than publishing to NuGet.
+# GitHub Release on a version tag rather than publishing to NuGet. Re-run
+# mcpify with --publish-registry if you want this project published to
+# NuGet too.
+{% endif -%}
 
 on:
   push:
@@ -27,3 +37,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: {{ project_name }}.zip
+{%- if publish_registry %}
+      - run: dotnet pack {{ namespace }}.csproj -c Release -o nupkg
+      - run: dotnet nuget push "nupkg/*.nupkg" --api-key {% raw %}${{ secrets.NUGET_API_KEY }}{% endraw %} --source https://api.nuget.org/v3/index.json
+{%- endif %}

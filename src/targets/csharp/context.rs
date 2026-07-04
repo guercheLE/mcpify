@@ -70,6 +70,10 @@ pub struct CsTemplateContext {
     /// built from.
     pub auth_methods: Vec<CsAuthMethodView>,
     pub operations: Vec<CsOperationView>,
+    /// v6 Part PUB: `--publish-registry` — whether `Project.csproj` packs
+    /// as a dotnet global tool and `release.yml` emits a real `dotnet nuget
+    /// push` step instead of GitHub-Release-only.
+    pub publish_registry: bool,
 }
 
 impl CsTemplateContext {
@@ -133,6 +137,7 @@ impl CsTemplateContext {
             auth_method_keys,
             auth_methods,
             operations,
+            publish_registry: ctx.publish_registry,
         }
     }
 }
@@ -193,6 +198,7 @@ mod tests {
 
     fn sample_context() -> GeneratorContext {
         GeneratorContext {
+            publish_registry: false,
             openapi_input: "spec.yaml".to_string(),
             output_dir: PathBuf::from("./my-api-mcp"),
             force: false,

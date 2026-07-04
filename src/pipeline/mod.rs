@@ -27,6 +27,7 @@ pub async fn run_shared_pipeline(
     output_dir: PathBuf,
     force: bool,
     interactive_auth_prompt: bool,
+    publish_registry: bool,
 ) -> Result<GeneratorContext> {
     let doc = openapi::ingest(input).await?;
     let output_dir_preexisted = dir_guard::check_output_dir(&output_dir, force).await?;
@@ -37,6 +38,7 @@ pub async fn run_shared_pipeline(
         force,
         output_dir_preexisted,
         interactive_auth_prompt,
+        publish_registry,
         &doc,
     )
     .await;
@@ -48,18 +50,21 @@ pub async fn run_shared_pipeline(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn assemble_context(
     input: &str,
     output_dir: PathBuf,
     force: bool,
     output_dir_preexisted: bool,
     interactive_auth_prompt: bool,
+    publish_registry: bool,
     doc: &OpenAPI,
 ) -> Result<GeneratorContext> {
     let auth_schemes = auth_profile::profile_auth(doc, interactive_auth_prompt).await?;
     let normalized_operations = normalize_operations(doc);
 
     let ctx = GeneratorContext {
+        publish_registry,
         openapi_input: input.to_string(),
         output_dir,
         force,
@@ -88,6 +93,7 @@ mod tests {
             output_dir.clone(),
             false,
             false,
+            false,
         )
         .await
         .unwrap();
@@ -109,6 +115,7 @@ mod tests {
             output_dir.clone(),
             false,
             false,
+            false,
         )
         .await
         .unwrap_err();
@@ -125,6 +132,7 @@ mod tests {
         let err = run_shared_pipeline(
             "tests/fixtures/openapi/minimal-no-auth-scheme.json",
             output_dir.clone(),
+            false,
             false,
             false,
         )
@@ -147,6 +155,7 @@ mod tests {
             "tests/fixtures/openapi/minimal-no-auth-scheme.json",
             dir.path().to_path_buf(),
             true,
+            false,
             false,
         )
         .await

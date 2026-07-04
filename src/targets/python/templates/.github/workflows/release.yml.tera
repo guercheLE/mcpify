@@ -1,9 +1,16 @@
 name: Release
 
+{% if publish_registry -%}
+# Generated with --publish-registry: this project publishes to PyPI in
+# addition to attaching a built wheel/sdist to a GitHub Release. Requires a
+# UV_PUBLISH_TOKEN repo secret.
+{% else -%}
 # Mirrors targets::rust's release.yml: this project is a generated
 # application tied to one specific API, not a reusable library, so
 # "release" means attaching a built wheel/sdist to a GitHub Release on a
-# version tag rather than publishing to PyPI.
+# version tag rather than publishing to PyPI. Re-run mcpify with
+# --publish-registry if you want this project published to PyPI too.
+{% endif -%}
 
 on:
   push:
@@ -27,3 +34,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+{%- if publish_registry %}
+      - run: uv publish --token {% raw %}${{ secrets.UV_PUBLISH_TOKEN }}{% endraw %}
+{%- endif %}

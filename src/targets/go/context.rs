@@ -193,6 +193,7 @@ mod tests {
 
     fn sample_context() -> GeneratorContext {
         GeneratorContext {
+            publish_registry: false,
             openapi_input: "spec.yaml".to_string(),
             output_dir: PathBuf::from("./my-api-mcp"),
             force: false,

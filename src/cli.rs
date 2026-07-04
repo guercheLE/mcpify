@@ -32,6 +32,15 @@ pub struct Cli {
     /// Overwrite the destination folder if it already contains files
     #[arg(short = 'f', long = "force")]
     pub force: bool,
+
+    /// Emit a registry-publish step (cargo publish / uv publish / dotnet
+    /// nuget push) in the generated release workflow, for Rust/Python/C#.
+    /// Off by default — these are generated applications tied to one API,
+    /// not reusable libraries, so publishing them to a public registry is a
+    /// deliberate choice, not a default. No effect for typescript (which
+    /// always publishes) or go (which has no registry-publish step).
+    #[arg(long = "publish-registry")]
+    pub publish_registry: bool,
 }
 
 impl Cli {

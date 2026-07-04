@@ -115,6 +115,7 @@ mod tests {
     async fn run_generated_tests_fails_fast_when_output_dir_has_no_csproj() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = GeneratorContext {
+            publish_registry: false,
             openapi_input: "spec.yaml".to_string(),
             output_dir: dir.path().to_path_buf(),
             force: false,

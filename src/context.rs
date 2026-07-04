@@ -15,6 +15,11 @@ pub struct GeneratorContext {
     pub force: bool,
     /// True if `output_dir` already had content before this run (via `--force`).
     pub output_dir_preexisted: bool,
+    /// v6 Part PUB: opt-in via `--publish-registry`. Gates whether
+    /// Rust/Python/C#'s `release.yml`/manifest templates emit a real
+    /// registry-publish step (`cargo publish`/`uv publish`/`dotnet nuget
+    /// push`) instead of the default GitHub-Release-only behavior.
+    pub publish_registry: bool,
     /// Discovered from `components.securitySchemes`.
     pub auth_schemes: Vec<AuthSchemeDescriptor>,
     /// Flattened out of the parsed OpenAPI doc once by the shared pipeline

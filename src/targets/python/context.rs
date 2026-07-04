@@ -73,6 +73,9 @@ pub struct PyTemplateContext {
     /// from.
     pub auth_methods: Vec<PyAuthMethodView>,
     pub operations: Vec<PyOperationView>,
+    /// v6 Part PUB: `--publish-registry` — whether `release.yml` emits a
+    /// real `uv publish` step instead of GitHub-Release-only.
+    pub publish_registry: bool,
 }
 
 impl PyTemplateContext {
@@ -137,6 +140,7 @@ impl PyTemplateContext {
             auth_method_keys,
             auth_methods,
             operations,
+            publish_registry: ctx.publish_registry,
         }
     }
 }
@@ -186,6 +190,7 @@ mod tests {
 
     fn sample_context() -> GeneratorContext {
         GeneratorContext {
+            publish_registry: false,
             openapi_input: "spec.yaml".to_string(),
             output_dir: PathBuf::from("./my-api-mcp"),
             force: false,

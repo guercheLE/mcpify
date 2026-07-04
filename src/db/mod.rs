@@ -53,6 +53,7 @@ mod tests {
         operations: Vec<NormalizedOperation>,
     ) -> GeneratorContext {
         GeneratorContext {
+            publish_registry: false,
             openapi_input: "spec.yaml".to_string(),
             output_dir,
             force: false,

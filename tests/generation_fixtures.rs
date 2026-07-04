@@ -14,6 +14,7 @@ async fn oauth2_json_fixture_is_classified_correctly() {
         dir.path().join("out"),
         false,
         false,
+        false,
     )
     .await
     .unwrap();
@@ -30,6 +31,7 @@ async fn multi_scheme_fixture_discovers_all_four_kinds() {
     let ctx = run_shared_pipeline(
         "tests/fixtures/openapi/minimal-multi-scheme.yaml",
         dir.path().join("out"),
+        false,
         false,
         false,
     )
@@ -56,6 +58,7 @@ async fn no_auth_scheme_fixture_errors_when_non_interactive() {
         dir.path().join("out"),
         false,
         false,
+        false,
     )
     .await
     .unwrap_err();
@@ -74,6 +77,7 @@ async fn refs_fixture_resolves_allof_and_self_referential_schemas() {
     let ctx = run_shared_pipeline(
         "tests/fixtures/openapi/widgets-with-refs.yaml",
         dir.path().join("out"),
+        false,
         false,
         false,
     )
