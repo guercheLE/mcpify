@@ -19,8 +19,7 @@ const SOURCE_SUBDIRS: &[&str] = &[
 const STATIC_FILES: &[(&str, &str)] = &[
     ("package.json.tera", "package.json"),
     ("tsconfig.json.tera", "tsconfig.json"),
-    ("eslint.config.js.tera", "eslint.config.js"),
-    (".prettierrc.json.tera", ".prettierrc.json"),
+    ("biome.json.tera", "biome.json"),
     (".gitignore.tera", ".gitignore"),
     (".env.example.tera", ".env.example"),
     ("README.md.tera", "README.md"),

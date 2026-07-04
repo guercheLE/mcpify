@@ -18,10 +18,12 @@ const NPM_TIMEOUT: Duration = Duration::from_secs(300);
 /// type-check/import cleanly.
 pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     run_npm_command(&ctx.output_dir, &["install"], "npm install").await?;
-    // Templates are hand-formatted, not run through Prettier at render
-    // time, so their exact style can drift from .prettierrc.json over
-    // time; auto-fixing here guarantees the generated project's own CI
-    // (which runs `format:check`) is never red on first push regardless.
+    // Templates are hand-formatted, not run through Biome at render
+    // time, so their exact style/lint-cleanliness can drift over time;
+    // auto-fixing here guarantees the generated project's own CI (which
+    // runs `lint`/`format:check`) is never red on first push regardless
+    // — mirrors `targets::python`'s `ruff check --fix` → `black` order.
+    run_npm_command(&ctx.output_dir, &["run", "lint:fix"], "npm run lint:fix").await?;
     run_npm_command(&ctx.output_dir, &["run", "format"], "npm run format").await?;
     // mcp_store.db leaves Story 5 with an empty semantic_endpoints table —
     // vectors are computed here, in TypeScript, not by mcpify itself (see
