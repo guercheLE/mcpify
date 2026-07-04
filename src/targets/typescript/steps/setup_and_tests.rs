@@ -58,6 +58,11 @@ const SHARED_FILES: &[(&str, &str)] = &[
         "tests/e2e/mcp-server.test.ts.tera",
         "tests/e2e/mcp-server.test.ts",
     ),
+    ("scripts/profile.sh.tera", "scripts/profile.sh"),
+    (
+        "scripts/heap-profile-summary.js.tera",
+        "scripts/heap-profile-summary.js",
+    ),
 ];
 
 /// One unit test file per discovered `AuthSchemeKind` — never emit a test

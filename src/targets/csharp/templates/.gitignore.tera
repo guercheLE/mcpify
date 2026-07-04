@@ -6,3 +6,6 @@ obj/
 appsettings.*.json
 !appsettings.json
 .DS_Store
+TestResults/
+coveragereport/
+profile/

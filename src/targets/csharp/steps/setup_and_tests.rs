@@ -39,6 +39,20 @@ const SHARED_TEST_FILES: &[(&str, &str)] = &[
         "Tests/Validation/ValidatorTests.cs.tera",
         "Tests/Validation/ValidatorTests.cs",
     ),
+    ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
+    ("scripts/profile.sh.tera", "scripts/profile.sh"),
+    (
+        "scripts/speedscope_to_text.py.tera",
+        "scripts/speedscope_to_text.py",
+    ),
+    (
+        "Tools/Profiler/Profiler.csproj.tera",
+        "Tools/Profiler/Profiler.csproj",
+    ),
+    (
+        "Tools/Profiler/Program.cs.tera",
+        "Tools/Profiler/Program.cs",
+    ),
 ];
 
 /// One test file per discovered `AuthSchemeKind` — never emit a test
@@ -230,6 +244,47 @@ mod tests {
             format_status.success(),
             "dotnet format --verify-no-changes failed"
         );
+    }
+
+    /// v6 Part PROF: `Tools/Profiler` is a real, separately-buildable
+    /// project (not just docs), so it needs its own smoke check — its
+    /// success is diagnostic tooling, not a generation gate, so this stays
+    /// `#[ignore]` like the check above rather than part of the fast suite.
+    #[tokio::test]
+    #[ignore = "manual sanity check: requires the dotnet SDK"]
+    async fn tools_profiler_project_builds() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        let generator_ctx = ctx_with_schemes(
+            dir.clone(),
+            vec![descriptor("basicAuth", AuthSchemeKind::Basic)],
+        );
+
+        crate::targets::csharp::steps::bootstrap::bootstrap_project(&generator_ctx)
+            .await
+            .unwrap();
+        crate::targets::csharp::steps::enterprise::generate_enterprise_scaffolding(&generator_ctx)
+            .await
+            .unwrap();
+        crate::targets::csharp::steps::auth::generate_auth_strategies(&generator_ctx)
+            .await
+            .unwrap();
+        crate::targets::csharp::steps::transports::generate_transports_and_roles(&generator_ctx)
+            .await
+            .unwrap();
+        crate::targets::csharp::steps::tools::generate_mcp_tools(&generator_ctx)
+            .await
+            .unwrap();
+        generate_setup_wizard_and_tests(&generator_ctx)
+            .await
+            .unwrap();
+
+        let build_status = std::process::Command::new("dotnet")
+            .args(["build", "Tools/Profiler"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(build_status.success(), "dotnet build Tools/Profiler failed");
     }
 
     #[tokio::test]

@@ -5,7 +5,15 @@ use crate::targets::rust::context::RsTemplateContext;
 use crate::targets::rust::emit::render_and_write;
 use crate::targets::rust::render::render_engine;
 
-const FILES: &[(&str, &str)] = &[("cli/setup_wizard.rs.tera", "src/cli/setup_wizard.rs")];
+const FILES: &[(&str, &str)] = &[
+    ("cli/setup_wizard.rs.tera", "src/cli/setup_wizard.rs"),
+    ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
+    ("scripts/profile.sh.tera", "scripts/profile.sh"),
+    (
+        "scripts/samply_to_text.py.tera",
+        "scripts/samply_to_text.py",
+    ),
+];
 
 /// `generate_setup_wizard_and_tests` (architecture.md §1, step 10): the
 /// interactive `setup` command. Unlike `targets::typescript`'s Story 13

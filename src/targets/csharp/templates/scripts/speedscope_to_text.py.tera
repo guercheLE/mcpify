@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Convert a Speedscope JSON profile (produced by `dotnet-trace convert
+--format Speedscope`) into plain-text, LLM-ingestable output: a folded-stack
+file (func;func;func weight) plus a top-N self-time function list."""
+import json
+import sys
+from collections import Counter
+
+
+def main():
+    if len(sys.argv) != 4:
+        print(
+            f"usage: {sys.argv[0]} <profile.speedscope.json> <folded-out.txt> <top-functions-out.txt>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    profile_path, folded_path, top_path = sys.argv[1:4]
+    with open(profile_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    frame_names = [frame["name"] for frame in data["shared"]["frames"]]
+
+    folded = Counter()
+    self_weight = Counter()
+    for profile in data.get("profiles", []):
+        samples = profile.get("samples", [])
+        weights = profile.get("weights", [1] * len(samples))
+        for stack, weight in zip(samples, weights):
+            if not stack:
+                continue
+            names = [frame_names[i] for i in stack]
+            folded[";".join(names)] += weight
+            self_weight[names[-1]] += weight
+
+    with open(folded_path, "w", encoding="utf-8") as f:
+        for stack, weight in sorted(folded.items(), key=lambda kv: -kv[1]):
+            f.write(f"{stack} {weight}\n")
+
+    with open(top_path, "w", encoding="utf-8") as f:
+        f.write("# Top functions by self weight (samples/time, profile-unit dependent)\n")
+        for name, weight in self_weight.most_common(30):
+            f.write(f"{weight:12.2f}  {name}\n")
+
+    print(f"wrote {len(folded)} folded stacks to {folded_path}")
+    print(f"wrote top {min(30, len(self_weight))} functions to {top_path}")
+
+
+if __name__ == "__main__":
+    main()

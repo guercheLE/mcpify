@@ -58,6 +58,8 @@ const SHARED_TEST_FILES: &[(&str, &str)] = &[
         "tests/e2e/test_mcp_server.py.tera",
         "tests/e2e/test_mcp_server.py",
     ),
+    ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
+    ("scripts/profile.sh.tera", "scripts/profile.sh"),
 ];
 
 /// One unit test file per discovered `AuthSchemeKind` — never emit a test

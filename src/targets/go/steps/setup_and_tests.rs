@@ -28,6 +28,8 @@ const FILES: &[(&str, &str)] = &[
         "internal/services/embedding_integration_test.go.tera",
         "internal/services/embedding_integration_test.go",
     ),
+    ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
+    ("scripts/profile.sh.tera", "scripts/profile.sh"),
 ];
 
 /// One test file per discovered `AuthSchemeKind` — same dedup-by-kind

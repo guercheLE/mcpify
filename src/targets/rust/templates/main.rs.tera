@@ -11,6 +11,10 @@ mod cli;
 
 use std::sync::Arc;
 
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 use clap::{Parser, Subcommand};
 use tokio::sync::Mutex;
 
@@ -150,6 +154,9 @@ async fn run_harness_server() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "profiling")]
+    let _dhat_profiler = dhat::Profiler::new_heap();
+
     let cli = Cli::parse();
 
     let result = match cli.command {

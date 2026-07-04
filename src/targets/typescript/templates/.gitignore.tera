@@ -1,6 +1,8 @@
 node_modules/
 dist/
 coverage/
+profile/
 *.log
+*.heapprofile
 .env
 .DS_Store

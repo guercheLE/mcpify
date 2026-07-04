@@ -2,6 +2,8 @@
 /dist/
 *.test
 *.out
+coverage.html
+profile/
 .env
 mcp_store.chromem/
 .DS_Store
