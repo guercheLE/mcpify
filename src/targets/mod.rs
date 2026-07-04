@@ -126,6 +126,7 @@ mod tests {
             auth_schemes: Vec::new(),
             normalized_operations: Vec::new(),
             api_title: "Test API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 

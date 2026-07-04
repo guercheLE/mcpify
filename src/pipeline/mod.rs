@@ -22,12 +22,14 @@ use crate::{auth_profile, db, openapi};
 /// returning the error, so a spec that fails auth profiling (for example)
 /// doesn't leave an empty directory behind for the next attempt to trip
 /// over. A pre-existing (`--force`) directory is never touched.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_shared_pipeline(
     input: &str,
     output_dir: PathBuf,
     force: bool,
     interactive_auth_prompt: bool,
     publish_registry: bool,
+    version_label: &str,
 ) -> Result<GeneratorContext> {
     let doc = openapi::ingest(input).await?;
     let output_dir_preexisted = dir_guard::check_output_dir(&output_dir, force).await?;
@@ -39,6 +41,7 @@ pub async fn run_shared_pipeline(
         output_dir_preexisted,
         interactive_auth_prompt,
         publish_registry,
+        version_label,
         &doc,
     )
     .await;
@@ -58,6 +61,7 @@ async fn assemble_context(
     output_dir_preexisted: bool,
     interactive_auth_prompt: bool,
     publish_registry: bool,
+    version_label: &str,
     doc: &OpenAPI,
 ) -> Result<GeneratorContext> {
     let auth_schemes = auth_profile::profile_auth(doc, interactive_auth_prompt).await?;
@@ -72,6 +76,7 @@ async fn assemble_context(
         auth_schemes,
         normalized_operations,
         api_title: doc.info.title.clone(),
+        version_label: version_label.to_string(),
     };
 
     db::assemble_store(&ctx).await?;
@@ -94,6 +99,7 @@ mod tests {
             false,
             false,
             false,
+            "default",
         )
         .await
         .unwrap();
@@ -116,6 +122,7 @@ mod tests {
             false,
             false,
             false,
+            "default",
         )
         .await
         .unwrap_err();
@@ -135,6 +142,7 @@ mod tests {
             false,
             false,
             false,
+            "default",
         )
         .await
         .unwrap_err();
@@ -157,6 +165,7 @@ mod tests {
             true,
             false,
             false,
+            "default",
         )
         .await
         .unwrap_err();

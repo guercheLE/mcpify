@@ -1,9 +1,9 @@
 use std::io::IsTerminal;
-use std::path::PathBuf;
 
 use clap::Parser;
 
-use mcpify::cli::Cli;
+use mcpify::add_version::{self, AddVersionRequest};
+use mcpify::cli::{Cli, Commands};
 use mcpify::pipeline::run_shared_pipeline;
 use mcpify::targets;
 
@@ -20,7 +20,31 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::AddVersion {
+            project,
+            version,
+            input,
+            set_default,
+            force,
+        }) => {
+            add_version::run(AddVersionRequest {
+                project_dir: project,
+                version_label: version,
+                input,
+                set_default,
+                force,
+            })
+            .await
+        }
+        None => run_generate(cli).await,
+    }
+}
+
+async fn run_generate(cli: Cli) -> anyhow::Result<()> {
     cli.validate_language()?;
+    let args = cli.into_generate_args()?;
 
     // Only fall back to an interactive auth-scheme prompt (REQ-1.2.4) when
     // there's a human on the other end of stdin; a scripted/CI invocation
@@ -28,18 +52,21 @@ async fn run() -> anyhow::Result<()> {
     let interactive = std::io::stdin().is_terminal();
 
     let ctx = run_shared_pipeline(
-        &cli.input,
-        PathBuf::from(&cli.output),
-        cli.force,
+        &args.input,
+        args.output,
+        args.force,
         interactive,
-        cli.publish_registry,
+        args.publish_registry,
+        &args.version,
     )
     .await?;
 
     let registry = targets::build_registry();
     let target = registry
-        .get(cli.language.as_str())
-        .ok_or_else(|| anyhow::anyhow!("no generator registered for target '{}'", cli.language))?;
+        .get(args.language.as_str())
+        .ok_or_else(|| anyhow::anyhow!("no generator registered for target '{}'", args.language))?;
 
-    target.execute(&ctx).await
+    target.execute(&ctx).await?;
+
+    add_version::seed::seed_ledger_after_generate(&ctx, &args.language, &args.version).await
 }

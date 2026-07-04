@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::context::GeneratorContext;
+use crate::openapi::NormalizedOperation;
 
 pub const STORE_FILE_NAME: &str = "mcp_store.db";
 
@@ -18,13 +19,27 @@ pub const STORE_FILE_NAME: &str = "mcp_store.db";
 /// embeddings decision).
 pub async fn assemble_store(ctx: &GeneratorContext) -> Result<PathBuf> {
     let store_path = ctx.output_dir.join(STORE_FILE_NAME);
-    let operations = ctx.normalized_operations.clone();
 
     // A --force regeneration into a directory that already has a populated
     // mcp_store.db from a previous run must start from a clean slate, or
     // re-inserting the same operation_ids hits endpoints' PRIMARY KEY
     // constraint. CREATE TABLE IF NOT EXISTS alone doesn't clear stale rows.
-    if ctx.output_dir_preexisted && tokio::fs::try_exists(&store_path).await.unwrap_or(false) {
+    let should_clear =
+        ctx.output_dir_preexisted && tokio::fs::try_exists(&store_path).await.unwrap_or(false);
+
+    assemble_store_at(store_path, should_clear, &ctx.normalized_operations).await
+}
+
+/// The reusable core of `assemble_store`, taking an explicit destination
+/// path instead of deriving one from a full `GeneratorContext` — lets v8's
+/// `add-version` command assemble a version-suffixed store (e.g.
+/// `mcp_store_v11.2.db`) without needing a `GeneratorContext` of its own.
+pub async fn assemble_store_at(
+    store_path: PathBuf,
+    should_clear_existing: bool,
+    operations: &[NormalizedOperation],
+) -> Result<PathBuf> {
+    if should_clear_existing && tokio::fs::try_exists(&store_path).await.unwrap_or(false) {
         tokio::fs::remove_file(&store_path).await.ok();
     }
 
@@ -32,6 +47,7 @@ pub async fn assemble_store(ctx: &GeneratorContext) -> Result<PathBuf> {
     // (fast, local) DB work runs on a blocking thread rather than inline on
     // the async runtime.
     let path_for_task = store_path.clone();
+    let operations = operations.to_vec();
     tokio::task::spawn_blocking(move || -> Result<()> {
         let conn = open::open_store(&path_for_task)?;
         schema::create_tables(&conn)?;
@@ -61,6 +77,7 @@ mod tests {
             auth_schemes: Vec::new(),
             normalized_operations: operations,
             api_title: "Test API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 

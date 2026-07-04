@@ -15,6 +15,7 @@ async fn oauth2_json_fixture_is_classified_correctly() {
         false,
         false,
         false,
+        "default",
     )
     .await
     .unwrap();
@@ -34,6 +35,7 @@ async fn multi_scheme_fixture_discovers_all_four_kinds() {
         false,
         false,
         false,
+        "default",
     )
     .await
     .unwrap();
@@ -59,6 +61,7 @@ async fn no_auth_scheme_fixture_errors_when_non_interactive() {
         false,
         false,
         false,
+        "default",
     )
     .await
     .unwrap_err();
@@ -80,6 +83,7 @@ async fn refs_fixture_resolves_allof_and_self_referential_schemas() {
         false,
         false,
         false,
+        "default",
     )
     .await
     .unwrap();
