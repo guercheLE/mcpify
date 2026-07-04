@@ -1,6 +1,5 @@
 ---
 source: tests/golden_go.rs
-assertion_line: 104
 expression: file_tree(&output_dir)
 ---
 [
@@ -31,6 +30,7 @@ expression: file_tree(&output_dir)
     "internal/auth/stub.go",
     "internal/cli/roles.go",
     "internal/cli/setup.go",
+    "internal/cli/versions.go",
     "internal/core/cache.go",
     "internal/core/cache_test.go",
     "internal/core/circuitbreaker.go",

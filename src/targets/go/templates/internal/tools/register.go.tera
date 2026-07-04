@@ -23,6 +23,7 @@ func Register(
 	vectorStore *services.VectorStore,
 	apiClient *services.ApiClient,
 	authManager *auth.Manager,
+	apiVersion string,
 ) {
 	mcpServer.AddTool(
 		mcp.NewTool("search",
@@ -77,7 +78,7 @@ func Register(
 			}
 			args := mcp.ParseStringMap(request, "args", map[string]any{})
 
-			result, err := Call(ctx, store, apiClient, authManager, operationID, args)
+			result, err := Call(ctx, store, apiClient, authManager, apiVersion, operationID, args)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

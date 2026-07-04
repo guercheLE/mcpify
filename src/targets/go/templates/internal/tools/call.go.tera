@@ -21,6 +21,7 @@ func Call(
 	store *data.Store,
 	client *services.ApiClient,
 	authManager *auth.Manager,
+	apiVersion string,
 	operationID string,
 	args map[string]any,
 ) (any, error) {
@@ -32,7 +33,7 @@ func Call(
 		return nil, core.NewNotFoundError(fmt.Sprintf("unknown operationId '%s'", operationID))
 	}
 
-	if err := validation.ValidateInput(operationID, args); err != nil {
+	if err := validation.ValidateInput(apiVersion, operationID, args); err != nil {
 		return nil, err
 	}
 
@@ -41,7 +42,7 @@ func Call(
 		return nil, err
 	}
 
-	if err := validation.ValidateOutput(operationID, response); err != nil {
+	if err := validation.ValidateOutput(apiVersion, operationID, response); err != nil {
 		return nil, err
 	}
 	return response, nil

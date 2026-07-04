@@ -1,0 +1,17 @@
+package cli
+
+// VersionRow is one API spec version this project has a store for (v8
+// multi-version support), added at `generate`/`mcpify add-version` time.
+type VersionRow struct {
+	Label     string
+	IsDefault bool
+}
+
+// mcpify:versions:begin
+var KnownVersions = []VersionRow{
+{%- for v in version_entries %}
+	{Label: "{{ v.label }}", IsDefault: {% if v.label == default_version_label %}true{% else %}false{% endif %}},
+{%- endfor %}
+}
+
+// mcpify:versions:end

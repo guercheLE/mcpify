@@ -8,6 +8,28 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// mcpify:versions:begin
+var versionStoreFiles = map[string]string{
+{%- for v in version_entries %}
+	"{{ v.label }}": "{{ v.db_file }}",
+{%- endfor %}
+}
+
+// mcpify:versions:end
+
+// ResolveStorePath resolves the active ApiVersion (from the config
+// cascade) to its store file — the default version's data always lives
+// in the project-root mcp_store.db this target has always used; every
+// other version lives in its own mcp_store_v<label>.db sibling, added by
+// a later `mcpify add-version` call.
+func ResolveStorePath(apiVersion string) (string, error) {
+	path, ok := versionStoreFiles[apiVersion]
+	if !ok {
+		return "", fmt.Errorf("unknown api_version '%s' — run the 'versions' command to see what's available", apiVersion)
+	}
+	return path, nil
+}
+
 // EndpointRecord is one row of mcp_store.db's endpoints table (written by
 // mcpify's shared pipeline, Story 5/6) — the relational half of the
 // deliberate divergence in v5-implementation-plan.md's Context section:

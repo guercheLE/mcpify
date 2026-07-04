@@ -31,6 +31,7 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 	if err != nil {
 		return err
 	}
+	apiVersion := promptApiVersion()
 
 	credentialStore, err := core.NewCredentialStore()
 	if err != nil {
@@ -47,6 +48,7 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 	env := map[string]string{
 		"{{ tool_prefix_env }}_URL":         url,
 		"{{ tool_prefix_env }}_AUTH_METHOD": string(authMethod),
+		"{{ tool_prefix_env }}_API_VERSION": apiVersion,
 	}
 	for key, value := range credentials {
 		env["{{ tool_prefix_env }}_"+strings.ToUpper(key)] = value
@@ -108,6 +110,30 @@ func promptAuthMethod() core.AuthMethod {
 	return choices[selection]
 {%- endif %}
 }
+
+// mcpify:versions:begin
+func promptApiVersion() string {
+{%- if version_entries | length <= 1 %}
+	// Only one version is available — nothing to choose between.
+	return "{{ version_entries.0.label }}"
+{%- else %}
+	choices := map[string]string{}
+{%- for v in version_entries %}
+	choices["{{ v.label }}{% if v.label == default_version_label %} (default/latest){% endif %}"] = "{{ v.label }}"
+{%- endfor %}
+	options := make([]string, 0, len(choices))
+	for key := range choices {
+		options = append(options, key)
+	}
+	sort.Strings(options)
+
+	var selection string
+	_ = survey.AskOne(&survey.Select{Message: "API version to use:", Options: options}, &selection)
+	return choices[selection]
+{%- endif %}
+}
+
+// mcpify:versions:end
 
 func promptCredentials(authMethod core.AuthMethod) (map[string]string, error) {
 	credentials := map[string]string{}

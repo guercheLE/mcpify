@@ -17,7 +17,7 @@ use mcpify::pipeline::run_shared_pipeline;
 use mcpify::targets::go::steps::{auth, bootstrap, enterprise, setup_and_tests, tools, transports};
 
 async fn generate(fixture: &str, output_dir: PathBuf) -> GeneratorContext {
-    let ctx = run_shared_pipeline(fixture, output_dir, false, false, false)
+    let ctx = run_shared_pipeline(fixture, output_dir, false, false, false, "default")
         .await
         .expect("shared pipeline must succeed");
     bootstrap::bootstrap_project(&ctx)

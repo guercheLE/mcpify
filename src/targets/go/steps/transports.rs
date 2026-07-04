@@ -23,6 +23,7 @@ const FILES: &[(&str, &str)] = &[
         "internal/tools/register.go",
     ),
     ("internal/cli/roles.go.tera", "internal/cli/roles.go"),
+    ("internal/cli/versions.go.tera", "internal/cli/versions.go"),
 ];
 
 /// `generate_transports_and_roles` (architecture.md §1, step 8): the
@@ -78,6 +79,7 @@ mod tests {
             auth_schemes,
             normalized_operations: Vec::new(),
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 
@@ -136,6 +138,7 @@ mod tests {
             "func RunTestConnection",
             "func PrintVersion",
             "func PrintConfig",
+            "func PrintVersions",
         ] {
             assert!(contents.contains(expected), "missing {expected}");
         }

@@ -43,6 +43,7 @@ const (
 type Config struct {
 	URL           string
 	AuthMethod    AuthMethod
+	ApiVersion    string
 	LogLevel      string
 	RateLimit     int
 	TimeoutMs     int
@@ -54,10 +55,19 @@ type Config struct {
 	CorsAllow     string
 }
 
+// defaultAPIVersion is which version `Load` falls back to when nothing
+// overrides it — the project's default/latest version at the time this
+// was last rendered (`generate` or `mcpify add-version --set-default`).
+// mcpify:versions:begin
+func defaultAPIVersion() string { return "{{ default_version_label }}" }
+
+// mcpify:versions:end
+
 // defaults is tier 7: built-in defaults, the lowest-priority tier every
 // other tier overrides.
 func defaults() Config {
 	return Config{
+		ApiVersion:    defaultAPIVersion(),
 		LogLevel:      "info",
 		RateLimit:     100,
 		TimeoutMs:     30_000,
@@ -113,6 +123,7 @@ func Load(overrides CLIOverrides) (Config, error) {
 type fileOverrides struct {
 	URL           *string `json:"url"`
 	AuthMethod    *string `json:"authMethod"`
+	ApiVersion    *string `json:"apiVersion"`
 	LogLevel      *string `json:"logLevel"`
 	RateLimit     *int    `json:"rateLimit"`
 	TimeoutMs     *int    `json:"timeoutMs"`
@@ -142,6 +153,9 @@ func (o fileOverrides) applyTo(cfg *Config) {
 	}
 	if o.AuthMethod != nil {
 		cfg.AuthMethod = AuthMethod(*o.AuthMethod)
+	}
+	if o.ApiVersion != nil {
+		cfg.ApiVersion = *o.ApiVersion
 	}
 	if o.LogLevel != nil {
 		cfg.LogLevel = *o.LogLevel
@@ -178,6 +192,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v, ok := os.LookupEnv("{{ tool_prefix_env }}_AUTH_METHOD"); ok {
 		cfg.AuthMethod = AuthMethod(v)
+	}
+	if v, ok := os.LookupEnv("{{ tool_prefix_env }}_API_VERSION"); ok {
+		cfg.ApiVersion = v
 	}
 	if v, ok := os.LookupEnv("{{ tool_prefix_env }}_LOG_LEVEL"); ok {
 		cfg.LogLevel = v

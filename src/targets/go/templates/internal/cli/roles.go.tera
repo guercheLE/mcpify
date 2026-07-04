@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -42,7 +43,11 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 		return nil, err
 	}
 
-	store, err := data.Open("mcp_store.db")
+	storePath, err := data.ResolveStorePath(config.ApiVersion)
+	if err != nil {
+		return nil, err
+	}
+	store, err := data.Open(storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +82,7 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 	apiClient := services.NewApiClient(config)
 	health := core.NewRegistry()
 	mcpServer := core.NewMCPServer()
-	tools.Register(mcpServer, store, vectorStore, apiClient, authManager)
+	tools.Register(mcpServer, store, vectorStore, apiClient, authManager, config.ApiVersion)
 
 	return &Services{
 		Config:      config,
@@ -147,6 +152,30 @@ func PrintConfig(overrides core.CLIOverrides) error {
 	return nil
 }
 
+// PrintVersions lists the API spec versions this project has a store for
+// (v8 multi-version support), showing which is default/active.
+func PrintVersions(overrides core.CLIOverrides) error {
+	config, err := core.Load(overrides)
+	if err != nil {
+		return err
+	}
+	for _, row := range KnownVersions {
+		var markers []string
+		if row.IsDefault {
+			markers = append(markers, "default")
+		}
+		if row.Label == config.ApiVersion {
+			markers = append(markers, "active")
+		}
+		if len(markers) > 0 {
+			fmt.Printf("%s (%s)\n", row.Label, strings.Join(markers, ", "))
+		} else {
+			fmt.Println(row.Label)
+		}
+	}
+	return nil
+}
+
 // RunSearch runs the search tool in-process, printing its result — the
 // same tool implementation the MCP-protocol path uses (Story G6's
 // tools.Search), just called directly instead of over stdio/HTTP.
@@ -194,7 +223,7 @@ func RunCall(ctx context.Context, overrides core.CLIOverrides, operationID, args
 		}
 	}
 
-	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, operationID, args)
+	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, svc.Config.ApiVersion, operationID, args)
 	if err != nil {
 		return err
 	}

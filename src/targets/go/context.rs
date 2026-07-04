@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::naming::{pascal_case, screaming_snake_case};
 use crate::auth_profile::AuthSchemeKind;
-use crate::context::GeneratorContext;
+use crate::context::{GeneratorContext, VersionEntryView};
 
 /// One discovered auth scheme, in the shape templates need: `method_key` is
 /// the literal string value the generated `AuthMethod` config field takes
@@ -73,6 +73,9 @@ pub struct GoTemplateContext {
     /// built from.
     pub auth_methods: Vec<GoAuthMethodView>,
     pub operations: Vec<GoOperationView>,
+    /// v8 multi-version support — see `targets::typescript::context::TsTemplateContext::version_entries`.
+    pub version_entries: Vec<VersionEntryView>,
+    pub default_version_label: String,
 }
 
 impl GoTemplateContext {
@@ -124,6 +127,12 @@ impl GoTemplateContext {
             })
             .collect();
 
+        let version_entries = vec![VersionEntryView::from_project_relative_paths(
+            &ctx.version_label,
+            crate::db::STORE_FILE_NAME,
+            super::steps::tools::GENERATED_SCHEMAS_RELATIVE_PATH,
+        )];
+
         Self {
             module_path: project_name.clone(),
             tool_prefix: project_name.clone(),
@@ -135,6 +144,8 @@ impl GoTemplateContext {
             auth_method_keys,
             auth_methods,
             operations,
+            version_entries,
+            default_version_label: ctx.version_label.clone(),
         }
     }
 }
@@ -221,6 +232,7 @@ mod tests {
                 validation_output_schema: serde_json::json!({}),
             }],
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 

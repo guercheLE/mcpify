@@ -11,39 +11,56 @@ import (
 	"{{ module_path }}/internal/core"
 )
 
-// generatedSchemasJSON is written directly by the Rust generator (not
-// templated) and baked into the compiled binary via go:embed rather than
-// read from disk at runtime — mirrors
-// `targets::rust::templates::validation::validator.rs`'s `include_str!`
-// approach, keeping this file's size independent of how many operations
-// the source spec declares.
-//
-//go:embed generated_schemas.json
-var generatedSchemasJSON []byte
+// Each known version's generated-schemas asset is written directly by the
+// Rust generator (not templated) and baked into the compiled binary via
+// its own go:embed directive rather than read from disk at runtime —
+// mirrors `targets::rust::templates::validation::validator.rs`'s
+// `include_str!` approach, keeping this file's size independent of how
+// many operations the source spec declares. A `go:embed` directive binds
+// to exactly one var, so there's one embed+var pair per version here
+// rather than a single shared one.
+// mcpify:versions:begin
+{% for v in version_entries %}
+//go:embed {{ v.schemas_file }}
+var embeddedSchemas_{{ v.var_suffix }} []byte
+{% endfor %}
+var generatedSchemasByVersion = map[string][]byte{
+{%- for v in version_entries %}
+	"{{ v.label }}": embeddedSchemas_{{ v.var_suffix }},
+{%- endfor %}
+}
+
+// mcpify:versions:end
 
 type operationSchemas struct {
 	InputSchema  json.RawMessage `json:"inputSchema"`
 	OutputSchema json.RawMessage `json:"outputSchema"`
 }
 
-var (
-	schemasOnce sync.Once
-	schemas     map[string]operationSchemas
+var schemasByVersionMu sync.Mutex
+var schemasByVersion = map[string]map[string]operationSchemas{}
 
-	validatorCacheMu sync.Mutex
-	validatorCache   = map[string]*gojsonschema.Schema{}
-)
+var validatorCacheMu sync.Mutex
+var validatorCache = map[string]*gojsonschema.Schema{}
 
-func schemasByOperation() map[string]operationSchemas {
-	schemasOnce.Do(func() {
-		schemas = map[string]operationSchemas{}
-		_ = json.Unmarshal(generatedSchemasJSON, &schemas)
-	})
-	return schemas
+func schemasByOperation(apiVersion string) map[string]operationSchemas {
+	schemasByVersionMu.Lock()
+	defer schemasByVersionMu.Unlock()
+
+	if cached, ok := schemasByVersion[apiVersion]; ok {
+		return cached
+	}
+
+	parsed := map[string]operationSchemas{}
+	if raw, ok := generatedSchemasByVersion[apiVersion]; ok {
+		_ = json.Unmarshal(raw, &parsed)
+	}
+	schemasByVersion[apiVersion] = parsed
+	return parsed
 }
 
-func validatorFor(operationID, schemaKey string) (*gojsonschema.Schema, error) {
-	cacheKey := operationID + "\x00" + schemaKey
+func validatorFor(apiVersion, operationID, schemaKey string) (*gojsonschema.Schema, error) {
+	cacheKey := apiVersion + "\x00" + operationID + "\x00" + schemaKey
 	validatorCacheMu.Lock()
 	defer validatorCacheMu.Unlock()
 
@@ -51,7 +68,7 @@ func validatorFor(operationID, schemaKey string) (*gojsonschema.Schema, error) {
 		return cached, nil
 	}
 
-	entry := schemasByOperation()[operationID]
+	entry := schemasByOperation(apiVersion)[operationID]
 	var raw json.RawMessage
 	if schemaKey == "inputSchema" {
 		raw = entry.InputSchema
@@ -70,8 +87,8 @@ func validatorFor(operationID, schemaKey string) (*gojsonschema.Schema, error) {
 	return schema, nil
 }
 
-func validateAgainst(operationID, schemaKey string, data any) ([]string, error) {
-	schema, err := validatorFor(operationID, schemaKey)
+func validateAgainst(apiVersion, operationID, schemaKey string, data any) ([]string, error) {
+	schema, err := validatorFor(apiVersion, operationID, schemaKey)
 	if err != nil {
 		return nil, err
 	}
@@ -90,9 +107,9 @@ func validateAgainst(operationID, schemaKey string, data any) ([]string, error) 
 }
 
 // ValidateInput raises a ValidationError if data doesn't satisfy
-// operationID's input schema.
-func ValidateInput(operationID string, data any) error {
-	errors, err := validateAgainst(operationID, "inputSchema", data)
+// operationID's input schema, for the given apiVersion.
+func ValidateInput(apiVersion, operationID string, data any) error {
+	errors, err := validateAgainst(apiVersion, operationID, "inputSchema", data)
 	if err != nil {
 		return err
 	}
@@ -105,9 +122,10 @@ func ValidateInput(operationID string, data any) error {
 // ValidateOutput raises a ValidationError if data doesn't satisfy
 // operationID's output schema — surfaces upstream API drift as a
 // structured error rather than silently returning a mismatched response
-// (architecture.md's call pipeline).
-func ValidateOutput(operationID string, data any) error {
-	errors, err := validateAgainst(operationID, "outputSchema", data)
+// (architecture.md's call pipeline). Validates against the given
+// apiVersion's schema.
+func ValidateOutput(apiVersion, operationID string, data any) error {
+	errors, err := validateAgainst(apiVersion, operationID, "outputSchema", data)
 	if err != nil {
 		return err
 	}

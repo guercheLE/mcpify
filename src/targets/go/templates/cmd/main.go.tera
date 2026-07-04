@@ -74,6 +74,14 @@ func main() {
 		},
 	})
 
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "versions",
+		Short: "List the API spec versions available in this project.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.PrintVersions(overrides())
+		},
+	})
+
 	var searchLimit int
 	searchCmd := &cobra.Command{
 		Use:   "search <query>",
