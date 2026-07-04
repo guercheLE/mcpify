@@ -15,6 +15,7 @@ import { registerSetupCommand } from './cli/setup-command.js';
 import { registerStartCommand } from './cli/start-command.js';
 import { registerTestConnectionCommand } from './cli/test-connection-command.js';
 import { registerVersionCommand } from './cli/version-command.js';
+import { registerVersionsCommand } from './cli/versions-command.js';
 
 const program = new Command();
 program.name('{{ project_name }}').description('{{ display_name }} MCP server — Terminal Client');
@@ -28,6 +29,7 @@ registerHttpCommand(program);
 registerTestConnectionCommand(program);
 registerConfigCommand(program);
 registerVersionCommand(program);
+registerVersionsCommand(program);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);

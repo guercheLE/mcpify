@@ -14,7 +14,7 @@ export function registerCallCommand(program: Command): void {
     .option('-a, --args <json>', 'operation arguments as a JSON object', '{}')
     .action(async (operationId: string, options: { args: string }) => {
       const config = loadConfig();
-      const store = openStore();
+      const store = openStore(config.api_version);
       const authManager = new AuthManager(config.auth_method);
       const args = JSON.parse(options.args) as Record<string, unknown>;
       const result = await callOperation(store, config, authManager, operationId, args);

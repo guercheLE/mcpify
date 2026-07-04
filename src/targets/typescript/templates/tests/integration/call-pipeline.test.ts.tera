@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AuthManager } from '../../src/auth/auth-manager.js';
-import type { Config } from '../../src/core/config-schema.js';
+import { DEFAULT_API_VERSION, type Config } from '../../src/core/config-schema.js';
 import { closeStore, openStore, type Store } from '../../src/data/store-repository.js';
 import { ApiClient } from '../../src/services/api-client.js';
 import { getOperation } from '../../src/tools/get-tool.js';
@@ -18,11 +18,12 @@ let mockApi: MockApiServer;
 let config: Config;
 
 beforeAll(async () => {
-  store = openStore();
+  store = openStore(DEFAULT_API_VERSION);
   mockApi = await startMockApiServer();
   config = {
     url: mockApi.url,
     auth_method: '{{ auth_method_keys.0 }}',
+    api_version: DEFAULT_API_VERSION,
     log_level: 'info',
     rate_limit: 100,
     timeout_ms: 5000,

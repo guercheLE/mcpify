@@ -2,6 +2,7 @@
 
 import type { Command } from 'commander';
 
+import { loadConfig } from '../core/config-manager.js';
 import { closeStore, openStore } from '../data/store-repository.js';
 import { getOperation } from '../tools/get-tool.js';
 
@@ -10,7 +11,8 @@ export function registerGetCommand(program: Command): void {
     .command('get <operationId>')
     .description('Show the schema, path, method, and documentation for one operation')
     .action(async (operationId: string) => {
-      const store = openStore();
+      const config = loadConfig();
+      const store = openStore(config.api_version);
       const result = await getOperation(store, operationId);
       console.log(JSON.stringify(result, null, 2));
       closeStore(store);

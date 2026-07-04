@@ -13,9 +13,18 @@ export const AuthMethodSchema = z.enum([
 ]);
 export type AuthMethod = z.infer<typeof AuthMethodSchema>;
 
+// mcpify:versions:begin
+export const ApiVersionSchema = z.enum([
+  'default',
+]);
+export const DEFAULT_API_VERSION = 'default';
+// mcpify:versions:end
+export type ApiVersion = z.infer<typeof ApiVersionSchema>;
+
 export const ConfigSchema = z.object({
   url: z.string().url(),
   auth_method: AuthMethodSchema,
+  api_version: ApiVersionSchema.default(DEFAULT_API_VERSION),
   log_level: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   rate_limit: z.coerce.number().int().positive().default(100),
   timeout_ms: z.coerce.number().int().positive().default(30000),

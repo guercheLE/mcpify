@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::naming::{kebab_case, pascal_case, screaming_snake_case};
 use crate::auth_profile::AuthSchemeKind;
-use crate::context::GeneratorContext;
+use crate::context::{GeneratorContext, VersionEntryView};
 
 /// One discovered auth scheme, in the shape templates need: `method_key` is
 /// the literal string value the generated `auth_method` config field takes
@@ -51,6 +51,16 @@ pub struct TsTemplateContext {
     /// filter to depend on.
     pub auth_method_keys: Vec<&'static str>,
     pub operations: Vec<TsOperationView>,
+    /// v8 multi-version support: every version this project currently has a
+    /// store for, in insertion order. A single-element list at `generate`
+    /// time (see `GeneratorContext::version_label`) — extended later by
+    /// `add-version` re-rendering just the marker-delimited regions that
+    /// read this field (`steps::versions::sync`), not by re-running this
+    /// whole `from_context`.
+    pub version_entries: Vec<VersionEntryView>,
+    /// Which version in `version_entries` the generated project falls back
+    /// to when `api_version` isn't set via the config cascade.
+    pub default_version_label: String,
 }
 
 impl TsTemplateContext {
@@ -95,6 +105,12 @@ impl TsTemplateContext {
             }
         }
 
+        let version_entries = vec![VersionEntryView::from_project_relative_paths(
+            &ctx.version_label,
+            crate::db::STORE_FILE_NAME,
+            super::steps::tools::GENERATED_SCHEMAS_PATH,
+        )];
+
         Self {
             package_name: project_name.clone(),
             tool_prefix: project_name.clone(),
@@ -105,6 +121,8 @@ impl TsTemplateContext {
             auth_schemes,
             auth_method_keys,
             operations,
+            version_entries,
+            default_version_label: ctx.version_label.clone(),
         }
     }
 }
@@ -154,6 +172,7 @@ mod tests {
                 validation_output_schema: serde_json::json!({}),
             }],
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 
@@ -220,5 +239,16 @@ mod tests {
         ctx.output_dir = PathBuf::from("/");
         let view = TsTemplateContext::from_context(&ctx);
         assert_eq!(view.project_name, "widget-api");
+    }
+
+    #[test]
+    fn renders_a_single_default_version_entry_at_generate_time() {
+        let mut ctx = sample_context();
+        ctx.version_label = "11.3".to_string();
+        let view = TsTemplateContext::from_context(&ctx);
+        assert_eq!(view.version_entries.len(), 1);
+        assert_eq!(view.version_entries[0].label, "11.3");
+        assert_eq!(view.version_entries[0].db_file, "mcp_store.db");
+        assert_eq!(view.default_version_label, "11.3");
     }
 }

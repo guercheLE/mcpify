@@ -101,6 +101,7 @@ mod tests {
             auth_schemes,
             normalized_operations: Vec::new(),
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 

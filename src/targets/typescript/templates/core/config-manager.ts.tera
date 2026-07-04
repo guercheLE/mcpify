@@ -23,6 +23,7 @@ function envOverrides(): Record<string, unknown> {
   const candidates: Record<string, string | undefined> = {
     url: pick('URL'),
     auth_method: pick('AUTH_METHOD'),
+    api_version: pick('API_VERSION'),
     log_level: pick('LOG_LEVEL'),
     transport: pick('TRANSPORT'),
     host: pick('HOST'),

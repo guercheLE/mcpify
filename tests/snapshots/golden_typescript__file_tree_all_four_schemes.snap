@@ -1,6 +1,5 @@
 ---
 source: tests/golden_typescript.rs
-assertion_line: 105
 expression: file_tree(&output_dir)
 ---
 [
@@ -38,6 +37,7 @@ expression: file_tree(&output_dir)
     "src/cli/start-command.ts",
     "src/cli/test-connection-command.ts",
     "src/cli/version-command.ts",
+    "src/cli/versions-command.ts",
     "src/core/api-url-builder.ts",
     "src/core/cache-manager.ts",
     "src/core/circuit-breaker.ts",

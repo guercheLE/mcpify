@@ -33,10 +33,28 @@ export interface Store {
   healthCheck(): Promise<void>;
 }
 
-const STORE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'mcp_store.db');
+// mcpify:versions:begin
+const VERSION_STORE_FILES: Record<string, string> = {
+{%- for v in version_entries %}
+  '{{ v.label }}': '{{ v.db_file }}',
+{%- endfor %}
+};
+// mcpify:versions:end
 
-export function openStore(): Store {
-  const db = new Database(STORE_PATH, { readonly: true });
+/**
+ * Resolves `apiVersion` (from the config cascade's `api_version` field) to
+ * its store file — the default version's data always lives in the
+ * project-root `mcp_store.db` this target has always used; every other
+ * version lives in its own `mcp_store_v<label>.db` sibling, added by a
+ * later `mcpify add-version` call.
+ */
+export function openStore(apiVersion: string): Store {
+  const fileName = VERSION_STORE_FILES[apiVersion];
+  if (!fileName) {
+    throw new Error(`unknown api_version '${apiVersion}' — run the 'versions' command to see what's available`);
+  }
+  const storePath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', fileName);
+  const db = new Database(storePath, { readonly: true });
   sqliteVec.load(db);
   return {
     db,

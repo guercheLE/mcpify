@@ -32,7 +32,7 @@ export async function main(): Promise<void> {
   const registry = new ComponentRegistry();
   const healthChecks = new HealthCheckManager(registry);
 
-  const store = openStore();
+  const store = openStore(config.api_version);
   healthChecks.register('store', async () => {
     await store.healthCheck();
   });

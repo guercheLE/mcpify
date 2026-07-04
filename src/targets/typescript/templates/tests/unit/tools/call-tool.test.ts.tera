@@ -3,14 +3,14 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { AuthManager } from '../../../src/auth/auth-manager.js';
-import type { Config } from '../../../src/core/config-schema.js';
+import { DEFAULT_API_VERSION, type Config } from '../../../src/core/config-schema.js';
 import { closeStore, getEndpoint, openStore } from '../../../src/data/store-repository.js';
 import { ApiClient } from '../../../src/services/api-client.js';
 import { callOperation } from '../../../src/tools/call-tool.js';
 import { buildDummyCredentials } from '../../helpers/dummy-credentials.js';
 import { startMockApiServer, type MockApiServer } from '../../helpers/mock-api-server.js';
 
-const store = openStore();
+const store = openStore(DEFAULT_API_VERSION);
 let mockApi: MockApiServer;
 let config: Config;
 
@@ -19,6 +19,7 @@ beforeAll(async () => {
   config = {
     url: mockApi.url,
     auth_method: '{{ auth_method_keys.0 }}',
+    api_version: DEFAULT_API_VERSION,
     log_level: 'info',
     rate_limit: 100,
     timeout_ms: 5000,

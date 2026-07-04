@@ -2,6 +2,7 @@
 
 import type { Command } from 'commander';
 
+import { loadConfig } from '../core/config-manager.js';
 import { closeStore, openStore } from '../data/store-repository.js';
 import { searchOperations } from '../tools/search-tool.js';
 
@@ -11,7 +12,8 @@ export function registerSearchCommand(program: Command): void {
     .description('Semantic search for operations matching a natural-language query')
     .option('-l, --limit <n>', 'maximum number of results', '5')
     .action(async (query: string, options: { limit: string }) => {
-      const store = openStore();
+      const config = loadConfig();
+      const store = openStore(config.api_version);
       const results = await searchOperations(store, query, Number(options.limit));
       console.log(JSON.stringify(results, null, 2));
       closeStore(store);

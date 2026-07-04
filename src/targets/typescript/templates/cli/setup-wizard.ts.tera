@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import axios from 'axios';
 import inquirer from 'inquirer';
 
-import type { AuthMethod } from '../core/config-schema.js';
+import type { ApiVersion, AuthMethod } from '../core/config-schema.js';
 import { saveCredential } from '../core/credential-storage.js';
 
 function toEnvKey(key: string): string {
@@ -50,6 +50,29 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   return authMethod;
 {%- endif %}
 }
+
+// mcpify:versions:begin
+async function promptApiVersion(): Promise<ApiVersion> {
+{%- if version_entries | length == 1 %}
+  return '{{ version_entries.0.label }}';
+{%- else %}
+  const { apiVersion } = await inquirer.prompt<{ apiVersion: ApiVersion }>([
+    {
+      type: 'list',
+      name: 'apiVersion',
+      message: 'API version to use:',
+      default: '{{ default_version_label }}',
+      choices: [
+  {%- for v in version_entries %}
+        { name: '{{ v.label }}{% if v.label == default_version_label %} (default/latest){% endif %}', value: '{{ v.label }}' },
+  {%- endfor %}
+      ],
+    },
+  ]);
+  return apiVersion;
+{%- endif %}
+}
+// mcpify:versions:end
 
 async function promptCredentials(authMethod: AuthMethod): Promise<Record<string, string>> {
   switch (authMethod) {
@@ -128,12 +151,14 @@ export async function runSetupWizard(): Promise<void> {
   const url = await promptBaseUrl();
   const authMethod = await promptAuthMethod();
   const credentials = await promptCredentials(authMethod);
+  const apiVersion = await promptApiVersion();
 
   await saveCredential('active-credentials', JSON.stringify(credentials));
 
   const env: Record<string, string> = {
     ['{{ tool_prefix_env }}_URL']: url,
     ['{{ tool_prefix_env }}_AUTH_METHOD']: authMethod,
+    ['{{ tool_prefix_env }}_API_VERSION']: apiVersion,
   };
   for (const [key, value] of Object.entries(credentials)) {
     env[`{{ tool_prefix_env }}_${toEnvKey(key)}`] = value;

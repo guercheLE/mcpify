@@ -24,6 +24,10 @@ const FILES: &[(&str, &str)] = &[
     ),
     ("cli/config-command.ts.tera", "src/cli/config-command.ts"),
     ("cli/version-command.ts.tera", "src/cli/version-command.ts"),
+    (
+        "cli/versions-command.ts.tera",
+        "src/cli/versions-command.ts",
+    ),
     ("http/types.ts.tera", "src/http/types.ts"),
     (
         "http/localhost-detector.ts.tera",
@@ -63,6 +67,7 @@ mod tests {
             auth_schemes: Vec::new(),
             normalized_operations: Vec::new(),
             api_title: "Widget API".to_string(),
+            version_label: "default".to_string(),
         }
     }
 
@@ -79,7 +84,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cli_registers_all_nine_subcommands() {
+    async fn cli_registers_all_ten_subcommands() {
         let dir = tempfile::tempdir().unwrap();
         generate_transports_and_roles(&ctx(dir.path().to_path_buf()))
             .await
@@ -98,6 +103,7 @@ mod tests {
             "registerTestConnectionCommand",
             "registerConfigCommand",
             "registerVersionCommand",
+            "registerVersionsCommand",
         ] {
             assert!(cli.contains(command), "cli.ts must register {command}");
         }
