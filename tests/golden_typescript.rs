@@ -109,6 +109,7 @@ async fn file_tree_all_four_schemes() {
 /// rather than all ~80-120 emitted files, to keep review signal-to-noise
 /// reasonable when a template changes.
 const CURATED_FILES: &[(&str, &str)] = &[
+    ("release_yml", ".github/workflows/release.yml"),
     ("package_json", "package.json"),
     ("config_schema_ts", "src/core/config-schema.ts"),
     ("auth_manager_ts", "src/auth/auth-manager.ts"),
