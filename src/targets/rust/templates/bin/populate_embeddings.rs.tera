@@ -53,10 +53,9 @@ fn main() -> anyhow::Result<()> {
     // always raises a UNIQUE constraint error, regardless of the conflict
     // clause used), so re-running this script against a db that already has
     // rows requires an explicit delete before each insert to stay idempotent.
-    let mut delete =
-        conn.prepare("DELETE FROM semantic_endpoints WHERE operation_id = ?1")?;
-    let mut insert = conn
-        .prepare("INSERT INTO semantic_endpoints (operation_id, embedding) VALUES (?1, ?2)")?;
+    let mut delete = conn.prepare("DELETE FROM semantic_endpoints WHERE operation_id = ?1")?;
+    let mut insert =
+        conn.prepare("INSERT INTO semantic_endpoints (operation_id, embedding) VALUES (?1, ?2)")?;
 
     // Sequential, not parallelized: keeps peak memory bounded regardless of
     // how many operations a spec declares, at the cost of total wall time —
