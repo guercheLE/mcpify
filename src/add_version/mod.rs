@@ -185,7 +185,10 @@ pub(crate) fn sibling_path(canonical_relative_path: &str, label: &str) -> String
         None => format!("{file_name}_v{sanitized_label}"),
     };
     match parent {
-        Some(parent) => parent.join(new_file_name).to_string_lossy().replace('\\', "/"),
+        Some(parent) => parent
+            .join(new_file_name)
+            .to_string_lossy()
+            .replace('\\', "/"),
         None => new_file_name,
     }
 }

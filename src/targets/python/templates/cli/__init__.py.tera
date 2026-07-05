@@ -15,7 +15,11 @@ from typing import Optional
 import typer
 
 from ..auth.auth_manager import AuthManager, header_location_for
+{%- if "oauth1" in auth_method_keys %}
 from ..core.config import AuthMethod, Transport, load_config
+{%- else %}
+from ..core.config import Transport, load_config
+{%- endif %}
 from ..core.health_check import ComponentRegistry, HealthCheckManager
 from ..core.logger import get_logger, init_logging
 from ..core.mcp_server import build_server

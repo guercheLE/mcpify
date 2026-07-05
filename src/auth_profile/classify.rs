@@ -1,7 +1,9 @@
 use indexmap::IndexMap;
 use openapiv3::{APIKeyLocation, OpenAPI, ReferenceOr, SecurityScheme};
 
-use super::descriptor::{AuthSchemeDescriptor, AuthSchemeKind, AuthSchemeLocation, default_location_for};
+use super::descriptor::{
+    AuthSchemeDescriptor, AuthSchemeKind, AuthSchemeLocation, default_location_for,
+};
 
 /// Turns `components.securitySchemes` into `Vec<AuthSchemeDescriptor>`
 /// (architecture.md §1, step 3). `$ref`-based scheme entries are skipped —

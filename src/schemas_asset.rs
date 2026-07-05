@@ -22,8 +22,8 @@ const ZSTD_LEVEL: i32 = 19;
 const ZSTD_WINDOW_LOG: u32 = 27;
 
 fn compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = zstd::Encoder::new(Vec::new(), ZSTD_LEVEL)
-        .context("failed to construct zstd encoder")?;
+    let mut encoder =
+        zstd::Encoder::new(Vec::new(), ZSTD_LEVEL).context("failed to construct zstd encoder")?;
     encoder
         .long_distance_matching(true)
         .context("failed to enable zstd long-distance matching")?;
@@ -38,7 +38,9 @@ fn compress(data: &[u8]) -> Result<Vec<u8>> {
     encoder
         .set_pledged_src_size(Some(data.len() as u64))
         .context("failed to set zstd pledged source size")?;
-    encoder.write_all(data).context("failed to zstd-compress schemas JSON")?;
+    encoder
+        .write_all(data)
+        .context("failed to zstd-compress schemas JSON")?;
     encoder.finish().context("failed to finalize zstd stream")
 }
 

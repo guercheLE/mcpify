@@ -207,9 +207,10 @@ mod tests {
         assert!(
             validator.contains("\"11.3\" => Some(include_bytes!(\"generated_schemas.json.zst\"))")
         );
-        assert!(validator.contains(
-            "\"11.2\" => Some(include_bytes!(\"generated_schemas_v11.2.json.zst\"))"
-        ));
+        assert!(
+            validator
+                .contains("\"11.2\" => Some(include_bytes!(\"generated_schemas_v11.2.json.zst\"))")
+        );
 
         let setup_wizard = tokio::fs::read_to_string(dir.path().join(SETUP_WIZARD_PATH))
             .await

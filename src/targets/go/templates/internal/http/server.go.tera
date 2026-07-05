@@ -16,7 +16,7 @@ import (
 // CORS/auth-gate middleware chain. Mirrors
 // `targets::csharp::templates::Http::HttpServer.cs.tera`'s
 // `HttpServer.Configure`.
-func NewHandler(mcpHandler http.Handler, healthRegistry *core.Registry, corsAllow string, headerLocation, headerName string) (http.Handler, error) {
+func NewHandler(mcpHandler http.Handler, healthRegistry *core.Registry, corsAllow, headerLocation, headerName string) (http.Handler, error) {
 	requestCounter, err := core.Meter().Int64Counter("http_requests_total")
 	if err != nil {
 		return nil, err

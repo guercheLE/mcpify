@@ -50,15 +50,23 @@ func NewManager(authMethod core.AuthMethod, strategies map[core.AuthMethod]Strat
 // headerLocations maps each discovered auth method to where its
 // credential value travels on the wire — used only by the HTTP-transport
 // auth-gate/extractor (internal/http) to know which incoming header to
-// read; stdio never calls this.
-var headerLocations = map[core.AuthMethod][2]string{
+// read; stdio never calls this. Built as individual assignments rather
+// than one map literal — gofmt column-aligns every entry in a multi-line
+// map literal by the longest key, which a Tera template can't predict
+// ahead of rendering since the set of discovered schemes varies per
+// generation (the same reason `internal/core/config.go.tera`'s
+// per-method consts are ungrouped statements instead of one `const (...)`
+// block).
+var headerLocations = func() map[core.AuthMethod][2]string {
+	locations := map[core.AuthMethod][2]string{}
 {%- for method in auth_methods %}
-	core.AuthMethod{{ method.type_name }}: {"{{ method.header_location }}", "{{ method.header_name }}"},
+	locations[core.AuthMethod{{ method.type_name }}] = [2]string{"{{ method.header_location }}", "{{ method.header_name }}"}
 {%- endfor %}
-}
+	return locations
+}()
 
 // HeaderLocationFor returns (headerLocation, headerName) for authMethod.
-func HeaderLocationFor(authMethod core.AuthMethod) (string, string) {
+func HeaderLocationFor(authMethod core.AuthMethod) (headerLocation, headerName string) {
 	location := headerLocations[authMethod]
 	return location[0], location[1]
 }

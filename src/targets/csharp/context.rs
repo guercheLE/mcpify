@@ -102,12 +102,12 @@ impl CsTemplateContext {
             .map(|scheme| {
                 let (header_location, header_name) = location_view(&scheme.location);
                 CsAuthSchemeView {
-                name: scheme.name.clone(),
-                method_key: auth_method_key(scheme.kind),
-                header_location,
-                header_name,
+                    name: scheme.name.clone(),
+                    method_key: auth_method_key(scheme.kind),
+                    header_location,
+                    header_name,
                 }
-                })
+            })
             .collect();
 
         let operations = ctx
