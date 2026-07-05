@@ -26,15 +26,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5.4.0
         with:
           dotnet-version: "10.0.x"
       - run: dotnet restore
       - run: dotnet test
       - run: dotnet publish {{ namespace }}.csproj -c Release -o publish
       - run: (cd publish && zip -r ../{{ project_name }}.zip .)
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3.0.1
         with:
           files: {{ project_name }}.zip
 {%- if publish_registry %}

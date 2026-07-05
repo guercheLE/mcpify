@@ -17,12 +17,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.26"
       - run: go build -o {{ project_name }} ./cmd/{{ project_name }}
       - run: zip {{ project_name }}.zip {{ project_name }}
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3.0.1
         with:
           files: {{ project_name }}.zip
