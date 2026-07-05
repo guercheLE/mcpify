@@ -40,6 +40,9 @@ expression: contents
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.7.0" />
     <!-- Schema validation -->
     <PackageReference Include="JsonSchema.Net" Version="9.2.2" />
+    <!-- Decompresses the zstd-compressed GeneratedSchemas.json.zst asset
+         (pure C# port, no native binding needed) -->
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.5" />
     <!-- Structured logging -->
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
@@ -65,11 +68,11 @@ expression: contents
          into the compiled assembly as embedded resources rather than
          read from disk at runtime, mirroring
          `targets::rust::templates::validation::validator.rs`'s
-         `include_str!` approach. A glob (rather than one explicit
+         `include_bytes!` approach. A glob (rather than one explicit
          `Include` per file) so a later `mcpify add-version` call's new
-         `GeneratedSchemas_v<label>.json` sibling is picked up on the next
-         build without needing this project file re-rendered too. -->
-    <EmbeddedResource Include="Validation\GeneratedSchemas*.json" />
+         `GeneratedSchemas_v<label>.json.zst` sibling is picked up on the
+         next build without needing this project file re-rendered too. -->
+    <EmbeddedResource Include="Validation\GeneratedSchemas*.json.zst" />
   </ItemGroup>
 
   <ItemGroup>

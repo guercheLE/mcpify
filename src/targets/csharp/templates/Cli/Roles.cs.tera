@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using {{ namespace }}.Auth;
 using {{ namespace }}.Core;
 using {{ namespace }}.Data;
 using {{ namespace }}.Http;
@@ -27,6 +28,13 @@ public static class Roles
     {
         var builder = Host.CreateApplicationBuilder(args);
         builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        // Set explicitly (not left to the config cascade's own default):
+        // AuthManager.ApplyAuthHeadersAsync decides whether to source
+        // credentials from the config cascade or from per-request headers
+        // based on options.Transport, so it must always agree with which
+        // command actually ran, not whatever value the cascade would
+        // otherwise resolve to.
+        builder.Configuration["Transport"] = nameof(Transport.Stdio);
         builder.Services.AddMcpifyServices();
         builder.Services.AddMcpServer().WithStdioServerTransport();
 
@@ -44,6 +52,8 @@ public static class Roles
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        // See RunStdioHarnessAsync's comment above.
+        builder.Configuration["Transport"] = nameof(Transport.Http);
         if (hostOverride is not null)
         {
             builder.Configuration["Host"] = hostOverride;
@@ -57,10 +67,26 @@ public static class Roles
             builder.Configuration["CorsAllow"] = corsAllowOverride;
         }
         builder.Services.AddMcpifyServices();
+        // Core/McpServer.cs's AddMcpServer() is deliberately
+        // transport-agnostic (`.WithToolsFromAssembly()` only) — each
+        // harness role adds its own transport, mirroring
+        // RunStdioHarnessAsync's `.WithStdioServerTransport()` above.
+        builder.Services.AddMcpServer().WithHttpTransport();
 
         var app = HttpServer.Configure(builder);
         var options = app.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
         app.Urls.Add($"http://{options.Host}:{options.Port}");
+
+        {%- if "oauth1" in auth_method_keys %}
+        if (options.AuthMethod == AuthMethod.OAuth1)
+        {
+            throw new AuthException(
+                "OAuth1 is not supported over HTTP transport: its signature must be recomputed per " +
+                "request against the destination URL using the server's consumer key/secret, which a " +
+                "simple incoming-header relay cannot provide. Use stdio transport for OAuth1-authenticated " +
+                "APIs, or switch auth_method.");
+        }
+        {%- endif %}
 
         await app.RunAsync(cancellationToken);
         return 0;
@@ -141,6 +167,7 @@ public static class Roles
             host.Services.GetRequiredService<SqliteVecStore>(),
             host.Services.GetRequiredService<ApiClient>(),
             host.Services.GetRequiredService<IOptions<McpifyOptions>>(),
+            host.Services.GetRequiredService<IRequestCredentialProvider>(),
             operationId,
             callArgs);
         Console.WriteLine(result);

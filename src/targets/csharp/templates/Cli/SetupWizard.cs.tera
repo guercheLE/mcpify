@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Spectre.Console;
+using {{ namespace }}.Auth;
 using {{ namespace }}.Core;
 
 namespace {{ namespace }}.Cli;
@@ -19,6 +20,7 @@ public static class SetupWizard
         var authMethod = PromptAuthMethod();
         var credentials = PromptCredentials(authMethod);
         var apiVersion = PromptApiVersion();
+        var transport = PromptTransport();
 
         await credentialStore.SaveAsync("active-credentials", JsonSerializer.Serialize(credentials));
 
@@ -27,6 +29,7 @@ public static class SetupWizard
             ["{{ tool_prefix_env }}_URL"] = url,
             ["{{ tool_prefix_env }}_AUTH_METHOD"] = authMethod.ToString(),
             ["{{ tool_prefix_env }}_API_VERSION"] = apiVersion,
+            ["{{ tool_prefix_env }}_TRANSPORT"] = transport.ToString(),
         };
         foreach (var (key, value) in credentials)
         {
@@ -34,7 +37,86 @@ public static class SetupWizard
         }
 
         await PromptPersistenceAsync(env);
-        AnsiConsole.MarkupLine("[green]Setup complete![/] Run: [bold]{{ project_name }} start[/]");
+        PrintMcpClientConfig(transport, authMethod, env);
+
+        var runCommand = transport == Transport.Stdio ? "start" : "http";
+        AnsiConsole.MarkupLine($"[green]Setup complete![/] Run: [bold]{{ project_name }} {runCommand}[/]");
+    }
+
+    private static Transport PromptTransport()
+    {
+        var choices = new Dictionary<string, Transport>
+        {
+            ["stdio (spawned as a subprocess by the MCP client)"] = Transport.Stdio,
+            ["http (a standalone server the MCP client connects to over the network)"] = Transport.Http,
+        };
+        var selection = AnsiConsole.Prompt(
+            new SelectionPrompt<string>().Title("Which transport will this deployment use?").AddChoices(choices.Keys));
+        return choices[selection];
+    }
+
+    /// <summary>
+    /// Prints a ready-to-use MCP client config (the <c>mcpServers</c>
+    /// block a host like Claude Code/Desktop expects) for whichever
+    /// transport was selected — the stdio and http shapes are mutually
+    /// exclusive, never both, since they're two different ways of
+    /// running this same server and a client only ever picks one. HTTP
+    /// transport shows credentials as headers only (never env/CLI args,
+    /// matching <see cref="AuthManager.ApplyAuthHeadersAsync"/>'s
+    /// HTTP-only-uses-per-request-credentials behavior); stdio shows
+    /// both the <c>env</c> block and the equivalent all-CLI-args
+    /// invocation, since the config cascade accepts either for a spawned
+    /// subprocess.
+    /// </summary>
+    private static void PrintMcpClientConfig(Transport transport, AuthMethod authMethod, Dictionary<string, string> env)
+    {
+        if (transport == Transport.Stdio)
+        {
+            var config = new Dictionary<string, object>
+            {
+                ["mcpServers"] = new Dictionary<string, object>
+                {
+                    ["{{ project_name }}"] = new Dictionary<string, object>
+                    {
+                        ["command"] = "{{ project_name }}",
+                        ["args"] = new[] { "start" },
+                        ["env"] = env,
+                    },
+                },
+            };
+            AnsiConsole.MarkupLine("\n[bold]MCP client config (stdio):[/]");
+            Console.WriteLine(JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+            var cliArgs = string.Join(' ', env.Select(kv => $"--{kv.Key.ToLowerInvariant().Replace('_', '-')} \"{kv.Value}\""));
+            Console.WriteLine($"(equivalently: `{{ project_name }} start {cliArgs}`)");
+            return;
+        }
+
+{%- if "oauth1" in auth_method_keys %}
+        if (authMethod == AuthMethod.OAuth1)
+        {
+            AnsiConsole.MarkupLine(
+                "\n[yellow]OAuth1 is not supported over HTTP transport: its signature must be recomputed per " +
+                "request against the destination URL using the server's consumer key/secret, which a simple " +
+                "incoming-header relay cannot provide. Use stdio transport for this API instead.[/]");
+            return;
+        }
+{%- endif %}
+        var (_, headerName) = AuthManager.HeaderLocationFor(authMethod);
+        var httpConfig = new Dictionary<string, object>
+        {
+            ["mcpServers"] = new Dictionary<string, object>
+            {
+                ["{{ project_name }}"] = new Dictionary<string, object>
+                {
+                    ["url"] = "http://127.0.0.1:3000/mcp",
+                    ["headers"] = new Dictionary<string, string> { [headerName] = "<credential value here>" },
+                },
+            },
+        };
+        AnsiConsole.MarkupLine("\n[bold]MCP client config (http)[/] — adjust the host/port to match how you run `{{ project_name }} http`:");
+        Console.WriteLine(JsonSerializer.Serialize(httpConfig, new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine(
+            $"Credentials are never read from local config/env over HTTP transport — every request must carry its own \"{headerName}\" header.");
     }
 
     private static async Task<string> PromptBaseUrlAsync()

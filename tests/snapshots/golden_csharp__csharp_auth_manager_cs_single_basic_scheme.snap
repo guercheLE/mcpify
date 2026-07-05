@@ -32,6 +32,20 @@ public sealed class AuthManager(
     private IAuthStrategy Strategy =>
         keyedServiceProvider.GetRequiredKeyedService<IAuthStrategy>(options.Value.AuthMethod);
 
+    /// <summary>
+    /// Where each discovered auth method's credential value travels on
+    /// the wire — used only by the HTTP-transport auth-gate/extractor
+    /// (<c>Http/AuthExtractor.cs</c>) to know which incoming header to
+    /// read; stdio never calls this.
+    /// </summary>
+    private static readonly Dictionary<AuthMethod, (string Location, string Name)> HeaderLocations = new()
+    {
+        [AuthMethod.Basic] = ("header", "Authorization"),
+    };
+
+    public static (string Location, string Name) HeaderLocationFor(AuthMethod authMethod) =>
+        HeaderLocations.TryGetValue(authMethod, out var location) ? location : ("none", string.Empty);
+
     public async Task<Dictionary<string, string>> LoginAsync(
         Dictionary<string, string> config, CancellationToken cancellationToken = default)
     {
@@ -85,19 +99,59 @@ public sealed class AuthManager(
     }
 
     /// <summary>
-    /// Decorates outgoing request headers with the active strategy's
-    /// credentials. API-key placement (header vs. query, and the
-    /// header/param name) defaults to an <c>X-Api-Key</c> header here; a
-    /// scheme declaring a different location is one of Story C6's
-    /// api-client responsibilities to refine, not this manager's.
+    /// Decorates outgoing request headers with credentials for
+    /// <paramref name="transport"/>: on <see cref="Transport.Http"/>,
+    /// <paramref name="requestOverride"/> (extracted per-request from the
+    /// caller's own headers — see
+    /// <c>Http/RequestCredentialProvider.cs</c>) is the *only* source
+    /// ever consulted, since HTTP deployments must never leak the
+    /// operator's local config/keychain secrets to a caller who didn't
+    /// supply their own; a null override is a hard error, not a
+    /// fallback. On <see cref="Transport.Stdio"/>,
+    /// <paramref name="requestOverride"/> is ignored and behavior is
+    /// unchanged from before HTTP-transport support existed:
+    /// <see cref="GetCredentialsAsync"/> (config cascade + keychain).
+    ///
+    /// API-key placement (header vs. query, and the header/param name)
+    /// defaults to an <c>X-Api-Key</c> header here; a scheme declaring a
+    /// different location is one of Story C6's api-client
+    /// responsibilities to refine, not this manager's —
+    /// <paramref name="requestOverride"/>'s
+    /// <c>request_header_name</c>/<c>request_header_value</c> pair is
+    /// the one exception, since the HTTP path already knows the scheme's
+    /// declared header name at generation time.
     /// </summary>
     public async Task<Dictionary<string, string>> ApplyAuthHeadersAsync(
-        Dictionary<string, string> headers, string method, string url, CancellationToken cancellationToken = default)
+        Dictionary<string, string> headers,
+        string method,
+        string url,
+        Transport transport,
+        RequestCredentials? requestOverride = null,
+        CancellationToken cancellationToken = default)
     {
-        var credentials = await GetCredentialsAsync(cancellationToken);
+
+        Dictionary<string, string> credentials;
+        if (transport == Transport.Http)
+        {
+            if (requestOverride is null)
+            {
+                throw new AuthException(
+                    "no credentials were supplied on this HTTP request; local config/env/keychain is " +
+                    "never used as a fallback over HTTP transport");
+            }
+            credentials = requestOverride.ToCredentialsMap();
+        }
+        else
+        {
+            credentials = await GetCredentialsAsync(cancellationToken);
+        }
 
         var updated = new Dictionary<string, string>(headers);
-        if (credentials.TryGetValue("authorization_header", out var authHeader))
+        if (credentials.TryGetValue("request_header_name", out var requestHeaderName))
+        {
+            updated[requestHeaderName] = credentials.GetValueOrDefault("request_header_value", string.Empty);
+        }
+        else if (credentials.TryGetValue("authorization_header", out var authHeader))
         {
             updated["Authorization"] = authHeader;
         }

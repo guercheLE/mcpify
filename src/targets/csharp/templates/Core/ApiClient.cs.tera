@@ -7,6 +7,11 @@ public static partial class ServiceCollectionExtensions
 {
     static partial void AddApiClient(IServiceCollection services)
     {
+        // ApiClient's constructor takes IHttpClientFactory — never
+        // registered anywhere else in this project, so every call to the
+        // `call` tool (any transport) would fail to resolve it without
+        // this.
+        services.AddHttpClient();
         services.AddSingleton<ApiClient>();
         services.AddSingleton<PopulateEmbeddingsService>();
     }

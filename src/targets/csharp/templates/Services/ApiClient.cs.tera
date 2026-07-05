@@ -31,6 +31,7 @@ public sealed class ApiClient(
     public async Task<JsonNode?> ExecuteAsync(
         EndpointRecord endpoint,
         Dictionary<string, JsonNode?> args,
+        RequestCredentials? requestOverride = null,
         CancellationToken cancellationToken = default)
     {
         var query = PickByLocation(endpoint, args, "query");
@@ -42,7 +43,8 @@ public sealed class ApiClient(
         {
             headers[name] = value;
         }
-        headers = await authManager.ApplyAuthHeadersAsync(headers, endpoint.Method, url, cancellationToken);
+        headers = await authManager.ApplyAuthHeadersAsync(
+            headers, endpoint.Method, url, options.Value.Transport, requestOverride, cancellationToken);
 
         var body = args.GetValueOrDefault("body");
 

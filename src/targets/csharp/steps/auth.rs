@@ -10,6 +10,10 @@ use crate::targets::csharp::render::render_engine;
 const SHARED_FILES: &[(&str, &str)] = &[
     ("Auth/IAuthStrategy.cs.tera", "Auth/IAuthStrategy.cs"),
     ("Auth/AuthErrors.cs.tera", "Auth/AuthErrors.cs"),
+    (
+        "Auth/RequestCredentials.cs.tera",
+        "Auth/RequestCredentials.cs",
+    ),
     ("Auth/AuthManager.cs.tera", "Auth/AuthManager.cs"),
     (
         "Auth/Strategies/StubAuthStrategy.cs.tera",
@@ -80,7 +84,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::auth_profile::AuthSchemeDescriptor;
+    use crate::auth_profile::{AuthSchemeDescriptor, default_location_for};
 
     fn ctx_with_schemes(
         output_dir: PathBuf,
@@ -103,6 +107,7 @@ mod tests {
         AuthSchemeDescriptor {
             name: name.to_string(),
             kind,
+            location: default_location_for(kind),
         }
     }
 
@@ -131,6 +136,7 @@ mod tests {
         for expected in [
             "Auth/IAuthStrategy.cs",
             "Auth/AuthErrors.cs",
+            "Auth/RequestCredentials.cs",
             "Auth/AuthManager.cs",
             "Auth/Strategies/StubAuthStrategy.cs",
             "Core/AuthStrategies.cs",

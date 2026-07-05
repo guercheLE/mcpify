@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using {{ namespace }}.Core;
 using {{ namespace }}.Data;
+using {{ namespace }}.Http;
 using {{ namespace }}.Services;
 using {{ namespace }}.Validation;
 
@@ -51,6 +52,7 @@ public static class McpTools
         SqliteVecStore store,
         ApiClient apiClient,
         IOptions<McpifyOptions> options,
+        IRequestCredentialProvider credentialProvider,
         [Description("The operationId to invoke")] string operationId,
         [Description("JSON object of arguments for the operation")] string args)
     {
@@ -61,7 +63,11 @@ public static class McpTools
         Validator.ValidateInput(options.Value.ApiVersion, operationId, argsNode);
 
         var argsDict = argsNode.ToDictionary(kv => kv.Key, kv => kv.Value);
-        var response = await apiClient.ExecuteAsync(endpoint, argsDict);
+        // HTTP transport only: credentialProvider resolves this call's own
+        // request credentials from ASP.NET Core's per-request DI scope —
+        // null on stdio (or the bundled CLI's direct in-process calls),
+        // where there's no HttpContext at all.
+        var response = await apiClient.ExecuteAsync(endpoint, argsDict, credentialProvider.GetOverride());
 
         Validator.ValidateOutput(options.Value.ApiVersion, operationId, response);
         return response?.ToJsonString() ?? "null";

@@ -1,28 +1,45 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
+using {{ namespace }}.Auth;
+using {{ namespace }}.Core;
 
 namespace {{ namespace }}.Http;
 
 /// <summary>
-/// Requests from localhost get relaxed auth requirements (see
-/// <see cref="LocalhostDetector"/>); everything else must carry an
-/// `Authorization` header on `/mcp` — enforced here, in front of the
-/// mounted MCP endpoint, since this project's auth policy isn't the MCP
-/// SDK's concern.
+/// Requests from localhost get a relaxed *gate* (see
+/// <see cref="LocalhostDetector"/>) — no 401 for a missing credential, so
+/// `curl localhost` keeps working without any header for quick local
+/// testing. But this gate is a coarse pre-flight check only: the
+/// *actual* credential forwarded to the facaded API is extracted
+/// independently, per tool call, via
+/// <see cref="HttpRequestCredentialProvider"/> — ASP.NET Core resolves
+/// each incoming HTTP request (including the MCP SDK's own tool-call
+/// dispatch through <c>MapMcp</c>) from its own per-request DI scope, so
+/// <see cref="Microsoft.AspNetCore.Http.IHttpContextAccessor"/> correctly
+/// reflects the request that's actually being handled, regardless of any
+/// internal session bookkeeping the MCP SDK does. HTTP transport never
+/// falls back to local config/keychain (see
+/// <see cref="AuthManager.ApplyAuthHeadersAsync"/>), so a localhost
+/// caller with no header simply gets a clear per-call error from the
+/// `call` tool instead of a 401 here — never a silent leak of the
+/// operator's own configured secret.
 /// </summary>
-public sealed class AuthGateMiddleware(RequestDelegate next, Metrics metrics)
+public sealed class AuthGateMiddleware(RequestDelegate next, Metrics metrics, IOptions<McpifyOptions> options)
 {
     public async Task InvokeAsync(HttpContext context)
     {
         metrics.Increment("http_requests_total");
 
         var relaxed = LocalhostDetector.IsLocalhost(context.Connection.RemoteIpAddress?.ToString());
-        if (!relaxed &&
-            context.Request.Path.StartsWithSegments("/mcp") &&
-            AuthExtractor.ExtractAuthorizationHeader(context.Request.Headers) is null)
+        if (!relaxed && context.Request.Path.StartsWithSegments("/mcp"))
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsJsonAsync(new { error = "missing Authorization header" });
-            return;
+            var (headerLocation, headerName) = AuthManager.HeaderLocationFor(options.Value.AuthMethod);
+            if (AuthExtractor.ExtractRequestCredentials(context.Request.Headers, headerLocation, headerName) is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(new { error = "missing or invalid credentials for this API's auth method" });
+                return;
+            }
         }
 
         await next(context);

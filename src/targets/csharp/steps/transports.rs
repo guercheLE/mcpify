@@ -24,6 +24,10 @@ const FILES: &[(&str, &str)] = &[
     ("Http/AuthExtractor.cs.tera", "Http/AuthExtractor.cs"),
     ("Http/Metrics.cs.tera", "Http/Metrics.cs"),
     (
+        "Http/RequestCredentialProvider.cs.tera",
+        "Http/RequestCredentialProvider.cs",
+    ),
+    (
         "Http/AuthGateMiddleware.cs.tera",
         "Http/AuthGateMiddleware.cs",
     ),

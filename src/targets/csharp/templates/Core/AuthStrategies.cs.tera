@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using {{ namespace }}.Auth;
 using {{ namespace }}.Auth.Strategies;
+using {{ namespace }}.Http;
 
 namespace {{ namespace }}.Core;
 
@@ -25,6 +27,21 @@ public static partial class ServiceCollectionExtensions
 {%- for method in auth_methods %}
         services.AddKeyedSingleton<IAuthStrategy, {{ method.class_name }}AuthStrategy>(AuthMethod.{{ method.class_name }});
 {%- endfor %}
+        // The container built from this collection implements
+        // IKeyedServiceProvider automatically (.NET 8+), but that alone
+        // doesn't make it *resolvable* as a constructor-injected
+        // dependency — AuthManager takes IKeyedServiceProvider directly,
+        // so it must be registered explicitly too.
+        services.AddSingleton<IKeyedServiceProvider>(sp => (IKeyedServiceProvider)sp);
         services.AddSingleton<AuthManager>();
+
+        // HTTP transport only: IHttpContextAccessor is safe to register
+        // even for the stdio/CLI hosts that also call AddMcpifyServices —
+        // it only ever resolves a non-null HttpContext from within
+        // ASP.NET Core's own per-request pipeline (MapMcp's tool-call
+        // dispatch included), so HttpRequestCredentialProvider correctly
+        // reports "no override" everywhere else.
+        services.AddHttpContextAccessor();
+        services.AddScoped<IRequestCredentialProvider, HttpRequestCredentialProvider>();
     }
 }

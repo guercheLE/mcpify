@@ -191,6 +191,7 @@ mod tests {
             vec![AuthSchemeDescriptor {
                 name: "oauth2".to_string(),
                 kind: AuthSchemeKind::OAuth2,
+                location: None,
             }],
         );
 
