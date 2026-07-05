@@ -31,7 +31,14 @@ pub async fn run_shared_pipeline(
     publish_registry: bool,
     version_label: &str,
 ) -> Result<GeneratorContext> {
+    if crate::progress::enabled() {
+        eprintln!("==> Fetching OpenAPI spec from {input}");
+    }
     let doc = openapi::ingest(input).await?;
+
+    if crate::progress::enabled() {
+        eprintln!("==> Preparing output directory {}", output_dir.display());
+    }
     let output_dir_preexisted = dir_guard::check_output_dir(&output_dir, force).await?;
 
     let result = assemble_context(
@@ -64,8 +71,18 @@ async fn assemble_context(
     version_label: &str,
     doc: &OpenAPI,
 ) -> Result<GeneratorContext> {
+    if crate::progress::enabled() {
+        eprintln!("==> Profiling auth schemes");
+    }
     let auth_schemes = auth_profile::profile_auth(doc, interactive_auth_prompt).await?;
+
+    if crate::progress::enabled() {
+        eprintln!("==> Normalizing operations");
+    }
     let normalized_operations = normalize_operations(doc);
+    if crate::progress::enabled() {
+        eprintln!("==> Found {} operations", normalized_operations.len());
+    }
 
     let ctx = GeneratorContext {
         publish_registry,
@@ -79,6 +96,9 @@ async fn assemble_context(
         version_label: version_label.to_string(),
     };
 
+    if crate::progress::enabled() {
+        eprintln!("==> Assembling mcp_store.db");
+    }
     db::assemble_store(&ctx).await?;
 
     Ok(ctx)

@@ -12,6 +12,11 @@ async fn main() {
     #[cfg(feature = "profiling")]
     console_subscriber::init();
 
+    // Only the real CLI binary gets progress output — every unit test and
+    // `tests/*.rs` integration test calls into the library directly and
+    // never reaches this line, so `progress::enabled()` stays `false` there.
+    mcpify::progress::init(true);
+
     if let Err(err) = run().await {
         eprintln!("error: {err:#}");
         std::process::exit(1);
@@ -68,5 +73,14 @@ async fn run_generate(cli: Cli) -> anyhow::Result<()> {
 
     target.execute(&ctx).await?;
 
-    add_version::seed::seed_ledger_after_generate(&ctx, &args.language, &args.version).await
+    add_version::seed::seed_ledger_after_generate(&ctx, &args.language, &args.version).await?;
+
+    if mcpify::progress::enabled() {
+        eprintln!(
+            "==> Generated project ready at {}",
+            ctx.output_dir.display()
+        );
+    }
+
+    Ok(())
 }

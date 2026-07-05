@@ -5,5 +5,6 @@ pub mod context;
 pub mod db;
 pub mod openapi;
 pub mod pipeline;
+pub mod progress;
 pub mod schemas_asset;
 pub mod targets;

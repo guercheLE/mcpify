@@ -3,10 +3,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::context::GeneratorContext;
+use crate::progress;
 
 /// Generous relative to other targets' install/build budgets: `dotnet
 /// restore` fetches this target's full toolchain (the MCP SDK, ONNX
@@ -79,25 +81,68 @@ async fn run_dotnet_command(cwd: &Path, args: &[&str], label: &str) -> Result<()
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let child = command
+    if progress::enabled() {
+        eprintln!("  -> running '{label}'...");
+    }
+
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to spawn '{label}' in '{}'", cwd.display()))?;
 
-    let output = timeout(DOTNET_TIMEOUT, child.wait_with_output())
-        .await
-        .with_context(|| format!("'{label}' timed out after {}s", DOTNET_TIMEOUT.as_secs()))?
-        .with_context(|| format!("failed to run '{label}'"))?;
+    let mut stdout_pipe = child.stdout.take().expect("stdout is piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr is piped");
 
-    if !output.status.success() {
-        let stdout = tail(&String::from_utf8_lossy(&output.stdout), 4000);
-        let stderr = tail(&String::from_utf8_lossy(&output.stderr), 4000);
+    let (stdout, stderr, status) = timeout(DOTNET_TIMEOUT, async {
+        tokio::try_join!(
+            drain(&mut stdout_pipe, false),
+            drain(&mut stderr_pipe, true),
+            child.wait(),
+        )
+    })
+    .await
+    .with_context(|| format!("'{label}' timed out after {}s", DOTNET_TIMEOUT.as_secs()))?
+    .with_context(|| format!("failed to run '{label}'"))?;
+
+    if !status.success() {
+        let stdout = tail(&String::from_utf8_lossy(&stdout), 4000);
+        let stderr = tail(&String::from_utf8_lossy(&stderr), 4000);
         bail!(
             "'{label}' failed (exit {:?})\n--- stdout (tail) ---\n{stdout}\n--- stderr (tail) ---\n{stderr}",
-            output.status.code(),
+            status.code(),
         );
     }
 
     Ok(())
+}
+
+/// Reads `pipe` to completion, echoing every chunk to the real stdout/
+/// stderr as it arrives when progress output is enabled (so a human
+/// watching `mcpify` run sees `dotnet`'s own output live instead of a
+/// multi-minute silence), while always accumulating the full bytes —
+/// mirrors `Child::wait_with_output()`'s capture semantics, just
+/// observable in real time too.
+async fn drain(
+    pipe: &mut (impl tokio::io::AsyncRead + Unpin),
+    is_stderr: bool,
+) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = pipe.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        if progress::enabled() {
+            use std::io::Write;
+            if is_stderr {
+                std::io::stderr().write_all(&chunk[..n])?;
+            } else {
+                std::io::stdout().write_all(&chunk[..n])?;
+            }
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    Ok(buf)
 }
 
 /// Last `max_chars` characters of `s`, cut on a `char` boundary rather than

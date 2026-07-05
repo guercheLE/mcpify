@@ -27,14 +27,33 @@ pub trait McpServerTargetGenerator: Send + Sync {
     /// (or don't run) is not a successful `execute()` (PRD REQ-2.5.1).
     async fn run_generated_tests(&self, ctx: &GeneratorContext) -> Result<()>;
 
+    /// Prints `"==> [name] Step n/7: description"` when progress output is
+    /// enabled (real CLI runs only, see `crate::progress`) so a long
+    /// `execute()` shows concrete progress instead of going silent.
+    fn progress_step(&self, step: u8, description: &str) {
+        if crate::progress::enabled() {
+            eprintln!("==> [{}] Step {step}/7: {description}", self.name());
+        }
+    }
+
     async fn execute(&self, ctx: &GeneratorContext) -> Result<()> {
         let result = async {
+            self.progress_step(1, "Bootstrapping project");
             self.bootstrap_project(ctx).await?;
+            self.progress_step(2, "Generating enterprise scaffolding");
             self.generate_enterprise_scaffolding(ctx).await?;
+            self.progress_step(3, "Generating auth strategies");
             self.generate_auth_strategies(ctx).await?;
+            self.progress_step(4, "Generating transports and roles");
             self.generate_transports_and_roles(ctx).await?;
+            self.progress_step(5, "Generating MCP tools");
             self.generate_mcp_tools(ctx).await?;
+            self.progress_step(6, "Generating setup wizard and tests");
             self.generate_setup_wizard_and_tests(ctx).await?;
+            self.progress_step(
+                7,
+                "Running generated project's test suite (installs dependencies, builds, and runs tests — this can take several minutes)",
+            );
             self.run_generated_tests(ctx).await
         }
         .await;
