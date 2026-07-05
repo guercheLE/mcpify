@@ -45,16 +45,17 @@ const FILES: &[(&str, &str)] = &[
 ];
 
 pub(crate) const GENERATED_SCHEMAS_RELATIVE_PATH: &str =
-    "internal/validation/generated_schemas.json";
+    "internal/validation/generated_schemas.json.zst";
 
 /// `generate_mcp_tools` (architecture.md §1, step 9): the data-access
 /// layer, embedding/vector-store/API-client services, validator, and 3
 /// tool packages against `mcp_store.db` and the target-API HTTP client,
-/// plus the `generated_schemas.json` asset `internal/validation/validator.go`
-/// embeds via `go:embed` at compile time (rather than reading it from disk
-/// at runtime — Go's `go:embed` directive is the natural fit here, closer
-/// to `targets::rust`'s `include_str!` approach than
-/// `targets::python`/`targets::csharp`'s runtime file reads).
+/// plus the zstd-compressed `generated_schemas.json.zst` asset
+/// `internal/validation/validator.go` embeds via `go:embed` at compile time
+/// (rather than reading it from disk at runtime — Go's `go:embed` directive
+/// is the natural fit here, closer to `targets::rust`'s `include_bytes!`
+/// approach than `targets::python`/`targets::csharp`'s runtime file reads),
+/// decompressing it once into memory the first time it's needed.
 ///
 /// This is also where the embeddings decision (v5-implementation-plan.md's
 /// open decision #5) actually gets proven: `services/embedding.go`
@@ -155,10 +156,11 @@ mod tests {
 
         generate_mcp_tools(&ctx).await.unwrap();
 
-        let contents = tokio::fs::read_to_string(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH))
+        let contents = tokio::fs::read(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH))
             .await
             .unwrap();
-        let parsed: Value = serde_json::from_str(&contents).unwrap();
+        let decompressed = zstd::decode_all(contents.as_slice()).unwrap();
+        let parsed: Value = serde_json::from_slice(&decompressed).unwrap();
 
         assert_eq!(parsed["listWidgets"]["inputSchema"]["type"], "object");
         assert_eq!(parsed["listWidgets"]["outputSchema"]["type"], "array");
@@ -172,10 +174,11 @@ mod tests {
 
         generate_mcp_tools(&ctx).await.unwrap();
 
-        let contents = tokio::fs::read_to_string(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH))
+        let contents = tokio::fs::read(dir.join(GENERATED_SCHEMAS_RELATIVE_PATH))
             .await
             .unwrap();
-        let parsed: Value = serde_json::from_str(&contents).unwrap();
+        let decompressed = zstd::decode_all(contents.as_slice()).unwrap();
+        let parsed: Value = serde_json::from_slice(&decompressed).unwrap();
         assert_eq!(parsed, Value::Object(Map::new()));
     }
 }

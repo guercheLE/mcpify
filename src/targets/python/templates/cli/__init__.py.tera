@@ -135,7 +135,7 @@ async def _run_harness_server() -> None:
     health_task = asyncio.create_task(health_checks.start())
 
     auth_manager = AuthManager(config_value.auth_method)
-    mcp = build_server(db_path, config_value, auth_manager)
+    mcp = build_server(config_value.api_version, config_value, auth_manager)
 
     try:
         if config_value.transport is Transport.HTTP:

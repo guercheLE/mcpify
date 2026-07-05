@@ -68,6 +68,47 @@ export function closeStore(store: Store): void {
   store.db.close();
 }
 
+const cachedStores = new Map<string, Store>();
+
+/**
+ * Returns a process-wide, in-memory-backed store for `apiVersion`: on
+ * first access, opens the on-disk file read-only via `openStore`, copies
+ * its entire contents into memory (via `better-sqlite3`'s `serialize()`,
+ * which better-sqlite3's `Database` constructor can load directly from a
+ * `Buffer`), then closes the on-disk connection immediately — so its
+ * file handle/lock is held only for that brief copy, not for the
+ * process's lifetime. This means an external process (a fresh
+ * `populate-embeddings` run, a deployment replacing the file) can update
+ * `mcp_store.db` without hitting "database is locked" against a live
+ * server, at the cost of the running process only picking up such an
+ * update on its next restart.
+ *
+ * Unlike `openStore`, the returned store must not be passed to
+ * `closeStore` by the caller — it's cached and reused for the rest of
+ * the process's lifetime.
+ */
+export function getCachedStore(apiVersion: string): Store {
+  const cached = cachedStores.get(apiVersion);
+  if (cached) {
+    return cached;
+  }
+
+  const diskStore = openStore(apiVersion);
+  const buffer = diskStore.db.serialize();
+  closeStore(diskStore);
+
+  const db = new Database(buffer);
+  sqliteVec.load(db);
+  const store: Store = {
+    db,
+    async healthCheck() {
+      db.prepare('SELECT 1 FROM endpoints LIMIT 1').get();
+    },
+  };
+  cachedStores.set(apiVersion, store);
+  return store;
+}
+
 interface EndpointRow {
   operation_id: string;
   path: string;

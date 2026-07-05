@@ -14,7 +14,7 @@ import { logger } from './core/logger.js';
 import { connectStdio, createMcpServer } from './core/mcp-server.js';
 import { installShutdownHandlers, onShutdown } from './core/shutdown-handler.js';
 import { initTracing, shutdownTracing } from './core/tracing.js';
-import { closeStore, openStore } from './data/store-repository.js';
+import { getCachedStore } from './data/store-repository.js';
 import { startHttpServer } from './http/http-server.js';
 import { registerTools } from './tools/register-tools.js';
 
@@ -32,11 +32,10 @@ export async function main(): Promise<void> {
   const registry = new ComponentRegistry();
   const healthChecks = new HealthCheckManager(registry);
 
-  const store = openStore(config.api_version);
+  const store = getCachedStore(config.api_version);
   healthChecks.register('store', async () => {
     await store.healthCheck();
   });
-  onShutdown(() => closeStore(store));
 
   const authManager = new AuthManager(config.auth_method);
 

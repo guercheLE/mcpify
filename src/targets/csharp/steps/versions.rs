@@ -20,7 +20,7 @@ const VERSIONS_COMMAND_PATH: &str = "Cli/VersionsCommand.cs";
 /// transports, and tests are all version-independent and are never
 /// re-rendered by `add-version`.
 ///
-/// `Project.csproj`'s `<EmbeddedResource Include="Validation\GeneratedSchemas*.json" />`
+/// `Project.csproj`'s `<EmbeddedResource Include="Validation\GeneratedSchemas*.json.zst" />`
 /// glob picks up a newly added version's schemas file on the next build
 /// without needing this project file re-rendered — but because
 /// `Validator.cs`'s schemas are still baked into the compiled assembly as
@@ -147,7 +147,7 @@ mod tests {
             "11.3".to_string(),
             VersionEntry {
                 db_file: "mcp_store.db".to_string(),
-                schemas_file: "Validation/GeneratedSchemas.json".to_string(),
+                schemas_file: "Validation/GeneratedSchemas.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 0,
             },
@@ -156,7 +156,7 @@ mod tests {
             "11.2".to_string(),
             VersionEntry {
                 db_file: "mcp_store_v11.2.db".to_string(),
-                schemas_file: "Validation/GeneratedSchemas_v11.2.json".to_string(),
+                schemas_file: "Validation/GeneratedSchemas_v11.2.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 1,
             },
@@ -207,8 +207,8 @@ mod tests {
         let validator = tokio::fs::read_to_string(dir.path().join(VALIDATOR_PATH))
             .await
             .unwrap();
-        assert!(validator.contains("[\"11.3\"] = \"GeneratedSchemas.json\""));
-        assert!(validator.contains("[\"11.2\"] = \"GeneratedSchemas_v11.2.json\""));
+        assert!(validator.contains("[\"11.3\"] = \"GeneratedSchemas.json.zst\""));
+        assert!(validator.contains("[\"11.2\"] = \"GeneratedSchemas_v11.2.json.zst\""));
 
         let setup_wizard = tokio::fs::read_to_string(dir.path().join(SETUP_WIZARD_PATH))
             .await
@@ -228,7 +228,7 @@ mod tests {
         let entries = vec![VersionEntryView::from_project_relative_paths(
             "default",
             "mcp_store.db",
-            "Validation/GeneratedSchemas.json",
+            "Validation/GeneratedSchemas.json.zst",
         )];
         let body = setup_wizard_body(&entries, "default");
         assert!(body.contains("return \"default\";"));

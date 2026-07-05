@@ -3,7 +3,7 @@
 import type { Command } from 'commander';
 
 import { loadConfig } from '../core/config-manager.js';
-import { closeStore, openStore } from '../data/store-repository.js';
+import { getCachedStore } from '../data/store-repository.js';
 import { searchOperations } from '../tools/search-tool.js';
 
 export function registerSearchCommand(program: Command): void {
@@ -13,9 +13,8 @@ export function registerSearchCommand(program: Command): void {
     .option('-l, --limit <n>', 'maximum number of results', '5')
     .action(async (query: string, options: { limit: string }) => {
       const config = loadConfig();
-      const store = openStore(config.api_version);
+      const store = getCachedStore(config.api_version);
       const results = await searchOperations(store, query, Number(options.limit));
       console.log(JSON.stringify(results, null, 2));
-      closeStore(store);
     });
 }

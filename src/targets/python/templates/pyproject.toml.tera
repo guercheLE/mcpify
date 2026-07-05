@@ -15,6 +15,7 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "jsonschema>=4.23",
+  "zstandard>=0.23",
   "structlog>=24.4",
   "opentelemetry-sdk>=1.27",
   "opentelemetry-exporter-otlp>=1.27",

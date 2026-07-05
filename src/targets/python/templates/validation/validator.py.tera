@@ -2,9 +2,17 @@
 
 `jsonschema`-based input/output validation. Schemas themselves are NOT
 embedded in this file — they're loaded from a per-version co-located
-`generated_schemas(_v<label>).json` asset (written directly by the Rust
+`generated_schemas(_v<label>).json.zst` asset (written directly by the Rust
 generator, not templated, keeping this file's size independent of how many
 operations the source spec declares), keyed by the active `api_version`.
+
+The asset is zstd-compressed: every operation's schema embeds a full copy
+of the spec's `$defs` library (a deliberate generator tradeoff — see
+`mcpify`'s `openapi::schema_resolve` — simpler than cross-schema `$ref`
+resolution, at the cost of file size), and a long-distance-matching
+compressor collapses that duplication (measured ~190 MB down to tens of KB
+on a real spec) without requiring any change to the JSON Schema shape
+itself. Decompressed once per version, lazily, into the cache below.
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import zstandard
 
 from ..core.errors import ValidationError
 
@@ -35,8 +44,9 @@ def _schemas_by_operation(api_version: str) -> dict[str, dict[str, Any]]:
     if file_name is None:
         return {}
     try:
-        return json.loads((_SCHEMAS_DIR / file_name).read_text())
-    except (OSError, json.JSONDecodeError):
+        compressed = (_SCHEMAS_DIR / file_name).read_bytes()
+        return json.loads(zstandard.ZstdDecompressor().decompress(compressed))
+    except (OSError, zstandard.ZstdError, json.JSONDecodeError):
         return {}
 
 

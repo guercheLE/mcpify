@@ -68,11 +68,11 @@ fn store_body(entries: &[VersionEntryView]) -> String {
 
 fn validator_body(entries: &[VersionEntryView]) -> String {
     let mut body = String::from(
-        "fn schemas_json_for(api_version: &str) -> Option<&'static str> {\n    match api_version {\n",
+        "fn schemas_zst_for(api_version: &str) -> Option<&'static [u8]> {\n    match api_version {\n",
     );
     for entry in entries {
         body.push_str(&format!(
-            "        \"{}\" => Some(include_str!(\"{}\")),\n",
+            "        \"{}\" => Some(include_bytes!(\"{}\")),\n",
             entry.label, entry.schemas_file
         ));
     }
@@ -144,7 +144,7 @@ mod tests {
             "11.3".to_string(),
             VersionEntry {
                 db_file: "mcp_store.db".to_string(),
-                schemas_file: "src/validation/generated_schemas.json".to_string(),
+                schemas_file: "src/validation/generated_schemas.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 0,
             },
@@ -153,7 +153,7 @@ mod tests {
             "11.2".to_string(),
             VersionEntry {
                 db_file: "mcp_store_v11.2.db".to_string(),
-                schemas_file: "src/validation/generated_schemas_v11.2.json".to_string(),
+                schemas_file: "src/validation/generated_schemas_v11.2.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 1,
             },
@@ -204,10 +204,12 @@ mod tests {
         let validator = tokio::fs::read_to_string(dir.path().join(VALIDATOR_PATH))
             .await
             .unwrap();
-        assert!(validator.contains("\"11.3\" => Some(include_str!(\"generated_schemas.json\"))"));
         assert!(
-            validator.contains("\"11.2\" => Some(include_str!(\"generated_schemas_v11.2.json\"))")
+            validator.contains("\"11.3\" => Some(include_bytes!(\"generated_schemas.json.zst\"))")
         );
+        assert!(validator.contains(
+            "\"11.2\" => Some(include_bytes!(\"generated_schemas_v11.2.json.zst\"))"
+        ));
 
         let setup_wizard = tokio::fs::read_to_string(dir.path().join(SETUP_WIZARD_PATH))
             .await

@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 
 import { AuthManager } from '../auth/auth-manager.js';
 import { loadConfig } from '../core/config-manager.js';
-import { closeStore, openStore } from '../data/store-repository.js';
+import { getCachedStore } from '../data/store-repository.js';
 import { callOperation } from '../tools/call-tool.js';
 
 export function registerCallCommand(program: Command): void {
@@ -14,11 +14,10 @@ export function registerCallCommand(program: Command): void {
     .option('-a, --args <json>', 'operation arguments as a JSON object', '{}')
     .action(async (operationId: string, options: { args: string }) => {
       const config = loadConfig();
-      const store = openStore(config.api_version);
+      const store = getCachedStore(config.api_version);
       const authManager = new AuthManager(config.auth_method);
       const args = JSON.parse(options.args) as Record<string, unknown>;
       const result = await callOperation(store, config, authManager, operationId, args);
       console.log(JSON.stringify(result, null, 2));
-      closeStore(store);
     });
 }

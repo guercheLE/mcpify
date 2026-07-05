@@ -24,6 +24,7 @@ openapiv3 = "2"
 indexmap = "2"
 rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
 sqlite-vec = "0.1"
+zstd = "0.13"
 tera = "1"
 rust-embed = "8"
 inquire = "0.7"

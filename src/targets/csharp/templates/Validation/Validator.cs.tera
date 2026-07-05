@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Json.Schema;
+using ZstdSharp;
 using {{ namespace }}.Core;
 
 namespace {{ namespace }}.Validation;
@@ -9,12 +10,21 @@ namespace {{ namespace }}.Validation;
 /// <summary>
 /// `JsonSchema.Net`-based input/output validation. Schemas themselves are
 /// NOT embedded in this file — they're loaded from the co-located
-/// `GeneratedSchemas.json` embedded resource (written directly by the
+/// `GeneratedSchemas.json.zst` embedded resource (written directly by the
 /// Rust generator, not templated, keeping this file's size independent
 /// of how many operations the source spec declares) — mirrors
-/// `targets::rust::templates::validation::validator.rs`'s `include_str!`
+/// `targets::rust::templates::validation::validator.rs`'s `include_bytes!`
 /// approach: baked into the compiled assembly rather than read from disk
 /// at runtime.
+///
+/// The asset is zstd-compressed: every operation's schema embeds a full
+/// copy of the spec's `$defs` library (a deliberate generator tradeoff —
+/// see `mcpify`'s `openapi::schema_resolve` — simpler than cross-schema
+/// `$ref` resolution, at the cost of file size), and a long-distance-
+/// matching compressor collapses that duplication (measured ~190 MB down
+/// to tens of KB on a real spec) without requiring any change to the JSON
+/// Schema shape itself. Decompressed once per version, lazily, in
+/// <see cref="LoadSchemas"/>.
 /// </summary>
 public static class Validator
 {
@@ -105,14 +115,18 @@ public static class Validator
         }
 
         using var stream = assembly.GetManifestResourceStream(resourceName)!;
+        using var decompressionStream = new DecompressionStream(stream);
         // Deliberately not disposed: `JsonSchema.Build` keeps a live
         // reference into this document's buffer rather than copying it,
         // so disposing here (even via `using`) throws
         // `ObjectDisposedException` the first time `Evaluate` runs after
         // `LoadSchemas` returns — the built schemas need this document to
         // stay alive for as long as `SchemasByVersion`'s cached entry does
-        // (the process lifetime).
-        var document = JsonDocument.Parse(stream);
+        // (the process lifetime). `JsonDocument.Parse` fully buffers the
+        // decompressed content before returning, so it's safe for
+        // `decompressionStream`/`stream` themselves to be disposed once
+        // this method returns.
+        var document = JsonDocument.Parse(decompressionStream);
 
         var result = new Dictionary<string, (JsonSchema, JsonSchema)>();
         foreach (var property in document.RootElement.EnumerateObject())

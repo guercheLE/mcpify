@@ -173,17 +173,20 @@ fn sibling_version_paths(ledger: &Ledger, label: &str) -> Result<(String, String
 pub(crate) fn sibling_path(canonical_relative_path: &str, label: &str) -> String {
     let path = Path::new(canonical_relative_path);
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
     let sanitized_label = sanitize_label_for_filename(label);
-    let file_name = if ext.is_empty() {
-        format!("{stem}_v{sanitized_label}")
-    } else {
-        format!("{stem}_v{sanitized_label}.{ext}")
+
+    // Split at the *first* `.`, not the last — `Path::file_stem`/`extension`
+    // only recognize the last one, which would turn a compound extension
+    // like `generated_schemas.json.zst` into `generated_schemas.json_v<label>.zst`
+    // instead of the intended `generated_schemas_v<label>.json.zst`.
+    let new_file_name = match file_name.split_once('.') {
+        Some((stem, ext)) => format!("{stem}_v{sanitized_label}.{ext}"),
+        None => format!("{file_name}_v{sanitized_label}"),
     };
     match parent {
-        Some(parent) => parent.join(file_name).to_string_lossy().replace('\\', "/"),
-        None => file_name,
+        Some(parent) => parent.join(new_file_name).to_string_lossy().replace('\\', "/"),
+        None => new_file_name,
     }
 }
 
@@ -216,6 +219,17 @@ mod tests {
         assert_eq!(
             sibling_path("src/validation/generated-schemas.json", "11.2"),
             "src/validation/generated-schemas_v11.2.json"
+        );
+    }
+
+    #[test]
+    fn sibling_path_inserts_label_before_a_compound_extension() {
+        // `Path::file_stem`/`extension` only recognize the last dot, which
+        // would otherwise turn this into
+        // `src/validation/generated_schemas.json_v11.2.zst`.
+        assert_eq!(
+            sibling_path("src/validation/generated_schemas.json.zst", "11.2"),
+            "src/validation/generated_schemas_v11.2.json.zst"
         );
     }
 

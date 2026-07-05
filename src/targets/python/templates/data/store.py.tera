@@ -9,6 +9,7 @@ mcp_store.db's schema before any generated code runs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -82,6 +83,43 @@ async def open_store_read_write(path: Path) -> AsyncIterator[aiosqlite.Connectio
         yield conn
     finally:
         await conn.close()
+
+
+_cached_connections: dict[str, aiosqlite.Connection] = {}
+_cached_connections_lock = asyncio.Lock()
+
+
+async def cached_store_connection(api_version: str) -> aiosqlite.Connection:
+    """Returns a process-wide, in-memory-backed connection for
+    `api_version`: on first access, opens the on-disk file read-only via
+    `open_store`, copies its entire contents into a fresh `:memory:`
+    connection (via SQLite's backup API), then closes the on-disk
+    connection immediately — so its file handle/lock is held only for
+    that brief copy, not for the process's lifetime. This means an
+    external process (a fresh `populate_embeddings` run, a deployment
+    replacing the file) can update `mcp_store.db` without hitting
+    "database is locked" against a live server, at the cost of the
+    running process only picking up such an update on its next restart.
+
+    Unlike `open_store`, this is *not* an `@asynccontextmanager` — the
+    returned connection is cached and reused for the rest of the
+    process's lifetime, so callers must not close it.
+    """
+    async with _cached_connections_lock:
+        cached = _cached_connections.get(api_version)
+        if cached is not None:
+            return cached
+
+        path = resolve_store_path(api_version)
+        mem_conn = await aiosqlite.connect(":memory:")
+        mem_conn.row_factory = aiosqlite.Row
+        await _load_vec_extension(mem_conn)
+
+        async with open_store(path) as disk_conn:
+            await disk_conn.backup(mem_conn)
+
+        _cached_connections[api_version] = mem_conn
+        return mem_conn
 
 
 @dataclass

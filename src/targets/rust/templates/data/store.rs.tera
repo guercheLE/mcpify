@@ -9,10 +9,13 @@
 // tables — mcpify's shared pipeline (Story 5/6) already wrote
 // mcp_store.db's schema before any generated code runs.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::sync::{Mutex, Once, OnceLock};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, Row};
 use serde::Serialize;
 
@@ -70,6 +73,56 @@ pub fn open_store_read_write(path: &Path) -> Result<Connection> {
     register_vec_extension();
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
         .with_context(|| format!("failed to open '{}'", path.display()))
+}
+
+/// Returns a process-wide, in-memory-backed connection for `api_version`:
+/// on first access, opens the on-disk file read-only via `open_store`,
+/// copies its entire contents into a fresh `:memory:` connection (via
+/// SQLite's backup API), then drops the on-disk connection immediately —
+/// so its file handle/lock is held only for that brief copy, not for the
+/// process's lifetime. This means an external process (a fresh
+/// `populate-embeddings` run, a deployment replacing the file) can update
+/// `mcp_store.db` without hitting "database is locked" against a live
+/// server, at the cost of the running process only picking up such an
+/// update on its next restart.
+///
+/// Returns the connection behind a `Mutex` rather than handing it out
+/// directly: callers must finish with the guard (and drop it) *before*
+/// any `.await` — `rusqlite::Connection` isn't `Sync`, so holding the
+/// guard across an await point would make the enclosing future
+/// non-`Send`, the same constraint `core/mcp_server.rs`'s tool handlers
+/// already respect for a plain `Connection`.
+pub fn cached_store_connection(api_version: &str) -> Result<&'static Mutex<Connection>> {
+    let path = resolve_store_path(api_version)?;
+    cached_in_memory_connection(api_version, &path)
+}
+
+/// Does the actual work for `cached_store_connection`, taking an explicit
+/// path (rather than resolving one from `api_version` itself) so it's
+/// testable against an arbitrary tempdir path — `cache_key` and `path`
+/// are separate parameters because two different `api_version`s should
+/// never collide in the process-wide cache even if (hypothetically) they
+/// resolved to the same file.
+fn cached_in_memory_connection(cache_key: &str, path: &Path) -> Result<&'static Mutex<Connection>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static Mutex<Connection>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    if let Some(conn) = cache.lock().unwrap().get(cache_key) {
+        return Ok(conn);
+    }
+
+    let disk_conn = open_store(path)?;
+    let mut mem_conn = Connection::open_in_memory()
+        .context("failed to open an in-memory SQLite connection")?;
+    Backup::new(&disk_conn, &mut mem_conn)
+        .context("failed to start SQLite backup into memory")?
+        .run_to_completion(i32::MAX, Duration::from_millis(0), None)
+        .with_context(|| format!("failed to back up '{}' into memory", path.display()))?;
+    drop(disk_conn);
+
+    let leaked: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(mem_conn)));
+    let mut cache = cache.lock().unwrap();
+    Ok(*cache.entry(cache_key.to_string()).or_insert(leaked))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -268,5 +321,58 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].operation_id, "listWidgets");
         assert!(results[0].similarity > 0.99);
+    }
+
+    #[test]
+    fn cached_in_memory_connection_serves_seeded_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp_store.db");
+        let _conn = seeded_store(&path);
+
+        let cached = cached_in_memory_connection("cached-serves-seeded-data", &path).unwrap();
+        let endpoint = get_endpoint(&cached.lock().unwrap(), "listWidgets")
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.path, "/widgets");
+
+        // vec0 search must also work against the in-memory copy —
+        // `register_vec_extension`'s `sqlite3_auto_extension` applies
+        // process-wide, so it isn't specific to file-backed connections.
+        let results = search_endpoints(&cached.lock().unwrap(), &[1.0, 0.0, 0.0, 0.0], 5).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].operation_id, "listWidgets");
+    }
+
+    #[test]
+    fn cached_in_memory_connection_holds_no_lingering_lock_on_the_disk_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp_store.db");
+        let _conn = seeded_store(&path);
+
+        let cached =
+            cached_in_memory_connection("cached-releases-disk-handle", &path).unwrap();
+
+        // If the disk connection were still open, removing the file out
+        // from under it would be the exact failure mode this fix exists
+        // to avoid.
+        std::fs::remove_file(&path).unwrap();
+
+        let endpoint = get_endpoint(&cached.lock().unwrap(), "listWidgets")
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.path, "/widgets");
+    }
+
+    #[test]
+    fn cached_in_memory_connection_reuses_the_same_connection_for_the_same_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp_store.db");
+        let _conn = seeded_store(&path);
+
+        let first = cached_in_memory_connection("cached-reuses-same-key", &path).unwrap()
+            as *const Mutex<Connection>;
+        let second = cached_in_memory_connection("cached-reuses-same-key", &path).unwrap()
+            as *const Mutex<Connection>;
+        assert_eq!(first, second, "expected the same cached connection, not a fresh backup");
     }
 }

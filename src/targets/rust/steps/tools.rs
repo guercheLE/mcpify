@@ -31,13 +31,13 @@ const FILES: &[(&str, &str)] = &[
     ("tools/call_tool.rs.tera", "src/tools/call_tool.rs"),
 ];
 
-pub(crate) const GENERATED_SCHEMAS_PATH: &str = "src/validation/generated_schemas.json";
+pub(crate) const GENERATED_SCHEMAS_PATH: &str = "src/validation/generated_schemas.json.zst";
 
 /// `generate_mcp_tools` (architecture.md §1, step 9): the data-access
 /// layer, embedding/API-client services, validator, and 3 tool modules
 /// against `mcp_store.db` and the target-API HTTP client, plus the
-/// `generated_schemas.json` asset `validation/validator.rs`'s
-/// `include_str!` bakes in at compile time.
+/// zstd-compressed `generated_schemas.json.zst` asset `validation/validator.rs`'s
+/// `include_bytes!` bakes in at compile time.
 pub async fn generate_mcp_tools(ctx: &GeneratorContext) -> Result<()> {
     let view = RsTemplateContext::from_context(ctx);
     let tera = render_engine()?;
@@ -121,10 +121,11 @@ mod tests {
 
         generate_mcp_tools(&ctx).await.unwrap();
 
-        let contents = tokio::fs::read_to_string(dir.path().join(GENERATED_SCHEMAS_PATH))
+        let contents = tokio::fs::read(dir.path().join(GENERATED_SCHEMAS_PATH))
             .await
             .unwrap();
-        let parsed: Value = serde_json::from_str(&contents).unwrap();
+        let decompressed = zstd::decode_all(contents.as_slice()).unwrap();
+        let parsed: Value = serde_json::from_slice(&decompressed).unwrap();
 
         assert_eq!(parsed["listWidgets"]["inputSchema"]["type"], "object");
         assert_eq!(parsed["listWidgets"]["outputSchema"]["type"], "array");
@@ -137,10 +138,11 @@ mod tests {
 
         generate_mcp_tools(&ctx).await.unwrap();
 
-        let contents = tokio::fs::read_to_string(dir.path().join(GENERATED_SCHEMAS_PATH))
+        let contents = tokio::fs::read(dir.path().join(GENERATED_SCHEMAS_PATH))
             .await
             .unwrap();
-        let parsed: Value = serde_json::from_str(&contents).unwrap();
+        let decompressed = zstd::decode_all(contents.as_slice()).unwrap();
+        let parsed: Value = serde_json::from_slice(&decompressed).unwrap();
         assert_eq!(parsed, Value::Object(Map::new()));
     }
 }

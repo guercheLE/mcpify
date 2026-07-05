@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from ..auth.auth_manager import AuthManager
-from ..data.store import get_endpoint, open_store
+from ..data.store import cached_store_connection, get_endpoint
 from ..tools.call_tool import call_operation
 from ..tools.get_tool import get_operation
 from ..tools.search_tool import search_operations
@@ -36,7 +35,7 @@ INSTRUCTIONS = (
 )
 
 
-def build_server(db_path: Path, config: Config, auth_manager: AuthManager) -> FastMCP:
+def build_server(api_version: str, config: Config, auth_manager: AuthManager) -> FastMCP:
     mcp = FastMCP("{{ display_name }}", instructions=INSTRUCTIONS)
 
     @mcp.tool(
@@ -44,14 +43,16 @@ def build_server(db_path: Path, config: Config, auth_manager: AuthManager) -> Fa
     )
     async def search(query: str, limit: int = 5) -> str:
         return await _run_tool(
-            "search", db_path, lambda conn: search_operations(conn, query, limit)
+            "search", api_version, lambda conn: search_operations(conn, query, limit)
         )
 
     @mcp.tool(
         description="Return the schema, path, method, and documentation for a specific {{ display_name }} operationId."
     )
     async def get(operation_id: str) -> str:
-        return await _run_tool("get", db_path, lambda conn: get_operation(conn, operation_id))
+        return await _run_tool(
+            "get", api_version, lambda conn: get_operation(conn, operation_id)
+        )
 
     @mcp.tool(
         description="Validate arguments, invoke a live {{ display_name }} API operation, and validate the response."
@@ -65,22 +66,22 @@ def build_server(db_path: Path, config: Config, auth_manager: AuthManager) -> Fa
                 endpoint, config, auth_manager, operation_id, arguments or {}
             )
 
-        return await _run_tool_async("call", db_path, run)
+        return await _run_tool_async("call", api_version, run)
 
     return mcp
 
 
-async def _run_tool(name: str, db_path: Path, fn: Any) -> str:
+async def _run_tool(name: str, api_version: str, fn: Any) -> str:
     async def run(conn: Any) -> Any:
         return await fn(conn)
 
-    return await _run_tool_async(name, db_path, run)
+    return await _run_tool_async(name, api_version, run)
 
 
-async def _run_tool_async(name: str, db_path: Path, fn: Any) -> str:
+async def _run_tool_async(name: str, api_version: str, fn: Any) -> str:
     started_at = time.monotonic()
-    async with open_store(db_path) as conn:
-        result = await fn(conn)
+    conn = await cached_store_connection(api_version)
+    result = await fn(conn)
     duration_ms = (time.monotonic() - started_at) * 1000
     log.info("tool executed", tool=name, duration_ms=round(duration_ms, 2))
     return json.dumps(result, indent=2)

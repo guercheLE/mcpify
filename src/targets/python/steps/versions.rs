@@ -134,7 +134,7 @@ mod tests {
             "11.3".to_string(),
             VersionEntry {
                 db_file: "mcp_store.db".to_string(),
-                schemas_file: "src/widget_mcp/validation/generated_schemas.json".to_string(),
+                schemas_file: "src/widget_mcp/validation/generated_schemas.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 0,
             },
@@ -143,7 +143,8 @@ mod tests {
             "11.2".to_string(),
             VersionEntry {
                 db_file: "mcp_store_v11.2.db".to_string(),
-                schemas_file: "src/widget_mcp/validation/generated_schemas_v11.2.json".to_string(),
+                schemas_file: "src/widget_mcp/validation/generated_schemas_v11.2.json.zst"
+                    .to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 1,
             },
@@ -197,8 +198,8 @@ mod tests {
         let validator = tokio::fs::read_to_string(package_root.join("validation/validator.py"))
             .await
             .unwrap();
-        assert!(validator.contains("\"11.3\": \"generated_schemas.json\""));
-        assert!(validator.contains("\"11.2\": \"generated_schemas_v11.2.json\""));
+        assert!(validator.contains("\"11.3\": \"generated_schemas.json.zst\""));
+        assert!(validator.contains("\"11.2\": \"generated_schemas_v11.2.json.zst\""));
 
         let setup_wizard = tokio::fs::read_to_string(package_root.join("cli/setup_wizard.py"))
             .await
@@ -218,7 +219,7 @@ mod tests {
         let entries = vec![VersionEntryView::from_project_relative_paths(
             "default",
             "mcp_store.db",
-            "src/widget_mcp/validation/generated_schemas.json",
+            "src/widget_mcp/validation/generated_schemas.json.zst",
         )];
         let body = setup_wizard_body(&entries, "default");
         assert!(body.contains("return \"default\""));

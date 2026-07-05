@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 
 from ..core.config import load_config
-from ..data.store import open_store, resolve_store_path
+from ..data.store import cached_store_connection
 from ..tools.get_tool import get_operation
 
 
 async def run(operation_id: str) -> None:
     config = load_config()
-    async with open_store(resolve_store_path(config.api_version)) as conn:
-        result = await get_operation(conn, operation_id)
+    conn = await cached_store_connection(config.api_version)
+    result = await get_operation(conn, operation_id)
     print(json.dumps(result, indent=2))

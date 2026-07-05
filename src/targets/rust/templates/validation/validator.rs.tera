@@ -2,13 +2,22 @@
 //
 // jsonschema-based input/output validation. Schemas themselves are NOT
 // embedded directly in this file's logic — they're loaded from a
-// per-version co-located generated_schemas(_v<label>).json asset (written
-// directly by the Rust generator, not templated, keeping this file's size
-// independent of how many operations the source spec declares) via
-// `include_str!` per known version, so each is baked into the compiled
-// binary rather than read from disk at runtime. Because of that, a
-// project rebuild (`cargo build`) is required after `mcpify add-version`
-// for a new version's schemas to actually take effect here.
+// per-version co-located generated_schemas(_v<label>).json.zst asset
+// (written directly by the Rust generator, not templated, keeping this
+// file's size independent of how many operations the source spec
+// declares) via `include_bytes!` per known version, so each is baked into
+// the compiled binary rather than read from disk at runtime. Because of
+// that, a project rebuild (`cargo build`) is required after `mcpify
+// add-version` for a new version's schemas to actually take effect here.
+//
+// The asset is zstd-compressed: every operation's schema embeds a full
+// copy of the spec's `$defs` library (a deliberate generator tradeoff —
+// see `mcpify`'s `openapi::schema_resolve` — simpler than cross-schema
+// `$ref` resolution, at the cost of file size), and a long-distance-
+// matching compressor collapses that duplication (measured ~190 MB down
+// to tens of KB on a real spec) without requiring any change to the JSON
+// Schema shape itself. Decompressed once per version, lazily, into the
+// same cache below.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -27,10 +36,10 @@ struct OperationSchemas {
 }
 
 // mcpify:versions:begin
-fn schemas_json_for(api_version: &str) -> Option<&'static str> {
+fn schemas_zst_for(api_version: &str) -> Option<&'static [u8]> {
     match api_version {
 {%- for v in version_entries %}
-        "{{ v.label }}" => Some(include_str!("{{ v.schemas_file }}")),
+        "{{ v.label }}" => Some(include_bytes!("{{ v.schemas_file }}")),
 {%- endfor %}
         _ => None,
     }
@@ -48,10 +57,13 @@ fn schemas_by_operation(api_version: &str) -> &'static HashMap<String, Operation
         return schemas;
     }
 
-    let Some(json) = schemas_json_for(api_version) else {
+    let Some(compressed) = schemas_zst_for(api_version) else {
         return empty;
     };
-    let parsed: HashMap<String, OperationSchemas> = serde_json::from_str(json).unwrap_or_default();
+    let parsed: HashMap<String, OperationSchemas> = zstd::decode_all(compressed)
+        .ok()
+        .and_then(|json| serde_json::from_slice(&json).ok())
+        .unwrap_or_default();
     let leaked: &'static HashMap<String, OperationSchemas> = Box::leak(Box::new(parsed));
     cache.insert(api_version.to_string(), leaked);
     leaked

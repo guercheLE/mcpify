@@ -28,7 +28,7 @@ public class ValidatorTests
 
         // An empty object may or may not satisfy the real schema for this
         // operation — this only proves the validator actually loaded and
-        // evaluated `GeneratedSchemas.json` (a genuine `ValidationException`
+        // evaluated `GeneratedSchemas.json.zst` (a genuine `ValidationException`
         // is an expected, valid outcome) rather than silently no-op'ing on
         // every operationId, which `UnknownOperationIdsPassValidationWithoutThrowing`
         // above would not have caught.

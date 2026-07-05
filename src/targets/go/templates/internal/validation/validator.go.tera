@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/xeipuuv/gojsonschema"
 
 	"{{ module_path }}/internal/core"
@@ -15,10 +16,19 @@ import (
 // Rust generator (not templated) and baked into the compiled binary via
 // its own go:embed directive rather than read from disk at runtime —
 // mirrors `targets::rust::templates::validation::validator.rs`'s
-// `include_str!` approach, keeping this file's size independent of how
+// `include_bytes!` approach, keeping this file's size independent of how
 // many operations the source spec declares. A `go:embed` directive binds
 // to exactly one var, so there's one embed+var pair per version here
 // rather than a single shared one.
+//
+// The asset is zstd-compressed: every operation's schema embeds a full
+// copy of the spec's `$defs` library (a deliberate generator tradeoff —
+// see `mcpify`'s `openapi::schema_resolve` — simpler than cross-schema
+// `$ref` resolution, at the cost of file size), and a long-distance-
+// matching compressor collapses that duplication (measured ~190 MB down
+// to tens of KB on a real spec) without requiring any change to the JSON
+// Schema shape itself. Decompressed once per version, lazily, in
+// schemasByOperation below.
 // mcpify:versions:begin
 {% for v in version_entries %}
 //go:embed {{ v.schemas_file }}
@@ -52,8 +62,13 @@ func schemasByOperation(apiVersion string) map[string]operationSchemas {
 	}
 
 	parsed := map[string]operationSchemas{}
-	if raw, ok := generatedSchemasByVersion[apiVersion]; ok {
-		_ = json.Unmarshal(raw, &parsed)
+	if compressed, ok := generatedSchemasByVersion[apiVersion]; ok {
+		if decoder, err := zstd.NewReader(nil); err == nil {
+			if raw, err := decoder.DecodeAll(compressed, nil); err == nil {
+				_ = json.Unmarshal(raw, &parsed)
+			}
+			decoder.Close()
+		}
 	}
 	schemasByVersion[apiVersion] = parsed
 	return parsed

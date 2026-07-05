@@ -1,11 +1,13 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sync"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
 // mcpify:versions:begin
@@ -65,6 +67,114 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+var (
+	cachedStoresMu sync.Mutex
+	cachedStores   = map[string]*Store{}
+)
+
+// CachedStore returns a process-wide, in-memory-backed Store for
+// apiVersion: on first access, opens the on-disk file read-only via Open,
+// copies its entire contents into a fresh in-memory database (via
+// SQLite's backup API), then closes the on-disk connection immediately —
+// so its file handle/lock is held only for that brief copy, not for the
+// process's lifetime. This means an external process (a fresh
+// populate-embeddings run, a deployment replacing the file) can update
+// mcp_store.db without hitting "database is locked" against a live
+// server, at the cost of the running process only picking up such an
+// update on its next restart.
+//
+// Unlike Open, the returned *Store must not be closed by the caller —
+// it's cached and reused for the rest of the process's lifetime. *sql.DB
+// (and so *Store) is already safe for concurrent use by multiple
+// goroutines, so no additional locking is needed once this returns.
+func CachedStore(apiVersion string) (*Store, error) {
+	path, err := ResolveStorePath(apiVersion)
+	if err != nil {
+		return nil, err
+	}
+	return cachedInMemoryStore(apiVersion, path)
+}
+
+// Does the actual work for CachedStore, taking an explicit path (rather
+// than resolving one from apiVersion itself) so it's testable against an
+// arbitrary tempdir path — cacheKey and path are separate parameters
+// because two different apiVersions should never collide in the
+// process-wide cache even if (hypothetically) they resolved to the same
+// file.
+func cachedInMemoryStore(cacheKey, path string) (*Store, error) {
+	cachedStoresMu.Lock()
+	defer cachedStoresMu.Unlock()
+
+	if cached, ok := cachedStores[cacheKey]; ok {
+		return cached, nil
+	}
+
+	diskStore, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = diskStore.Close() }()
+
+	memDB, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		return nil, err
+	}
+	// database/sql opens connections lazily — force a real connection to
+	// exist before backupToMemory reaches into the driver for it.
+	if err := memDB.Ping(); err != nil {
+		return nil, err
+	}
+
+	if err := backupToMemory(diskStore.db, memDB); err != nil {
+		return nil, err
+	}
+
+	store := &Store{db: memDB}
+	cachedStores[cacheKey] = store
+	return store, nil
+}
+
+// backupToMemory copies every page of src into dst using SQLite's native
+// online backup API — an exact copy (schema, indexes, data) rather than
+// a manual table-by-table SQL re-creation.
+func backupToMemory(src, dst *sql.DB) error {
+	ctx := context.Background()
+
+	srcConn, err := src.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = srcConn.Close() }()
+
+	dstConn, err := dst.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dstConn.Close() }()
+
+	return dstConn.Raw(func(dstDriverConn any) error {
+		dstSQLiteConn := dstDriverConn.(*sqlite3.SQLiteConn)
+		return srcConn.Raw(func(srcDriverConn any) error {
+			srcSQLiteConn := srcDriverConn.(*sqlite3.SQLiteConn)
+			backup, err := dstSQLiteConn.Backup("main", srcSQLiteConn, "main")
+			if err != nil {
+				return err
+			}
+			defer func() { _ = backup.Finish() }()
+
+			for {
+				done, err := backup.Step(-1)
+				if err != nil {
+					return err
+				}
+				if done {
+					return nil
+				}
+			}
+		})
+	})
+}
 
 const endpointColumns = "operation_id, path, method, summary, description, input_schema, output_schema, auth_scheme_ref"
 

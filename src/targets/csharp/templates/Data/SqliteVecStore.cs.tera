@@ -56,6 +56,51 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
 
     private readonly Lazy<string> _vecExtensionPath = new(ResolveExtensionPath);
 
+    private SqliteConnection? _cachedConnection;
+    private readonly Lock _cachedConnectionLock = new();
+
+    /// <summary>
+    /// Process-wide (well, instance-wide — <c>Core/DataStore.cs</c>
+    /// registers exactly one <see cref="SqliteVecStore"/> as a DI
+    /// singleton), in-memory-backed connection: built once, on first
+    /// access, by opening the on-disk file read-only and copying its
+    /// entire contents into a fresh <c>:memory:</c> connection via
+    /// SQLite's backup API, then disposing the on-disk connection
+    /// immediately — so its file handle/lock is held only for that brief
+    /// copy, not for the process's lifetime. This means an external
+    /// process (a fresh <c>populate-embeddings</c> run, a deployment
+    /// replacing the file) can update `mcp_store.db` without hitting
+    /// "database is locked" against a live server, at the cost of the
+    /// running process only picking up such an update on its next
+    /// restart.
+    ///
+    /// Not a field-initialized <see cref="Lazy{T}"/> (unlike
+    /// <see cref="_vecExtensionPath"/>): a field initializer can't call an
+    /// instance method or reference another instance field (CS0236), and
+    /// building this connection needs both <c>dbPath</c> (via
+    /// <see cref="OpenReadOnly"/>) and <see cref="_vecExtensionPath"/>.
+    /// </summary>
+    private SqliteConnection CachedConnection()
+    {
+        lock (_cachedConnectionLock)
+        {
+            return _cachedConnection ??= BuildCachedConnection();
+        }
+    }
+
+    private SqliteConnection BuildCachedConnection()
+    {
+        using var diskConnection = OpenReadOnly();
+
+        var memConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = ":memory:" }.ToString());
+        memConnection.Open();
+        memConnection.EnableExtensions(true);
+        memConnection.LoadExtension(_vecExtensionPath.Value);
+
+        diskConnection.BackupDatabase(memConnection);
+        return memConnection;
+    }
+
     /// <summary>Every caller except <see cref="OpenReadWrite"/>'s one consumer (`Services/PopulateEmbeddingsService.cs`) uses this.</summary>
     public SqliteConnection OpenReadOnly() => Open(SqliteOpenMode.ReadOnly);
 
@@ -64,7 +109,7 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
 
     public EndpointRecord? GetEndpoint(string operationId)
     {
-        using var connection = OpenReadOnly();
+        var connection = CachedConnection();
         using var command = connection.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM endpoints WHERE operation_id = $operationId";
         command.Parameters.AddWithValue("$operationId", operationId);
@@ -75,7 +120,7 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
 
     public IReadOnlyList<EndpointRecord> ListEndpoints()
     {
-        using var connection = OpenReadOnly();
+        var connection = CachedConnection();
         using var command = connection.CreateCommand();
         command.CommandText = $"SELECT {Columns} FROM endpoints";
 
@@ -103,7 +148,7 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
     /// </summary>
     public IReadOnlyList<SearchResult> SearchEndpoints(float[] queryEmbedding, int limit)
     {
-        using var connection = OpenReadOnly();
+        var connection = CachedConnection();
         using var command = connection.CreateCommand();
         command.CommandText =
             "SELECT e.operation_id, e.summary, s.distance " +

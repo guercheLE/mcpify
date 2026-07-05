@@ -133,12 +133,11 @@ async fn run_harness_server() -> anyhow::Result<()> {
             port: config.port,
             cors_allow: config.cors_allow.clone(),
         };
-        let factory_db_path = db_path.clone();
         let factory_config = config.clone();
         start_http_server(
             move || {
                 Ok(McpifyServer::new(
-                    factory_db_path.clone(),
+                    factory_config.api_version.clone(),
                     factory_config.clone(),
                     auth_manager.clone(),
                 ))
@@ -148,7 +147,8 @@ async fn run_harness_server() -> anyhow::Result<()> {
         )
         .await?;
     } else {
-        connect_stdio(McpifyServer::new(db_path, config, auth_manager)).await?;
+        let api_version = config.api_version.clone();
+        connect_stdio(McpifyServer::new(api_version, config, auth_manager)).await?;
     }
 
     Ok(())

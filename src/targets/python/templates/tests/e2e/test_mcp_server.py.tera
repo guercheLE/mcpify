@@ -53,15 +53,23 @@ def real_embeddings_db_path(tmp_path: Path) -> Path:
 
 async def test_search_and_get_tools_respond_with_real_embeddings(
     real_embeddings_db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await populate(real_embeddings_db_path)
+
+    # `build_server` now resolves its store via `api_version` ->
+    # `resolve_store_path`, which is relative-to-cwd (matching how the
+    # real binary always runs next to its own `mcp_store.db`) — chdir into
+    # the fixture's directory so that resolution lands on
+    # `real_embeddings_db_path` instead of the real project's own store.
+    monkeypatch.chdir(real_embeddings_db_path.parent)
 
     config = Config(
         url="https://api.example.com",
         auth_method=AuthMethod.{% if auth_methods | length > 0 %}{{ auth_methods.0.class_name | upper }}{% else %}NONE{% endif %},
     )
     auth_manager = AuthManager(config.auth_method)
-    mcp = build_server(real_embeddings_db_path, config, auth_manager)
+    mcp = build_server(config.api_version, config, auth_manager)
 
     tools = await mcp.list_tools()
     assert {tool.name for tool in tools} == {"search", "get", "call"}

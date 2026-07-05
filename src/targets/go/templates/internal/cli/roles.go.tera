@@ -43,11 +43,12 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 		return nil, err
 	}
 
-	storePath, err := data.ResolveStorePath(config.ApiVersion)
-	if err != nil {
-		return nil, err
-	}
-	store, err := data.Open(storePath)
+	// CachedStore (not Open): backs the on-disk file up into memory once
+	// per process and never re-touches the disk file afterward, so this
+	// long-lived Harness Server process doesn't hold a lasting lock on
+	// mcp_store.db against a fresh populate-embeddings run or a deployment
+	// replacing the file — see CachedStore's doc comment.
+	store, err := data.CachedStore(config.ApiVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +98,9 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 }
 
 func (s *Services) Close() {
-	_ = s.Store.Close()
+	// s.Store is intentionally not closed here — CachedStore returns a
+	// process-wide connection shared and reused across the process's
+	// lifetime, not one owned by this particular Services instance.
 	_ = s.EmbedSvc.Close()
 }
 

@@ -160,7 +160,7 @@ mod tests {
             "11.3".to_string(),
             VersionEntry {
                 db_file: "mcp_store.db".to_string(),
-                schemas_file: "internal/validation/generated_schemas.json".to_string(),
+                schemas_file: "internal/validation/generated_schemas.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 0,
             },
@@ -169,7 +169,7 @@ mod tests {
             "11.2".to_string(),
             VersionEntry {
                 db_file: "mcp_store_v11.2.db".to_string(),
-                schemas_file: "internal/validation/generated_schemas_v11.2.json".to_string(),
+                schemas_file: "internal/validation/generated_schemas_v11.2.json.zst".to_string(),
                 source: "spec.yaml".to_string(),
                 added_at: 1,
             },
@@ -220,9 +220,9 @@ mod tests {
         let validator = tokio::fs::read_to_string(dir.path().join(VALIDATOR_PATH))
             .await
             .unwrap();
-        assert!(validator.contains("//go:embed generated_schemas.json"));
+        assert!(validator.contains("//go:embed generated_schemas.json.zst"));
         assert!(validator.contains("var embeddedSchemas_v11_3 []byte"));
-        assert!(validator.contains("//go:embed generated_schemas_v11.2.json"));
+        assert!(validator.contains("//go:embed generated_schemas_v11.2.json.zst"));
         assert!(validator.contains("var embeddedSchemas_v11_2 []byte"));
         assert!(validator.contains("\"11.3\": embeddedSchemas_v11_3"));
         assert!(validator.contains("\"11.2\": embeddedSchemas_v11_2"));
@@ -245,7 +245,7 @@ mod tests {
         let entries = vec![VersionEntryView::from_project_relative_paths(
             "default",
             "mcp_store.db",
-            "internal/validation/generated_schemas.json",
+            "internal/validation/generated_schemas.json.zst",
         )];
         let body = setup_body(&entries, "default");
         assert!(body.contains("return \"default\""));
