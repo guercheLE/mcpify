@@ -34,6 +34,7 @@ async fn run() -> anyhow::Result<()> {
             set_default,
             force,
         }) => {
+            let project_dir = project.clone();
             add_version::run(AddVersionRequest {
                 project_dir: project,
                 version_label: version,
@@ -41,7 +42,13 @@ async fn run() -> anyhow::Result<()> {
                 set_default,
                 force,
             })
-            .await
+            .await?;
+
+            if mcpify::progress::enabled() {
+                eprintln!("==> Version added to project at {}", project_dir.display());
+            }
+
+            Ok(())
         }
         None => run_generate(cli).await,
     }

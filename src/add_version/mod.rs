@@ -34,6 +34,12 @@ pub struct AddVersionRequest {
 /// path, and re-rendering the handful of version-aware code regions
 /// (`sync::sync_versions`).
 pub async fn run(request: AddVersionRequest) -> Result<()> {
+    if crate::progress::enabled() {
+        eprintln!(
+            "==> Reading project ledger at {}",
+            request.project_dir.display()
+        );
+    }
     let mut ledger = ledger::read(&request.project_dir).await?;
 
     if request.version_label == ledger.default_version && !request.set_default {
@@ -44,8 +50,18 @@ pub async fn run(request: AddVersionRequest) -> Result<()> {
         );
     }
 
+    if crate::progress::enabled() {
+        eprintln!("==> Fetching OpenAPI spec from {}", request.input);
+    }
     let doc = openapi::ingest(&request.input).await?;
+
+    if crate::progress::enabled() {
+        eprintln!("==> Normalizing operations");
+    }
     let operations = openapi::normalize::normalize_operations(&doc);
+    if crate::progress::enabled() {
+        eprintln!("==> Found {} operations", operations.len());
+    }
 
     if request.set_default {
         promote_to_default(&request, &mut ledger, &operations).await?;
@@ -53,7 +69,14 @@ pub async fn run(request: AddVersionRequest) -> Result<()> {
         add_non_default_version(&request, &mut ledger, &operations).await?;
     }
 
+    if crate::progress::enabled() {
+        eprintln!("==> Syncing version-aware code regions");
+    }
     sync::sync_versions(&request.project_dir, &ledger).await?;
+
+    if crate::progress::enabled() {
+        eprintln!("==> Writing project ledger");
+    }
     ledger::write(&request.project_dir, &ledger).await?;
 
     Ok(())
@@ -73,7 +96,13 @@ async fn add_non_default_version(
 
     let (db_relative, schemas_relative) = sibling_version_paths(ledger, &request.version_label)?;
 
+    if crate::progress::enabled() {
+        eprintln!("==> Assembling {db_relative}");
+    }
     crate::db::assemble_store_at(request.project_dir.join(&db_relative), true, operations).await?;
+    if crate::progress::enabled() {
+        eprintln!("==> Writing {schemas_relative}");
+    }
     crate::schemas_asset::write_schemas_json_at(
         operations,
         &request.project_dir.join(&schemas_relative),
@@ -121,7 +150,13 @@ async fn promote_to_default(
     )
     .await?;
 
+    if crate::progress::enabled() {
+        eprintln!("==> Assembling {canonical_db}");
+    }
     crate::db::assemble_store_at(request.project_dir.join(&canonical_db), true, operations).await?;
+    if crate::progress::enabled() {
+        eprintln!("==> Writing {canonical_schemas}");
+    }
     crate::schemas_asset::write_schemas_json_at(
         operations,
         &request.project_dir.join(&canonical_schemas),
