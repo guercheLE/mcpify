@@ -131,10 +131,12 @@ mod tests {
                 AuthSchemeDescriptor {
                     name: "basicAuth".to_string(),
                     kind: AuthSchemeKind::Basic,
+                    location: None,
                 },
                 AuthSchemeDescriptor {
                     name: "oauth2".to_string(),
                     kind: AuthSchemeKind::OAuth2,
+                    location: None,
                 },
             ],
         );
@@ -161,18 +163,22 @@ mod tests {
                 AuthSchemeDescriptor {
                     name: "basicAuth".to_string(),
                     kind: AuthSchemeKind::Basic,
+                    location: None,
                 },
                 AuthSchemeDescriptor {
                     name: "pat".to_string(),
                     kind: AuthSchemeKind::BearerPat,
+                    location: None,
                 },
                 AuthSchemeDescriptor {
                     name: "oauth1".to_string(),
                     kind: AuthSchemeKind::OAuth1,
+                    location: None,
                 },
                 AuthSchemeDescriptor {
                     name: "oauth2".to_string(),
                     kind: AuthSchemeKind::OAuth2,
+                    location: None,
                 },
             ],
         );

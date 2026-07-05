@@ -14,8 +14,8 @@ from typing import Optional
 
 import typer
 
-from ..auth.auth_manager import AuthManager
-from ..core.config import Transport, load_config
+from ..auth.auth_manager import AuthManager, header_location_for
+from ..core.config import AuthMethod, Transport, load_config
 from ..core.health_check import ComponentRegistry, HealthCheckManager
 from ..core.logger import get_logger, init_logging
 from ..core.mcp_server import build_server
@@ -117,6 +117,17 @@ async def _run_harness_server() -> None:
     init_logging()
     config_value = load_config()
 
+    {%- if "oauth1" in auth_method_keys %}
+    if config_value.transport is Transport.HTTP and config_value.auth_method is AuthMethod.OAUTH1:
+        raise RuntimeError(
+            "OAuth1 is not supported over HTTP transport: its signature must be "
+            "recomputed per request against the destination URL using the server's "
+            "consumer key/secret, which a simple incoming-header relay cannot "
+            "provide. Use stdio transport for OAuth1-authenticated APIs, or switch "
+            "auth_method."
+        )
+    {%- endif %}
+
     try:
         tracer_provider = build_tracer_provider("{{ project_name }}")
     except Exception as err:  # telemetry backend unreachable must not crash the server
@@ -139,7 +150,10 @@ async def _run_harness_server() -> None:
 
     try:
         if config_value.transport is Transport.HTTP:
-            app_instance = build_http_app(mcp, registry, config_value.cors_allow)
+            header_location, header_name = header_location_for(config_value.auth_method)
+            app_instance = build_http_app(
+                mcp, registry, config_value.cors_allow, header_location, header_name
+            )
             http_config = HttpServerConfig(
                 host=config_value.host, port=config_value.port, cors_allow=config_value.cors_allow
             )

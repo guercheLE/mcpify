@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..auth.auth_manager import AuthManager
+from ..auth.request_credentials import RequestCredentials
 from ..core.config import Config
 from ..data.store import EndpointRecord
 from ..services.api_client import ApiClient
@@ -24,11 +25,12 @@ async def call_operation(
     auth_manager: AuthManager,
     operation_id: str,
     args: dict[str, Any],
+    request_override: RequestCredentials | None = None,
 ) -> Any:
     validate_input(config.api_version, operation_id, args)
 
     client = ApiClient(config)
-    response = await client.execute(endpoint, args, auth_manager)
+    response = await client.execute(endpoint, args, auth_manager, request_override)
 
     validate_output(config.api_version, operation_id, response)
     return response

@@ -13,6 +13,7 @@ from urllib.parse import quote, urlencode, urljoin
 import httpx
 
 from ..auth.auth_manager import AuthManager
+from ..auth.request_credentials import RequestCredentials
 from ..core.circuit_breaker import CircuitBreaker
 from ..core.config import Config
 from ..core.rate_limiter import RateLimiter
@@ -86,7 +87,11 @@ class ApiClient:
         self._rate_limiter = RateLimiter(limit=config.rate_limit, window_s=1.0)
 
     async def execute(
-        self, endpoint: EndpointRecord, args: dict[str, Any], auth_manager: AuthManager
+        self,
+        endpoint: EndpointRecord,
+        args: dict[str, Any],
+        auth_manager: AuthManager,
+        request_override: RequestCredentials | None = None,
     ) -> Any:
         """Executes `endpoint` against the configured target API, retrying
         transient failures up to `config.retry_attempts` times, all inside
@@ -102,7 +107,9 @@ class ApiClient:
 
         headers = {"Content-Type": "application/json"}
         headers.update(_pick_by_location(endpoint, args, "header"))
-        headers = await auth_manager.apply_auth_headers(headers, endpoint.method, url)
+        headers = await auth_manager.apply_auth_headers(
+            headers, endpoint.method, url, self._config.transport, request_override
+        )
 
         body = args.get("body")
 

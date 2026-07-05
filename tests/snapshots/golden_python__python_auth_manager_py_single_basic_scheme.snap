@@ -13,14 +13,26 @@ from __future__ import annotations
 
 import json
 
-from ..core.config import AuthMethod
+from ..core.config import AuthMethod, Transport
 from ..core.credential_storage import load_credential, save_credential
 from .auth_strategy import AuthConfig, AuthStrategy, Credentials
 from .errors import NoActiveCredentialsError
+from .request_credentials import RequestCredentials
 from .strategies import StubAuthStrategy
 from .strategies import BasicAuthStrategy
 
 CREDENTIAL_ACCOUNT = "active-credentials"
+
+
+def header_location_for(auth_method: AuthMethod) -> tuple[str, str]:
+    """Where `auth_method`'s credential value travels on the wire — used
+    only by the HTTP-transport auth-gate/extractor (`http.auth_extractor`)
+    to know which incoming header to read; stdio never calls this.
+    """
+    locations: dict[AuthMethod, tuple[str, str]] = {
+        AuthMethod.BASIC: ("header", "Authorization"),
+    }
+    return locations[auth_method]
 
 
 def strategy_for(auth_method: AuthMethod) -> AuthStrategy:
@@ -74,18 +86,47 @@ class AuthManager:
         raise NoActiveCredentialsError(self._auth_method.value)
 
     async def apply_auth_headers(
-        self, headers: dict[str, str], method: str, url: str
+        self,
+        headers: dict[str, str],
+        method: str,
+        url: str,
+        transport: Transport,
+        request_override: RequestCredentials | None = None,
     ) -> dict[str, str]:
-        """Decorates outgoing request headers with the active strategy's
-        credentials. API-key placement (header vs. query, and the
-        header/param name) defaults to an `X-Api-Key` header here; a scheme
-        declaring a different location is one of Story P6's api-client
-        responsibilities to refine, not this manager's.
+        """Decorates outgoing request headers with credentials for
+        `transport`: on `Transport.HTTP`, `request_override` (extracted
+        per-request from the caller's own headers — see
+        `http.auth_extractor`) is the *only* source ever consulted, since
+        HTTP deployments must never leak the operator's local
+        config/keychain secrets to a caller who didn't supply their own; a
+        missing override is a hard error, not a fallback. On
+        `Transport.STDIO`, `request_override` is ignored and behavior is
+        unchanged from before HTTP-transport support existed:
+        `self.credentials()` (config cascade + keychain).
+
+        API-key placement (header vs. query, and the header/param name)
+        defaults to an `X-Api-Key` header here; a scheme declaring a
+        different location is one of Story P6's api-client
+        responsibilities to refine, not this manager's — `request_override`'s
+        `request_header_name`/`request_header_value` pair is the one
+        exception, since the HTTP path already knows the scheme's declared
+        header name (`PyAuthSchemeView.header_name`) at generation time.
         """
-        credentials = await self.credentials()
+
+        if transport is Transport.HTTP:
+            if request_override is None:
+                raise ValueError(
+                    "no credentials were supplied on this HTTP request; local "
+                    "config/env/keychain is never used as a fallback over HTTP transport"
+                )
+            credentials = request_override.to_credentials_map()
+        else:
+            credentials = await self.credentials()
 
         headers = dict(headers)
-        if authorization_header := credentials.get("authorization_header"):
+        if request_header_name := credentials.get("request_header_name"):
+            headers[request_header_name] = credentials.get("request_header_value", "")
+        elif authorization_header := credentials.get("authorization_header"):
             headers["Authorization"] = authorization_header
         elif api_key := credentials.get("api_key"):
             headers["X-Api-Key"] = api_key

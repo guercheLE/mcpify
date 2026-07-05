@@ -21,5 +21,5 @@ async def run(operation_id: str, args_json: str) -> None:
     if endpoint is None:
         raise NotFoundError(f"unknown operationId '{operation_id}'")
 
-    result = await call_operation(endpoint, config, auth_manager, operation_id, args)
+    result = await call_operation(endpoint, config, auth_manager, operation_id, args, None)
     print(json.dumps(result, indent=2))

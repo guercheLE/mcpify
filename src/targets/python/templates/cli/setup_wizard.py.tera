@@ -16,7 +16,8 @@ from pathlib import Path
 import httpx
 import questionary
 
-from ..core.config import AuthMethod
+from ..auth.auth_manager import header_location_for
+from ..core.config import AuthMethod, Transport
 from ..core.credential_storage import save_credential
 
 
@@ -49,6 +50,15 @@ async def _prompt_auth_method() -> AuthMethod:
     selection = await questionary.select("Authentication method:", choices).ask_async()
     return AuthMethod(selection)
 {%- endif %}
+
+
+async def _prompt_transport() -> Transport:
+    choices = [
+        "stdio (spawned as a subprocess by the MCP client)",
+        "http (a standalone server the MCP client connects to over the network)",
+    ]
+    selection = await questionary.select("Which transport will this deployment use?", choices).ask_async()
+    return Transport.STDIO if selection.startswith("stdio") else Transport.HTTP
 
 
 # mcpify:versions:begin
@@ -129,11 +139,69 @@ async def _prompt_persistence(env: dict[str, str]) -> None:
         print(f"{{ project_name }} start {flags}")
 
 
+def _print_mcp_client_config(transport: Transport, auth_method: AuthMethod, env: dict[str, str]) -> None:
+    """Prints a ready-to-use MCP client config (the `mcpServers` block a
+    host like Claude Code/Desktop expects) for whichever transport was
+    selected — the stdio and http shapes are mutually exclusive, never
+    both, since they're two different ways of running this same server
+    and a client only ever picks one. HTTP transport shows credentials as
+    headers only (never env/CLI args, matching
+    `AuthManager.apply_auth_headers`'s HTTP-only-uses-per-request-
+    credentials behavior); stdio shows both the `env` block and the
+    equivalent all-CLI-args invocation, since the config cascade accepts
+    either for a spawned subprocess.
+    """
+    if transport is Transport.STDIO:
+        config = {
+            "mcpServers": {
+                "{{ project_name }}": {
+                    "command": "{{ project_name }}",
+                    "args": ["start"],
+                    "env": env,
+                }
+            }
+        }
+        print("\nMCP client config (stdio):")
+        print(json.dumps(config, indent=2))
+        cli_args = " ".join(
+            f"--{key.lower().replace('_', '-')} {value!r}" for key, value in env.items()
+        )
+        print(f"(equivalently: `{{ project_name }} start {cli_args}`)")
+        return
+
+    {%- if "oauth1" in auth_method_keys %}
+    if auth_method is AuthMethod.OAUTH1:
+        print(
+            "\nOAuth1 is not supported over HTTP transport: its signature must be "
+            "recomputed per request against the destination URL using the server's "
+            "consumer key/secret, which a simple incoming-header relay cannot "
+            "provide. Use stdio transport for this API instead."
+        )
+        return
+    {%- endif %}
+    _, header_name = header_location_for(auth_method)
+    config = {
+        "mcpServers": {
+            "{{ project_name }}": {
+                "url": "http://127.0.0.1:3000/mcp",
+                "headers": {header_name: "<credential value here>"},
+            }
+        }
+    }
+    print("\nMCP client config (http) — adjust the host/port to match how you run `{{ project_name }} http`:")
+    print(json.dumps(config, indent=2))
+    print(
+        f'Credentials are never read from local config/env over HTTP transport — '
+        f'every request must carry its own "{header_name}" header.'
+    )
+
+
 async def run_setup_wizard() -> None:
     url = await _prompt_base_url()
     auth_method = await _prompt_auth_method()
     credentials = await _prompt_credentials(auth_method)
     api_version = await _prompt_api_version()
+    transport = await _prompt_transport()
 
     save_credential("active-credentials", json.dumps(credentials))
 
@@ -141,9 +209,13 @@ async def run_setup_wizard() -> None:
         "{{ tool_prefix_env }}_URL": url,
         "{{ tool_prefix_env }}_AUTH_METHOD": auth_method.value,
         "{{ tool_prefix_env }}_API_VERSION": api_version,
+        "{{ tool_prefix_env }}_TRANSPORT": transport.value,
     }
     for key, value in credentials.items():
         env[f"{{ tool_prefix_env }}_{_to_env_key(key)}"] = value
 
     await _prompt_persistence(env)
-    print("Setup complete! Run: {{ project_name }} start")
+    _print_mcp_client_config(transport, auth_method, env)
+
+    run_command = "start" if transport is Transport.STDIO else "http"
+    print(f"Setup complete! Run: {{ project_name }} {run_command}")

@@ -7,7 +7,8 @@ are plain REST endpoints alongside it.
 
 from __future__ import annotations
 
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -17,28 +18,46 @@ from starlette.responses import JSONResponse, PlainTextResponse
 
 from ..core.health_check import ComponentRegistry, ComponentStatus
 from . import metrics
-from .auth_extractor import extract_authorization_header
+from .auth_extractor import ExtractError, extract_request_credentials
 from .localhost_detector import is_localhost
 from .types import HttpServerConfig
 
 
 class _AuthGateMiddleware(BaseHTTPMiddleware):
-    """Requests from localhost get relaxed auth requirements (see
-    `localhost_detector`); everything else must carry an `Authorization`
-    header — enforced here, in front of the mounted MCP app, since this
-    project's auth policy isn't the `mcp` SDK's concern.
+    """Requests from localhost get a relaxed *gate* (see
+    `localhost_detector`) — no 401 for a missing credential, so `curl
+    localhost` keeps working without any header for quick local testing.
+    But this gate is a coarse pre-flight check only: the *actual*
+    credential forwarded to the facaded API is extracted independently,
+    per tool call, inside `core.mcp_server.call` (via the `mcp` SDK's
+    `Context.request_context.request`, which carries this exact request's
+    Starlette `Request` regardless of any internal session/task
+    boundaries — the transport attaches it fresh to every incoming
+    message, not just once at session creation). HTTP transport never
+    falls back to local config/keychain (see
+    `AuthManager.apply_auth_headers`), so a localhost caller with no
+    header simply gets a clear per-call error from `call` instead of a
+    401 here — never a silent leak of the operator's own configured
+    secret.
     """
+
+    def __init__(self, app: Any, header_location: str, header_name: str) -> None:
+        super().__init__(app)
+        self._header_location = header_location
+        self._header_name = header_name
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         metrics.increment("http_requests_total")
         client_host = request.client.host if request.client else ""
         relaxed = is_localhost(client_host)
-        if (
-            not relaxed
-            and request.url.path.startswith("/mcp")
-            and extract_authorization_header(request.headers) is None
-        ):
-            return JSONResponse({"error": "missing Authorization header"}, status_code=401)
+        if not relaxed and request.url.path.startswith("/mcp"):
+            try:
+                extract_request_credentials(request.headers, self._header_location, self._header_name)
+            except ExtractError:
+                return JSONResponse(
+                    {"error": "missing or invalid credentials for this API's auth method"},
+                    status_code=401,
+                )
         return await call_next(request)
 
 
@@ -54,8 +73,24 @@ class _CorsHeaderMiddleware(BaseHTTPMiddleware):
         return response
 
 
-def build_http_app(mcp: FastMCP, registry: ComponentRegistry, cors_allow: str | None) -> FastAPI:
-    app = FastAPI(title="{{ display_name }} MCP server")
+def build_http_app(
+    mcp: FastMCP,
+    registry: ComponentRegistry,
+    cors_allow: str | None,
+    header_location: str,
+    header_name: str,
+) -> FastAPI:
+    # Mounting a sub-app in Starlette does NOT cascade its own `lifespan`
+    # (the SDK's `streamable_http_app()` wires `session_manager.run()` as
+    # *its* lifespan, but that never fires unless the parent app also runs
+    # it) — without this, every `/mcp` request 500s with "Task group is not
+    # initialized".
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        async with mcp.session_manager.run():
+            yield
+
+    app = FastAPI(title="{{ display_name }} MCP server", lifespan=lifespan)
 
     @app.get("/healthz")
     async def healthz() -> Response:
@@ -72,7 +107,9 @@ def build_http_app(mcp: FastMCP, registry: ComponentRegistry, cors_allow: str | 
 
     app.mount("/mcp", mcp.streamable_http_app())
     app.add_middleware(_CorsHeaderMiddleware, cors_allow=cors_allow)
-    app.add_middleware(_AuthGateMiddleware)
+    app.add_middleware(
+        _AuthGateMiddleware, header_location=header_location, header_name=header_name
+    )
     return app
 
 

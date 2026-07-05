@@ -16,10 +16,12 @@ import json
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
-from ..auth.auth_manager import AuthManager
+from ..auth.auth_manager import AuthManager, header_location_for
+from ..auth.request_credentials import RequestCredentials
 from ..data.store import cached_store_connection, get_endpoint
+from ..http.auth_extractor import ExtractError, extract_request_credentials
 from ..tools.call_tool import call_operation
 from ..tools.get_tool import get_operation
 from ..tools.search_tool import search_operations
@@ -36,7 +38,11 @@ INSTRUCTIONS = (
 
 
 def build_server(api_version: str, config: Config, auth_manager: AuthManager) -> FastMCP:
-    mcp = FastMCP("{{ display_name }}", instructions=INSTRUCTIONS)
+    # `streamable_http_path="/"`: this server's own HTTP layer
+    # (`http.server.build_http_app`) already mounts the SDK's streamable-HTTP
+    # sub-app at `/mcp` — without this, the SDK's own default internal route
+    # (also `/mcp`) would double up into `/mcp/mcp`.
+    mcp = FastMCP("{{ display_name }}", instructions=INSTRUCTIONS, streamable_http_path="/")
 
     @mcp.tool(
         description="Semantic search for {{ display_name }} operations using a natural-language query."
@@ -57,13 +63,33 @@ def build_server(api_version: str, config: Config, auth_manager: AuthManager) ->
     @mcp.tool(
         description="Validate arguments, invoke a live {{ display_name }} API operation, and validate the response."
     )
-    async def call(operation_id: str, arguments: dict[str, Any] | None = None) -> str:
+    async def call(
+        operation_id: str, ctx: Context, arguments: dict[str, Any] | None = None
+    ) -> str:
+        # HTTP transport only: the `mcp` SDK attaches this call's own
+        # Starlette `Request` to `ctx.request_context.request` regardless
+        # of how long the underlying session's worker lives (it's set
+        # fresh per incoming message, not just once at session creation
+        # — see `http.server._AuthGateMiddleware`'s doc comment for why
+        # this is the one mechanism that actually works here). `None` on
+        # stdio, where no such request object is ever attached.
+        request_override: RequestCredentials | None = None
+        request = ctx.request_context.request
+        if request is not None:
+            header_location, header_name = header_location_for(config.auth_method)
+            try:
+                request_override = extract_request_credentials(
+                    request.headers, header_location, header_name
+                )
+            except ExtractError:
+                request_override = None
+
         async def run(conn: Any) -> Any:
             endpoint = await get_endpoint(conn, operation_id)
             if endpoint is None:
                 raise NotFoundError(f"unknown operationId '{operation_id}'")
             return await call_operation(
-                endpoint, config, auth_manager, operation_id, arguments or {}
+                endpoint, config, auth_manager, operation_id, arguments or {}, request_override
             )
 
         return await _run_tool_async("call", api_version, run)
