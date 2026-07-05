@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.2.0
@@ -37,3 +38,25 @@ jobs:
 {%- if publish_registry %}
       - run: uv publish --token {% raw %}${{ secrets.UV_PUBLISH_TOKEN }}{% endraw %}
 {%- endif %}
+      # Publishes the Dockerfile's image to GHCR, versioned by the release
+      # tag — a real, pullable artifact of the release, not just the CI
+      # build-validation docker-build.yml does on every push/PR. Uses the
+      # built-in GITHUB_TOKEN, so no extra secret is needed.
+      - uses: docker/setup-buildx-action@v4.2.0
+      - uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: {% raw %}${{ github.actor }}{% endraw %}
+          password: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+      - name: Compute image name
+        id: image
+        # GHCR image names must be lowercase, but github.repository isn't
+        # guaranteed to be (e.g. a mixed-case GitHub username/org).
+        run: echo "name=ghcr.io/$(echo '{% raw %}${{ github.repository }}{% endraw %}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: true
+          tags: |
+            {% raw %}${{ steps.image.outputs.name }}:${{ github.ref_name }}{% endraw %}
+            {% raw %}${{ steps.image.outputs.name }}:latest{% endraw %}
