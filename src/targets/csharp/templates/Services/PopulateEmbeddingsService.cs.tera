@@ -41,9 +41,20 @@ public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingSer
             {
                 var vector = await embeddingService.EmbedAsync(text, cancellationToken);
 
+                // sqlite-vec's vec0 virtual tables don't implement conflict
+                // resolution (no ON CONFLICT / INSERT OR REPLACE support — a
+                // duplicate primary key always raises a UNIQUE constraint
+                // error), so re-running this against a db that already has
+                // rows requires an explicit delete before each insert to
+                // stay idempotent.
+                using var deleteCommand = connection.CreateCommand();
+                deleteCommand.CommandText = "DELETE FROM semantic_endpoints WHERE operation_id = $operationId";
+                deleteCommand.Parameters.AddWithValue("$operationId", operationId);
+                deleteCommand.ExecuteNonQuery();
+
                 using var insertCommand = connection.CreateCommand();
                 insertCommand.CommandText =
-                    "INSERT OR REPLACE INTO semantic_endpoints (operation_id, embedding) VALUES ($operationId, $embedding)";
+                    "INSERT INTO semantic_endpoints (operation_id, embedding) VALUES ($operationId, $embedding)";
                 insertCommand.Parameters.AddWithValue("$operationId", operationId);
                 insertCommand.Parameters.AddWithValue("$embedding", SqliteVecStore.SerializeFloat32(vector));
                 insertCommand.ExecuteNonQuery();

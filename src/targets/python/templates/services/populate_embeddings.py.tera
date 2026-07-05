@@ -41,8 +41,17 @@ async def populate(db_path: Path) -> int:
             )
             vector = embed(text)
             blob = sqlite_vec.serialize_float32(vector)
+            # sqlite-vec's vec0 virtual tables don't implement conflict
+            # resolution (no ON CONFLICT / INSERT OR REPLACE support — a
+            # duplicate primary key always raises a UNIQUE constraint error),
+            # so re-running this against a db that already has rows requires
+            # an explicit delete before each insert to stay idempotent.
             await conn.execute(
-                "INSERT OR REPLACE INTO semantic_endpoints (operation_id, embedding) "
+                "DELETE FROM semantic_endpoints WHERE operation_id = ?",
+                (row["operation_id"],),
+            )
+            await conn.execute(
+                "INSERT INTO semantic_endpoints (operation_id, embedding) "
                 "VALUES (?, ?)",
                 (row["operation_id"], blob),
             )

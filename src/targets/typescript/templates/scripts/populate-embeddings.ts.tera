@@ -31,7 +31,13 @@ async function main(): Promise<void> {
     .prepare('SELECT operation_id, path, method, summary, description FROM endpoints')
     .all() as EndpointRow[];
 
-  const insert = db.prepare('INSERT OR REPLACE INTO semantic_endpoints (operation_id, embedding) VALUES (?, ?)');
+  // sqlite-vec's vec0 virtual tables don't implement conflict resolution
+  // (no ON CONFLICT / INSERT OR REPLACE support — a duplicate primary key
+  // always raises a UNIQUE constraint error), so re-running this script
+  // against a db that already has rows requires an explicit delete before
+  // each insert to stay idempotent.
+  const del = db.prepare('DELETE FROM semantic_endpoints WHERE operation_id = ?');
+  const insert = db.prepare('INSERT INTO semantic_endpoints (operation_id, embedding) VALUES (?, ?)');
 
   // Sequential, not parallelized: keeps peak memory bounded regardless of
   // how many operations a spec declares, at the cost of total wall time —
@@ -39,6 +45,7 @@ async function main(): Promise<void> {
   for (const row of rows) {
     const text = [row.method, row.path, row.summary, row.description].filter(Boolean).join(' ');
     const vector = await embed(text);
+    del.run(row.operation_id);
     insert.run(row.operation_id, JSON.stringify(vector));
   }
 

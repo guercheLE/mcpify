@@ -48,9 +48,15 @@ fn main() -> anyhow::Result<()> {
         })?
         .collect::<Result<_, _>>()?;
 
-    let mut insert = conn.prepare(
-        "INSERT OR REPLACE INTO semantic_endpoints (operation_id, embedding) VALUES (?1, ?2)",
-    )?;
+    // sqlite-vec's vec0 virtual tables don't implement conflict resolution
+    // (no ON CONFLICT / INSERT OR REPLACE support — a duplicate primary key
+    // always raises a UNIQUE constraint error, regardless of the conflict
+    // clause used), so re-running this script against a db that already has
+    // rows requires an explicit delete before each insert to stay idempotent.
+    let mut delete =
+        conn.prepare("DELETE FROM semantic_endpoints WHERE operation_id = ?1")?;
+    let mut insert = conn
+        .prepare("INSERT INTO semantic_endpoints (operation_id, embedding) VALUES (?1, ?2)")?;
 
     // Sequential, not parallelized: keeps peak memory bounded regardless of
     // how many operations a spec declares, at the cost of total wall time —
@@ -68,6 +74,7 @@ fn main() -> anyhow::Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
         let vector = embed(&text)?;
+        delete.execute(rusqlite::params![row.operation_id])?;
         insert.execute(rusqlite::params![
             row.operation_id,
             vector_to_le_bytes(&vector)

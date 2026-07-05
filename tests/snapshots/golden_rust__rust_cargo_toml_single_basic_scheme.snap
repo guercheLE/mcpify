@@ -45,7 +45,10 @@ tracing-opentelemetry = "0.33"
 opentelemetry = "0.32"
 opentelemetry_sdk = "0.32"
 opentelemetry-otlp = "0.32"
-fastembed = "5"
+# default-features disabled to select rustls-tls variants instead of the
+# native-tls ones (default): native-tls pulls in openssl-sys, which needs
+# system OpenSSL dev headers that the Docker builder image doesn't have.
+fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls", "image-models"] }
 keyring = "4"
 # sha1 is pinned to 0.10, not 0.11 like sha2, because it's used for OAuth1
 # RSA-SHA1 signing (auth/strategies/oauth1.rs) via `rsa 0.9`'s
