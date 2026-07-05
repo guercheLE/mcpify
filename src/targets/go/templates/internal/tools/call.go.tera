@@ -24,6 +24,7 @@ func Call(
 	apiVersion string,
 	operationID string,
 	args map[string]any,
+	requestOverride *auth.RequestCredentials,
 ) (any, error) {
 	endpoint, ok, err := store.GetEndpoint(operationID)
 	if err != nil {
@@ -37,7 +38,7 @@ func Call(
 		return nil, err
 	}
 
-	response, err := client.Execute(ctx, endpoint, args, authManager)
+	response, err := client.Execute(ctx, endpoint, args, authManager, requestOverride)
 	if err != nil {
 		return nil, err
 	}

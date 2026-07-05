@@ -122,8 +122,30 @@ func RunHTTPHarness(ctx context.Context, overrides core.CLIOverrides) error {
 	}
 	defer svc.Close()
 
-	mcpHandler := server.NewStreamableHTTPServer(svc.MCPServer)
-	handler, err := httptransport.NewHandler(mcpHandler, svc.Health, svc.Config.CorsAllow)
+	{%- if "oauth1" in auth_method_keys %}
+	if svc.Config.AuthMethod == core.AuthMethodOAuth1 {
+		return &auth.Error{Message: "OAuth1 is not supported over HTTP transport: its signature must be recomputed per request against the destination URL using the server's consumer key/secret, which a simple incoming-header relay cannot provide. Use stdio transport for OAuth1-authenticated APIs, or switch auth_method."}
+	}
+	{%- endif %}
+	headerLocation, headerName := auth.HeaderLocationFor(svc.Config.AuthMethod)
+
+	// server.WithHTTPContextFunc is mcp-go's per-request (not per-session)
+	// context-injection hook: it runs fresh for every incoming message
+	// regardless of how long the underlying session's internal handling
+	// lives, so extracting credentials here and threading them through ctx
+	// works correctly across concurrent sessions — unlike a naive
+	// middleware-set value, which would only cover the one HTTP request
+	// that happened to carry the `initialize` call.
+	mcpHandler := server.NewStreamableHTTPServer(svc.MCPServer, server.WithHTTPContextFunc(
+		func(requestCtx context.Context, r *http.Request) context.Context {
+			credentials, err := httptransport.ExtractRequestCredentials(r.Header, headerLocation, headerName)
+			if err != nil {
+				return requestCtx
+			}
+			return context.WithValue(requestCtx, auth.RequestCredentialsContextKey, credentials)
+		},
+	))
+	handler, err := httptransport.NewHandler(mcpHandler, svc.Health, svc.Config.CorsAllow, headerLocation, headerName)
 	if err != nil {
 		return err
 	}
@@ -226,7 +248,7 @@ func RunCall(ctx context.Context, overrides core.CLIOverrides, operationID, args
 		}
 	}
 
-	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, svc.Config.ApiVersion, operationID, args)
+	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, svc.Config.ApiVersion, operationID, args, nil)
 	if err != nil {
 		return err
 	}

@@ -45,6 +45,17 @@ func main() {
 		Use:   "start",
 		Short: "Start the Harness Server over stdio (for agent hosts).",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Set explicitly (not left to the config cascade's own
+			// default): auth.Manager.ApplyAuthHeaders decides whether to
+			// source credentials from the config cascade or from
+			// per-request headers based on config.Transport, so it must
+			// always agree with which command actually ran, not whatever
+			// value the cascade would otherwise resolve to. CLIOverrides
+			// has no Transport field (only URL/Host/Port/CorsAllow are
+			// CLI-flag-overridable), so this is set via the same env var
+			// the cascade already reads, mirroring every other target's
+			// `start`/`http` command wiring.
+			_ = os.Setenv("{{ tool_prefix_env }}_TRANSPORT", string(core.TransportStdio))
 			return cli.RunStdioHarness(context.Background(), overrides())
 		},
 	})
@@ -53,6 +64,8 @@ func main() {
 		Use:   "http",
 		Short: "Start the Harness Server over HTTP (for agent hosts).",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// See the "start" command's comment above.
+			_ = os.Setenv("{{ tool_prefix_env }}_TRANSPORT", string(core.TransportHTTP))
 			return cli.RunHTTPHarness(context.Background(), overrides())
 		},
 	})

@@ -8,22 +8,33 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// authGateMiddleware requires an Authorization header on /mcp for every
-// request except from localhost (see IsLocalhost) — enforced here, in
-// front of the mounted MCP endpoint, since this project's auth policy
-// isn't the MCP SDK's concern. Also increments the http_requests_total
-// counter for every request that reaches it.
-func authGateMiddleware(requestCounter metric.Int64Counter) func(http.Handler) http.Handler {
+// authGateMiddleware requires valid credentials for the active auth
+// method on /mcp for every request except from localhost (see
+// IsLocalhost) — enforced here, in front of the mounted MCP endpoint,
+// since this project's auth policy isn't the MCP SDK's concern. Also
+// increments the http_requests_total counter for every request that
+// reaches it.
+//
+// This is a coarse pre-flight check only: the *actual* credential
+// forwarded to the facaded API is extracted independently, per tool
+// call, via server.WithHTTPContextFunc (see internal/cli's
+// RunHTTPHarness) — mcp-go's per-request, not per-session, context
+// injection hook. HTTP transport never falls back to local
+// config/keychain (see auth.Manager.ApplyAuthHeaders), so a localhost
+// caller with no header simply gets a clear per-call error from the call
+// tool instead of a 401 here — never a silent leak of the operator's own
+// configured secret.
+func authGateMiddleware(requestCounter metric.Int64Counter, headerLocation, headerName string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestCounter.Add(r.Context(), 1)
 
 			relaxed := IsLocalhost(r.RemoteAddr)
 			if !relaxed && strings.HasPrefix(r.URL.Path, "/mcp") {
-				if _, ok := ExtractAuthorizationHeader(r.Header); !ok {
+				if _, err := ExtractRequestCredentials(r.Header, headerLocation, headerName); err != nil {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
-					_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing Authorization header"})
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid credentials for this API's auth method"})
 					return
 				}
 			}

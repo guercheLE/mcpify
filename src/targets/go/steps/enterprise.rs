@@ -140,10 +140,12 @@ mod tests {
                 AuthSchemeDescriptor {
                     name: "basicAuth".to_string(),
                     kind: AuthSchemeKind::Basic,
+                    location: None,
                 },
                 AuthSchemeDescriptor {
                     name: "oauth2".to_string(),
                     kind: AuthSchemeKind::OAuth2,
+                    location: None,
                 },
             ],
         );

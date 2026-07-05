@@ -12,6 +12,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 
+	"{{ module_path }}/internal/auth"
 	"{{ module_path }}/internal/core"
 )
 
@@ -32,6 +33,7 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 		return err
 	}
 	apiVersion := promptApiVersion()
+	transport := promptTransport()
 
 	credentialStore, err := core.NewCredentialStore()
 	if err != nil {
@@ -49,6 +51,7 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 		"{{ tool_prefix_env }}_URL":         url,
 		"{{ tool_prefix_env }}_AUTH_METHOD": string(authMethod),
 		"{{ tool_prefix_env }}_API_VERSION": apiVersion,
+		"{{ tool_prefix_env }}_TRANSPORT":   string(transport),
 	}
 	for key, value := range credentials {
 		env["{{ tool_prefix_env }}_"+strings.ToUpper(key)] = value
@@ -57,8 +60,88 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 	if err := promptPersistence(env); err != nil {
 		return err
 	}
-	fmt.Println("Setup complete! Run: {{ project_name }} start")
+	printMcpClientConfig(transport, authMethod, env)
+
+	runCommand := "start"
+	if transport == core.TransportHTTP {
+		runCommand = "http"
+	}
+	fmt.Printf("Setup complete! Run: {{ project_name }} %s\n", runCommand)
 	return nil
+}
+
+func promptTransport() core.Transport {
+	options := []string{
+		"stdio (spawned as a subprocess by the MCP client)",
+		"http (a standalone server the MCP client connects to over the network)",
+	}
+	var selection string
+	_ = survey.AskOne(&survey.Select{Message: "Which transport will this deployment use?", Options: options}, &selection)
+	if strings.HasPrefix(selection, "stdio") {
+		return core.TransportStdio
+	}
+	return core.TransportHTTP
+}
+
+// printMcpClientConfig prints a ready-to-use MCP client config (the
+// mcpServers block a host like Claude Code/Desktop expects) for whichever
+// transport was selected — the stdio and http shapes are mutually
+// exclusive, never both, since they're two different ways of running
+// this same server and a client only ever picks one. HTTP transport shows
+// credentials as headers only (never env/CLI args, matching
+// auth.Manager.ApplyAuthHeaders's HTTP-only-uses-per-request-credentials
+// behavior); stdio shows both the env block and the equivalent
+// all-CLI-args invocation, since the config cascade accepts either for a
+// spawned subprocess.
+func printMcpClientConfig(transport core.Transport, authMethod core.AuthMethod, env map[string]string) {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	if transport == core.TransportStdio {
+		config := map[string]any{
+			"mcpServers": map[string]any{
+				"{{ project_name }}": map[string]any{
+					"command": "{{ project_name }}",
+					"args":    []string{"start"},
+					"env":     env,
+				},
+			},
+		}
+		fmt.Println("\nMCP client config (stdio):")
+		encoded, _ := json.MarshalIndent(config, "", "  ")
+		fmt.Println(string(encoded))
+
+		flags := make([]string, 0, len(keys))
+		for _, key := range keys {
+			flag := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+			flags = append(flags, fmt.Sprintf("--%s %q", flag, env[key]))
+		}
+		fmt.Printf("(equivalently: `{{ project_name }} start %s`)\n", strings.Join(flags, " "))
+		return
+	}
+
+{%- if "oauth1" in auth_method_keys %}
+	if authMethod == core.AuthMethodOAuth1 {
+		fmt.Println("\nOAuth1 is not supported over HTTP transport: its signature must be recomputed per request against the destination URL using the server's consumer key/secret, which a simple incoming-header relay cannot provide. Use stdio transport for this API instead.")
+		return
+	}
+{%- endif %}
+	_, headerName := auth.HeaderLocationFor(authMethod)
+	config := map[string]any{
+		"mcpServers": map[string]any{
+			"{{ project_name }}": map[string]any{
+				"url":     "http://127.0.0.1:3000/mcp",
+				"headers": map[string]string{headerName: "<credential value here>"},
+			},
+		},
+	}
+	fmt.Println("\nMCP client config (http) — adjust the host/port to match how you run `{{ project_name }} http`:")
+	encoded, _ := json.MarshalIndent(config, "", "  ")
+	fmt.Println(string(encoded))
+	fmt.Printf("Credentials are never read from local config/env over HTTP transport — every request must carry its own %q header.\n", headerName)
 }
 
 func promptBaseURL(ctx context.Context) (string, error) {

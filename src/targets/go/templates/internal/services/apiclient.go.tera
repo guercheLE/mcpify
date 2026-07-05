@@ -143,6 +143,7 @@ func (c *ApiClient) Execute(
 	endpoint data.EndpointRecord,
 	args map[string]any,
 	authManager *auth.Manager,
+	requestOverride *auth.RequestCredentials,
 ) (any, error) {
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, err
@@ -159,7 +160,7 @@ func (c *ApiClient) Execute(
 	for name, value := range pickByLocation(endpoint, args, "header") {
 		headers[name] = value
 	}
-	headers, err = authManager.ApplyAuthHeaders(ctx, headers, endpoint.Method, requestURL)
+	headers, err = authManager.ApplyAuthHeaders(ctx, headers, endpoint.Method, requestURL, c.config.Transport, requestOverride)
 	if err != nil {
 		return nil, err
 	}

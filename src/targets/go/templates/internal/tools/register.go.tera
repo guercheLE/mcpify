@@ -78,7 +78,16 @@ func Register(
 			}
 			args := mcp.ParseStringMap(request, "args", map[string]any{})
 
-			result, err := Call(ctx, store, apiClient, authManager, apiVersion, operationID, args)
+			// HTTP transport only: internal/cli's RunHTTPHarness attaches
+			// this call's own extracted credentials via
+			// server.WithHTTPContextFunc — nil on stdio, where that hook
+			// never runs.
+			var requestOverride *auth.RequestCredentials
+			if credentials, ok := ctx.Value(auth.RequestCredentialsContextKey).(auth.RequestCredentials); ok {
+				requestOverride = &credentials
+			}
+
+			result, err := Call(ctx, store, apiClient, authManager, apiVersion, operationID, args, requestOverride)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

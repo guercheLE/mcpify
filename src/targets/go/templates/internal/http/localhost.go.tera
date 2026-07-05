@@ -4,8 +4,11 @@
 package httptransport
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+
+	"{{ module_path }}/internal/auth"
 )
 
 // IsLocalhost reports whether remoteAddr (net/http's Request.RemoteAddr
@@ -27,4 +30,21 @@ func IsLocalhost(remoteAddr string) bool {
 func ExtractAuthorizationHeader(headers http.Header) (string, bool) {
 	value := headers.Get("Authorization")
 	return value, value != ""
+}
+
+// ExtractRequestCredentials extracts the credential value for the active
+// auth method's declared location (auth.HeaderLocationFor) off an
+// incoming HTTP request. The extracted value is relayed verbatim to the
+// facaded API — whatever the caller sent, prefixed or not.
+func ExtractRequestCredentials(headers http.Header, headerLocation, headerName string) (auth.RequestCredentials, error) {
+	if headerLocation != "header" {
+		return auth.RequestCredentials{}, fmt.Errorf("unsupported credential location %q", headerLocation)
+	}
+
+	value := headers.Get(headerName)
+	if value == "" {
+		return auth.RequestCredentials{}, fmt.Errorf("missing or empty %q header", headerName)
+	}
+
+	return auth.RequestCredentials{HeaderName: headerName, Value: value}, nil
 }

@@ -13,6 +13,10 @@ const SHARED_FILES: &[(&str, &str)] = &[
         "internal/auth/strategy.go",
     ),
     ("internal/auth/errors.go.tera", "internal/auth/errors.go"),
+    (
+        "internal/auth/requestcredentials.go.tera",
+        "internal/auth/requestcredentials.go",
+    ),
     ("internal/auth/stub.go.tera", "internal/auth/stub.go"),
     ("internal/auth/manager.go.tera", "internal/auth/manager.go"),
     (
@@ -68,7 +72,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::auth_profile::AuthSchemeDescriptor;
+    use crate::auth_profile::{AuthSchemeDescriptor, default_location_for};
 
     fn ctx_with_schemes(
         output_dir: PathBuf,
@@ -91,6 +95,7 @@ mod tests {
         AuthSchemeDescriptor {
             name: name.to_string(),
             kind,
+            location: default_location_for(kind),
         }
     }
 
@@ -119,6 +124,7 @@ mod tests {
         for expected in [
             "internal/auth/strategy.go",
             "internal/auth/errors.go",
+            "internal/auth/requestcredentials.go",
             "internal/auth/stub.go",
             "internal/auth/manager.go",
             "internal/auth/register.go",

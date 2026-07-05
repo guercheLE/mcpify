@@ -51,6 +51,23 @@ func NewManager(authMethod core.AuthMethod, strategies map[core.AuthMethod]Strat
 	return &Manager{authMethod: authMethod, strategy: strategy, credentials: credentialStore}, nil
 }
 
+// headerLocations maps each discovered auth method to where its
+// credential value travels on the wire — used only by the HTTP-transport
+// auth-gate/extractor (internal/http) to know which incoming header to
+// read; stdio never calls this.
+var headerLocations = map[core.AuthMethod][2]string{
+	core.AuthMethodBasic: {"header", "Authorization"},
+	core.AuthMethodPat: {"header", "Authorization"},
+	core.AuthMethodOAuth2: {"header", "Authorization"},
+	core.AuthMethodOAuth1: {"none", ""},
+}
+
+// HeaderLocationFor returns (headerLocation, headerName) for authMethod.
+func HeaderLocationFor(authMethod core.AuthMethod) (string, string) {
+	location := headerLocations[authMethod]
+	return location[0], location[1]
+}
+
 func (m *Manager) Login(ctx context.Context, config Credentials) (Credentials, error) {
 	credentials, err := m.strategy.Authenticate(ctx, config)
 	if err != nil {
@@ -121,15 +138,45 @@ func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 	return nil, NewNoActiveCredentialsError(string(m.authMethod))
 }
 
-// ApplyAuthHeaders decorates outgoing request headers with the active
-// strategy's credentials. API-key placement (header vs. query, and the
-// header/param name) defaults to an `X-Api-Key` header here; a scheme
-// declaring a different location is one of Story G6's API-client
-// responsibilities to refine, not this manager's.
-func (m *Manager) ApplyAuthHeaders(ctx context.Context, headers map[string]string, method, url string) (map[string]string, error) {
-	credentials, err := m.GetCredentials(ctx)
-	if err != nil {
-		return nil, err
+// ApplyAuthHeaders decorates outgoing request headers with credentials
+// for transport: on core.TransportHTTP, requestOverride (extracted
+// per-request from the caller's own headers — see internal/http's
+// extractor) is the *only* source ever consulted, since HTTP deployments
+// must never leak the operator's local config/keychain secrets to a
+// caller who didn't supply their own; a nil override is a hard error, not
+// a fallback. On core.TransportStdio, requestOverride is ignored and
+// behavior is unchanged from before HTTP-transport support existed:
+// GetCredentials (config cascade + keychain).
+//
+// API-key placement (header vs. query, and the header/param name)
+// defaults to an `X-Api-Key` header here; a scheme declaring a different
+// location is one of Story G6's API-client responsibilities to refine,
+// not this manager's — requestOverride's request_header_name/
+// request_header_value pair is the one exception, since the HTTP path
+// already knows the scheme's declared header name at generation time.
+func (m *Manager) ApplyAuthHeaders(
+	ctx context.Context,
+	headers map[string]string,
+	method, url string,
+	transport core.Transport,
+	requestOverride *RequestCredentials,
+) (map[string]string, error) {
+	if transport == core.TransportHTTP && m.authMethod == core.AuthMethodOAuth1 {
+		return nil, &Error{Message: "OAuth1 is not supported over HTTP transport: its signature must be recomputed per request against the destination URL using the server's consumer key/secret, which a simple incoming-header relay cannot provide. Use stdio transport for OAuth1-authenticated APIs."}
+	}
+
+	var credentials Credentials
+	if transport == core.TransportHTTP {
+		if requestOverride == nil {
+			return nil, &Error{Message: "no credentials were supplied on this HTTP request; local config/env/keychain is never used as a fallback over HTTP transport"}
+		}
+		credentials = requestOverride.ToCredentialsMap()
+	} else {
+		var err error
+		credentials, err = m.GetCredentials(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if m.authMethod == core.AuthMethodOAuth1 {
 		consumerKey, hasConsumerKey := credentials["consumer_key"]
@@ -147,7 +194,9 @@ func (m *Manager) ApplyAuthHeaders(ctx context.Context, headers map[string]strin
 	}
 
 	updated := copyHeaders(headers)
-	if authHeader, ok := credentials["authorization_header"]; ok {
+	if headerName, ok := credentials["request_header_name"]; ok {
+		updated[headerName] = credentials["request_header_value"]
+	} else if authHeader, ok := credentials["authorization_header"]; ok {
 		updated["Authorization"] = authHeader
 	} else if apiKey, ok := credentials["api_key"]; ok {
 		updated["X-Api-Key"] = apiKey
