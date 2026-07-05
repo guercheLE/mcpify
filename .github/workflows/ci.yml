@@ -16,7 +16,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -32,9 +32,17 @@ jobs:
       # library needed here: `go build` only needs the CGo wrapper's
       # vendored header, not the actual native library — that's only
       # required at runtime (`e2e` job below).
-      - uses: actions/setup-go@v5
+      # `cache: false` — setup-go's default caching keys off a root
+      # go.sum, which doesn't exist here: this repo is Rust, and the only
+      # Go module involved is a fixture rendered into a tempdir by
+      # `tests/go_build_smoke.rs`/`tests/e2e_generation.rs`, not checked
+      # out at the repo root. Leaving the default on just logs a "cache
+      # restore failed" warning every run for a cache key that can never
+      # exist.
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
+          cache: false
       # `tests/go_build_smoke.rs` now also runs `golangci-lint run ./...`
       # against the rendered fixture (gocritic enabled), so this job
       # needs the binary on PATH — same tier as `cargo`/`clippy` above.
@@ -74,22 +82,24 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v3
-      - uses: actions/setup-dotnet@v4
+      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "10.0.x"
-      - uses: actions/setup-go@v5
+      # `cache: false` — see the `test` job's identical setup-go step above.
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
+          cache: false
       # The Go target's generated test suite now runs `golangci-lint run`
       # too (same as the `test` job above), so this job needs the binary
       # on PATH as well — the e2e Go test invokes it for real.
@@ -108,7 +118,7 @@ jobs:
       # extension-loading flakiness (Story 5's tests).
       - name: Cache ONNX Runtime
         id: onnxruntime-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: onnxruntime
           key: onnxruntime-linux-x64-1.27.0
