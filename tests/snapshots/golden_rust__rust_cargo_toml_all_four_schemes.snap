@@ -18,7 +18,7 @@ name = "out"
 path = "src/main.rs"
 
 [[bin]]
-name = "populate-embeddings"
+name = "out-populate-embeddings"
 path = "src/bin/populate_embeddings.rs"
 
 [[bin]]

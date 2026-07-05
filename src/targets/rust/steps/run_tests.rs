@@ -8,12 +8,13 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::context::GeneratorContext;
+use crate::targets::rust::context::RsTemplateContext;
 use crate::progress;
 
 /// Generous relative to `targets::typescript`'s 300s `npm install` budget:
 /// a cold Cargo registry has ~150 crates to fetch and compile for this
 /// target's toolchain (rmcp, fastembed/ort, rsa, axum, ...), and
-/// `populate-embeddings` may also need to download the embedding model on
+/// `<project>-populate-embeddings` may also need to download the embedding model on
 /// first run (mirroring `@xenova/transformers`' own first-run download).
 const CARGO_TIMEOUT: Duration = Duration::from_secs(900);
 
@@ -46,10 +47,13 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     // semantic_endpoints table — vectors are computed here, not by
     // mcpify itself (see the plan's embeddings decision), so this must
     // run before `cargo test`.
+    let view = RsTemplateContext::from_context(ctx);
+    let populate_bin = format!("{}-populate-embeddings", view.project_name);
+    let populate_label = format!("cargo run --bin {populate_bin}");
     run_cargo_command(
         &ctx.output_dir,
-        &["run", "--bin", "populate-embeddings"],
-        "cargo run --bin populate-embeddings",
+        &["run", "--bin", populate_bin.as_str()],
+        populate_label.as_str(),
     )
     .await?;
     run_cargo_command(&ctx.output_dir, &["test"], "cargo test").await?;

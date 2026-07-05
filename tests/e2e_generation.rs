@@ -42,7 +42,7 @@ async fn generates_a_project_and_passes_its_own_test_suite() {
 
 /// Story R8's analogous acceptance test for the Rust target: runs the full
 /// `RustTargetGenerator::execute()` lifecycle — including
-/// `run_generated_tests`' actual `cargo run --bin populate-embeddings`
+/// `run_generated_tests`' actual `cargo run --bin <project>-populate-embeddings`
 /// (with the `fastembed` model download) and `cargo test` — against the
 /// same fixture spec used for the TypeScript e2e test above, for direct
 /// comparability. Requires a Rust toolchain (already present, since

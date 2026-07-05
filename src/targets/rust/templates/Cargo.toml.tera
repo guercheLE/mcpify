@@ -21,7 +21,7 @@ name = "{{ project_name }}"
 path = "src/main.rs"
 
 [[bin]]
-name = "populate-embeddings"
+name = "{{ project_name }}-populate-embeddings"
 path = "src/bin/populate_embeddings.rs"
 
 [[bin]]
