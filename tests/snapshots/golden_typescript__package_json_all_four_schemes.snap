@@ -1,6 +1,5 @@
 ---
 source: tests/golden_typescript.rs
-assertion_line: 148
 expression: contents
 ---
 {
@@ -20,11 +19,11 @@ expression: contents
     "README.md"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "build": "tsc",
-    "postbuild": "chmod +x dist/cli.js",
+    "postbuild": "chmod +x dist/cli.js && node -e \"require('fs').cpSync('src/validation', 'dist/validation', { recursive: true, filter: (p) => require('fs').statSync(p).isDirectory() || p.endsWith('.zst') })\"",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",

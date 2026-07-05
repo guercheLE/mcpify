@@ -14,7 +14,7 @@ export function registerTestConnectionCommand(program: Command): void {
     .action(async () => {
       const config = loadConfig();
       const authManager = new AuthManager(config.auth_method);
-      const headers = await authManager.applyAuthHeaders({}, 'GET', config.url);
+      const headers = await authManager.applyAuthHeaders({}, 'GET', config.url, 'stdio');
       try {
         await axios.get(buildApiUrl(config.url, '/'), { headers, timeout: config.timeout_ms });
         console.log('connection OK');

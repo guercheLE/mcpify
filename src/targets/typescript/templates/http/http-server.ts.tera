@@ -8,7 +8,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import type { ComponentRegistry } from '../core/component-registry.js';
 import { logger } from '../core/logger.js';
-import { extractAuthorizationHeader } from './auth-extractor.js';
+import { ExtractError, extractRequestCredentials } from './auth-extractor.js';
 import { isFromLocalhost } from './localhost-detector.js';
 import { increment, renderMetrics } from './metrics.js';
 import type { HttpServerConfig } from './types.js';
@@ -16,17 +16,67 @@ import type { HttpServerConfig } from './types.js';
 /**
  * HTTP transport: `/mcp` is handled by the SDK's own streamable-HTTP
  * transport; `/healthz` and `/metrics` are plain REST endpoints alongside
- * it. Requests from localhost get relaxed auth handling (see
- * localhost-detector.ts); everything else requires an `Authorization`
- * header to be present.
+ * it. Requests from localhost get a relaxed *gate* (see
+ * localhost-detector.ts) — no 401 for a missing credential, so `curl
+ * localhost` keeps working without any header for quick local testing.
+ * But this gate is a coarse pre-flight check only: the *actual*
+ * credential forwarded to the facaded API is extracted independently,
+ * per tool call, inside `tools/register-tools.ts` (via the SDK's
+ * `extra.requestInfo.headers`, which carries this exact request's
+ * headers regardless of any internal session/task boundaries — the
+ * transport attaches it fresh to every incoming message, not just once
+ * at session creation). HTTP transport never falls back to local
+ * config/keychain (see `AuthManager.applyAuthHeaders`), so a localhost
+ * caller with no header simply gets a clear per-call error from `call`
+ * instead of a 401 here — never a silent leak of the operator's own
+ * configured secret.
  */
 export async function startHttpServer(
-  mcpServer: McpServer,
+  createSession: () => McpServer,
   config: HttpServerConfig,
   registry: ComponentRegistry,
+  headerLocation: string,
+  headerName: string,
 ): Promise<NodeHttpServer> {
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
-  await mcpServer.connect(transport);
+  // The SDK's Protocol.connect() can only ever be called once per instance
+  // ("use a separate Protocol instance per connection" — its own error
+  // message if you try a second time), so a single shared transport/server
+  // pair can serve exactly one MCP session for the process lifetime. To
+  // support multiple concurrent clients (or one client reconnecting), each
+  // new session gets its own transport *and* its own McpServer, keyed by the
+  // session ID the transport generates on `initialize` — mirroring the
+  // SDK's own documented multi-session example.
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
+
+  const dispatchMcpRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const sessionId = request.headers['mcp-session-id'];
+    const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+
+    let transport: StreamableHTTPServerTransport;
+    if (existing) {
+      transport = existing;
+    } else if (typeof sessionId === 'string') {
+      response.writeHead(404, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'session not found' }));
+      return;
+    } else {
+      // No session header: this must be a fresh `initialize` call. If it
+      // isn't, the transport's own validation rejects it with 400 before
+      // `onsessioninitialized` ever fires, so nothing leaks into `sessions`.
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          sessions.set(id, transport);
+        },
+      });
+      transport.onclose = () => {
+        if (transport.sessionId) sessions.delete(transport.sessionId);
+      };
+      await createSession().connect(transport);
+    }
+
+    await transport.handleRequest(request, response);
+  };
 
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     increment('http_requests_total');
@@ -50,12 +100,19 @@ export async function startHttpServer(
 
     if (request.url?.startsWith('/mcp')) {
       const relaxed = isFromLocalhost(request);
-      if (!relaxed && !extractAuthorizationHeader(request)) {
-        response.writeHead(401, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ error: 'missing Authorization header' }));
-        return;
+      if (!relaxed) {
+        try {
+          extractRequestCredentials(request.headers, headerLocation, headerName);
+        } catch (error) {
+          if (error instanceof ExtractError) {
+            response.writeHead(401, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ error: "missing or invalid credentials for this API's auth method" }));
+            return;
+          }
+          throw error;
+        }
       }
-      transport.handleRequest(request, response).catch((error: unknown) => {
+      dispatchMcpRequest(request, response).catch((error: unknown) => {
         logger.error({ err: error }, 'error handling HTTP MCP request');
         if (!response.headersSent) {
           response.writeHead(500, { 'Content-Type': 'application/json' });

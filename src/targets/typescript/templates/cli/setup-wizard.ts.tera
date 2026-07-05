@@ -11,7 +11,8 @@ import { join } from 'node:path';
 import axios from 'axios';
 import inquirer from 'inquirer';
 
-import type { ApiVersion, AuthMethod } from '../core/config-schema.js';
+import { headerLocationFor } from '../auth/auth-manager.js';
+import type { ApiVersion, AuthMethod, Config } from '../core/config-schema.js';
 import { saveCredential } from '../core/credential-storage.js';
 
 function toEnvKey(key: string): string {
@@ -49,6 +50,21 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   ]);
   return authMethod;
 {%- endif %}
+}
+
+async function promptTransport(): Promise<Config['transport']> {
+  const { transport } = await inquirer.prompt<{ transport: Config['transport'] }>([
+    {
+      type: 'list',
+      name: 'transport',
+      message: 'Which transport will this deployment use?',
+      choices: [
+        { name: 'stdio (spawned as a subprocess by the MCP client)', value: 'stdio' },
+        { name: 'http (a standalone server the MCP client connects to over the network)', value: 'http' },
+      ],
+    },
+  ]);
+  return transport;
 }
 
 // mcpify:versions:begin
@@ -147,11 +163,69 @@ async function promptPersistence(env: Record<string, string>): Promise<void> {
   }
 }
 
+/**
+ * Prints a ready-to-use MCP client config (the `mcpServers` block a host
+ * like Claude Code/Desktop expects) for whichever transport was selected
+ * — the stdio and http shapes are mutually exclusive, never both, since
+ * they're two different ways of running this same server and a client
+ * only ever picks one. HTTP transport shows credentials as headers only
+ * (never env/CLI args, matching `AuthManager.applyAuthHeaders`'s
+ * HTTP-only-uses-per-request-credentials behavior); stdio shows both the
+ * `env` block and the equivalent all-CLI-args invocation, since the
+ * config cascade accepts either for a spawned subprocess.
+ */
+function printMcpClientConfig(transport: Config['transport'], authMethod: AuthMethod, env: Record<string, string>): void {
+  if (transport === 'stdio') {
+    const config = {
+      mcpServers: {
+        ['{{ project_name }}']: {
+          command: '{{ project_name }}',
+          args: ['start'],
+          env,
+        },
+      },
+    };
+    console.log('\nMCP client config (stdio):');
+    console.log(JSON.stringify(config, null, 2));
+    const cliArgs = Object.entries(env)
+      .map(([key, value]) => `--${key.toLowerCase().replace(/_/g, '-')} ${JSON.stringify(value)}`)
+      .join(' ');
+    console.log(`(equivalently: \`{{ project_name }} start ${cliArgs}\`)`);
+    return;
+  }
+
+{%- if "oauth1" in auth_method_keys %}
+  if (authMethod === 'oauth1') {
+    console.log(
+      "\nOAuth1 is not supported over HTTP transport: its signature must be recomputed per " +
+        "request against the destination URL using the server's consumer key/secret, which a " +
+        'simple incoming-header relay cannot provide. Use stdio transport for this API instead.',
+    );
+    return;
+  }
+{%- endif %}
+  const [, headerName] = headerLocationFor(authMethod);
+  const config = {
+    mcpServers: {
+      ['{{ project_name }}']: {
+        url: 'http://127.0.0.1:3000/mcp',
+        headers: { [headerName]: '<credential value here>' },
+      },
+    },
+  };
+  console.log('\nMCP client config (http) — adjust the host/port to match how you run `{{ project_name }} http`:');
+  console.log(JSON.stringify(config, null, 2));
+  console.log(
+    `Credentials are never read from local config/env over HTTP transport — every request must carry its own "${headerName}" header.`,
+  );
+}
+
 export async function runSetupWizard(): Promise<void> {
   const url = await promptBaseUrl();
   const authMethod = await promptAuthMethod();
   const credentials = await promptCredentials(authMethod);
   const apiVersion = await promptApiVersion();
+  const transport = await promptTransport();
 
   await saveCredential('active-credentials', JSON.stringify(credentials));
 
@@ -159,11 +233,15 @@ export async function runSetupWizard(): Promise<void> {
     ['{{ tool_prefix_env }}_URL']: url,
     ['{{ tool_prefix_env }}_AUTH_METHOD']: authMethod,
     ['{{ tool_prefix_env }}_API_VERSION']: apiVersion,
+    ['{{ tool_prefix_env }}_TRANSPORT']: transport,
   };
   for (const [key, value] of Object.entries(credentials)) {
     env[`{{ tool_prefix_env }}_${toEnvKey(key)}`] = value;
   }
 
   await promptPersistence(env);
-  console.log('Setup complete! Run: {{ project_name }} start');
+  printMcpClientConfig(transport, authMethod, env);
+
+  const runCommand = transport === 'stdio' ? 'start' : 'http';
+  console.log(`Setup complete! Run: {{ project_name }} ${runCommand}`);
 }

@@ -6,7 +6,9 @@
 // orchestrators). Run directly (`node dist/index.js`) or via
 // `{{ project_name }} start` / `{{ project_name }} http` (see cli.ts).
 
-import { AuthManager } from './auth/auth-manager.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+import { AuthManager, headerLocationFor } from './auth/auth-manager.js';
 import { loadConfig } from './core/config-manager.js';
 import { ComponentRegistry } from './core/component-registry.js';
 import { HealthCheckManager } from './core/health-check-manager.js';
@@ -39,16 +41,34 @@ export async function main(): Promise<void> {
 
   const authManager = new AuthManager(config.auth_method);
 
-  const server = createMcpServer();
-  registerTools(server, { store, config, authManager });
-
   healthChecks.start();
   onShutdown(() => healthChecks.stop());
 
   if (config.transport === 'http') {
-    await startHttpServer(server, config, registry);
+    {%- if "oauth1" in auth_method_keys %}
+    if (config.auth_method === 'oauth1') {
+      throw new Error(
+        "OAuth1 is not supported over HTTP transport: its signature must be recomputed per " +
+          "request against the destination URL using the server's consumer key/secret, which a " +
+          'simple incoming-header relay cannot provide. Use stdio transport for OAuth1-authenticated ' +
+          'APIs, or switch auth_method.',
+      );
+    }
+    {%- endif %}
+    const [headerLocation, headerName] = headerLocationFor(config.auth_method);
+    // Each HTTP session gets its own McpServer instance (the SDK allows only
+    // one `connect()` per instance — see http/http-server.ts), so `main`
+    // hands the HTTP server a factory rather than a single pre-built one.
+    const createSession = (): McpServer => {
+      const server = createMcpServer();
+      registerTools(server, { store, config, authManager });
+      return server;
+    };
+    await startHttpServer(createSession, config, registry, headerLocation, headerName);
     logger.info({ host: config.host, port: config.port }, 'MCP server listening over HTTP');
   } else {
+    const server = createMcpServer();
+    registerTools(server, { store, config, authManager });
     await connectStdio(server);
   }
 }

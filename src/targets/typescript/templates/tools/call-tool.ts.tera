@@ -3,6 +3,7 @@
 import { z } from 'zod';
 
 import type { AuthManager } from '../auth/auth-manager.js';
+import type { RequestCredentials } from '../auth/request-credentials.js';
 import type { Config } from '../core/config-schema.js';
 import { NotFoundError } from '../core/errors.js';
 import { getEndpoint, type Store } from '../data/store-repository.js';
@@ -27,6 +28,7 @@ export async function callOperation(
   authManager: AuthManager,
   operationId: string,
   args: Record<string, unknown>,
+  requestOverride?: RequestCredentials,
 ): Promise<unknown> {
   const endpoint = getEndpoint(store, operationId);
   if (!endpoint) {
@@ -36,7 +38,7 @@ export async function callOperation(
   validateInput(operationId, args);
 
   const client = new ApiClient(config, authManager);
-  const response = await client.execute(endpoint, args);
+  const response = await client.execute(endpoint, args, requestOverride);
 
   validateOutput(operationId, response.data);
   return response.data;

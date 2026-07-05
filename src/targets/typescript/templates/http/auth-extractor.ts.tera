@@ -2,8 +2,40 @@
 
 import type { IncomingMessage } from 'node:http';
 
+import type { IsomorphicHeaders } from '@modelcontextprotocol/sdk/types.js';
+
+import type { RequestCredentials } from '../auth/request-credentials.js';
+
 /** Parses the `Authorization` header off an incoming HTTP request, if present. */
 export function extractAuthorizationHeader(request: IncomingMessage): string | undefined {
   const header = request.headers.authorization;
   return Array.isArray(header) ? header[0] : header;
+}
+
+export class ExtractError extends Error {}
+
+/**
+ * Extracts the credential value for the active auth method's declared
+ * location (`auth/auth-manager.ts`'s `headerLocationFor`) off a header
+ * map — used both by the auth-gate (Node `IncomingMessage.headers`) and
+ * the per-call extractor (the SDK's `RequestInfo.headers`). The extracted
+ * value is relayed verbatim to the facaded API — whatever the caller
+ * sent, prefixed or not.
+ */
+export function extractRequestCredentials(
+  headers: IsomorphicHeaders,
+  headerLocation: string,
+  headerName: string,
+): RequestCredentials {
+  if (headerLocation !== 'header') {
+    throw new ExtractError(`unsupported credential location '${headerLocation}'`);
+  }
+
+  const raw = headers[headerName.toLowerCase()];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) {
+    throw new ExtractError(`missing or empty '${headerName}' header`);
+  }
+
+  return { headerName, value };
 }

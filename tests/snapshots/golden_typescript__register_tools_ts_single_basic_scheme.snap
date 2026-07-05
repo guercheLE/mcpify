@@ -6,9 +6,12 @@ expression: contents
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
+import { headerLocationFor } from '../auth/auth-manager.js';
 import type { AuthManager } from '../auth/auth-manager.js';
+import type { RequestCredentials } from '../auth/request-credentials.js';
 import type { Config } from '../core/config-schema.js';
 import type { Store } from '../data/store-repository.js';
+import { ExtractError, extractRequestCredentials } from '../http/auth-extractor.js';
 import { callInputShape, callOperation } from './call-tool.js';
 import { getInputShape, getOperation } from './get-tool.js';
 import { searchInputShape, searchOperations } from './search-tool.js';
@@ -41,9 +44,35 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     'call',
     'Validate arguments, invoke a live Minimal API API operation, and validate the response.',
     callInputShape,
-    async ({ operationId, arguments: operationArgs }) =>
-      executeTool('call', () =>
-        callOperation(context.store, context.config, context.authManager, operationId, operationArgs),
-      ),
+    async ({ operationId, arguments: operationArgs }, extra) => {
+      // HTTP transport only: the SDK attaches this call's own request
+      // headers to `extra.requestInfo` regardless of how long the
+      // underlying session's internal handling lives (it's set fresh per
+      // incoming message, not just once at session creation — see
+      // `http/http-server.ts`'s doc comment for why this is the one
+      // mechanism that actually works here). `undefined` on stdio, where
+      // no such request info is ever attached.
+      let requestOverride: RequestCredentials | undefined;
+      const headers = extra.requestInfo?.headers;
+      if (headers) {
+        const [headerLocation, headerName] = headerLocationFor(context.config.auth_method);
+        try {
+          requestOverride = extractRequestCredentials(headers, headerLocation, headerName);
+        } catch (error) {
+          if (!(error instanceof ExtractError)) throw error;
+        }
+      }
+
+      return executeTool('call', () =>
+        callOperation(
+          context.store,
+          context.config,
+          context.authManager,
+          operationId,
+          operationArgs,
+          requestOverride,
+        ),
+      );
+    },
   );
 }

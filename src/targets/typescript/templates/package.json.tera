@@ -19,7 +19,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "postbuild": "chmod +x dist/cli.js",
+    "postbuild": "chmod +x dist/cli.js && node -e \"require('fs').cpSync('src/validation', 'dist/validation', { recursive: true, filter: (p) => require('fs').statSync(p).isDirectory() || p.endsWith('.zst') })\"",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",

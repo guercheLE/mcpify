@@ -7,6 +7,7 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
 import type { AuthManager } from '../auth/auth-manager.js';
+import type { RequestCredentials } from '../auth/request-credentials.js';
 import { buildApiUrl } from '../core/api-url-builder.js';
 import { CircuitBreaker } from '../core/circuit-breaker.js';
 import type { Config } from '../core/config-schema.js';
@@ -58,7 +59,11 @@ export class ApiClient {
    * transient failures up to `config.retry_attempts` times, all inside the
    * circuit breaker and rate limiter (REQ-2.3.3).
    */
-  async execute(endpoint: EndpointRecord, params: Record<string, unknown>): Promise<AxiosResponse> {
+  async execute(
+    endpoint: EndpointRecord,
+    params: Record<string, unknown>,
+    requestOverride?: RequestCredentials,
+  ): Promise<AxiosResponse> {
     this.rateLimiter.acquire();
 
     const query = pickByLocation(endpoint, params, 'query');
@@ -66,7 +71,13 @@ export class ApiClient {
     const extraHeaders = pickByLocation(endpoint, params, 'header');
 
     let headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
-    headers = await this.authManager.applyAuthHeaders(headers, endpoint.method, url);
+    headers = await this.authManager.applyAuthHeaders(
+      headers,
+      endpoint.method,
+      url,
+      this.config.transport,
+      requestOverride,
+    );
 
     return this.circuitBreaker.execute(() => this.dispatch(endpoint.method, url, params.body, headers));
   }
