@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
-use openapiv3::{OpenAPI, ReferenceOr, SecurityScheme};
+use openapiv3::{APIKeyLocation, OpenAPI, ReferenceOr, SecurityScheme};
 
-use super::descriptor::{AuthSchemeDescriptor, AuthSchemeKind};
+use super::descriptor::{AuthSchemeDescriptor, AuthSchemeKind, AuthSchemeLocation, default_location_for};
 
 /// Turns `components.securitySchemes` into `Vec<AuthSchemeDescriptor>`
 /// (architecture.md §1, step 3). `$ref`-based scheme entries are skipped —
@@ -21,9 +21,31 @@ pub fn classify_schemes(doc: &OpenAPI) -> Vec<AuthSchemeDescriptor> {
             classify_one(scheme).map(|kind| AuthSchemeDescriptor {
                 name: name.clone(),
                 kind,
+                location: location_for(scheme, kind),
             })
         })
         .collect()
+}
+
+/// Where this scheme's credential value travels on the wire. `apiKey`
+/// schemes carry their own declared `in`/`name`; everything else falls back
+/// to the same default an operator-selected (interactive-prompt) scheme
+/// would get, since `http`/`oauth2`/`oauth1` have no per-spec location to
+/// read (OAuth1's vendor extension can attach to either an `apiKey` or an
+/// `http` scheme shape, but OAuth1 itself has no relayable HTTP location
+/// regardless of which shape carried the hint).
+fn location_for(scheme: &SecurityScheme, kind: AuthSchemeKind) -> Option<AuthSchemeLocation> {
+    if kind == AuthSchemeKind::OAuth1 {
+        return None;
+    }
+    if let SecurityScheme::APIKey { location, name, .. } = scheme {
+        return Some(match location {
+            APIKeyLocation::Header => AuthSchemeLocation::Header { name: name.clone() },
+            APIKeyLocation::Query => AuthSchemeLocation::Query { name: name.clone() },
+            APIKeyLocation::Cookie => AuthSchemeLocation::Cookie { name: name.clone() },
+        });
+    }
+    default_location_for(kind)
 }
 
 /// OpenAPI 3 has no native OAuth1 scheme `type`, so OAuth1 is detected via
@@ -93,6 +115,12 @@ components:
         let schemes = classify_schemes(&doc);
         assert_eq!(schemes.len(), 1);
         assert_eq!(schemes[0].kind, AuthSchemeKind::Basic);
+        assert_eq!(
+            schemes[0].location,
+            Some(AuthSchemeLocation::Header {
+                name: "Authorization".to_string()
+            })
+        );
     }
 
     #[test]
@@ -101,13 +129,51 @@ components:
             doc_with_scheme("      type: http\n      scheme: bearer\n      bearerFormat: PAT\n");
         let schemes = classify_schemes(&doc);
         assert_eq!(schemes[0].kind, AuthSchemeKind::BearerPat);
+        assert_eq!(
+            schemes[0].location,
+            Some(AuthSchemeLocation::Header {
+                name: "Authorization".to_string()
+            })
+        );
     }
 
     #[test]
-    fn classifies_api_key() {
+    fn classifies_api_key_in_header() {
         let doc = doc_with_scheme("      type: apiKey\n      in: header\n      name: X-Api-Key\n");
         let schemes = classify_schemes(&doc);
         assert_eq!(schemes[0].kind, AuthSchemeKind::ApiKey);
+        assert_eq!(
+            schemes[0].location,
+            Some(AuthSchemeLocation::Header {
+                name: "X-Api-Key".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn classifies_api_key_in_query() {
+        let doc = doc_with_scheme("      type: apiKey\n      in: query\n      name: api_key\n");
+        let schemes = classify_schemes(&doc);
+        assert_eq!(schemes[0].kind, AuthSchemeKind::ApiKey);
+        assert_eq!(
+            schemes[0].location,
+            Some(AuthSchemeLocation::Query {
+                name: "api_key".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn classifies_api_key_in_cookie() {
+        let doc = doc_with_scheme("      type: apiKey\n      in: cookie\n      name: session\n");
+        let schemes = classify_schemes(&doc);
+        assert_eq!(schemes[0].kind, AuthSchemeKind::ApiKey);
+        assert_eq!(
+            schemes[0].location,
+            Some(AuthSchemeLocation::Cookie {
+                name: "session".to_string()
+            })
+        );
     }
 
     #[test]
@@ -117,6 +183,12 @@ components:
         );
         let schemes = classify_schemes(&doc);
         assert_eq!(schemes[0].kind, AuthSchemeKind::OAuth2);
+        assert_eq!(
+            schemes[0].location,
+            Some(AuthSchemeLocation::Header {
+                name: "Authorization".to_string()
+            })
+        );
     }
 
     #[test]
@@ -126,6 +198,7 @@ components:
         );
         let schemes = classify_schemes(&doc);
         assert_eq!(schemes[0].kind, AuthSchemeKind::OAuth1);
+        assert_eq!(schemes[0].location, None);
     }
 
     #[test]
@@ -134,6 +207,7 @@ components:
             doc_with_scheme("      type: http\n      scheme: oauth\n      x-auth-type: oauth1\n");
         let schemes = classify_schemes(&doc);
         assert_eq!(schemes[0].kind, AuthSchemeKind::OAuth1);
+        assert_eq!(schemes[0].location, None);
     }
 
     #[test]

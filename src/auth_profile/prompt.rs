@@ -1,7 +1,7 @@
 use anyhow::Result;
 use inquire::Select;
 
-use super::descriptor::{AuthSchemeDescriptor, AuthSchemeKind};
+use super::descriptor::{AuthSchemeDescriptor, AuthSchemeKind, default_location_for};
 
 const CHOICES: &[(&str, AuthSchemeKind)] = &[
     ("Basic (username/password)", AuthSchemeKind::Basic),
@@ -35,5 +35,6 @@ pub fn prompt_for_scheme() -> Result<AuthSchemeDescriptor> {
     Ok(AuthSchemeDescriptor {
         name: "prompted".to_string(),
         kind,
+        location: default_location_for(kind),
     })
 }

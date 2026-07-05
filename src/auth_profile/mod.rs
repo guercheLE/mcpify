@@ -7,7 +7,9 @@ pub mod prompt;
 use anyhow::{Context, Result, bail};
 use openapiv3::OpenAPI;
 
-pub use descriptor::{AuthSchemeDescriptor, AuthSchemeKind};
+pub use descriptor::{
+    AuthSchemeDescriptor, AuthSchemeKind, AuthSchemeLocation, default_location_for, location_view,
+};
 
 /// Classifies `components.securitySchemes` into `Vec<AuthSchemeDescriptor>`,
 /// falling back to an interactive prompt (REQ-1.2.4) when nothing could be
