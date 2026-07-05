@@ -8,8 +8,8 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::context::GeneratorContext;
-use crate::targets::rust::context::RsTemplateContext;
 use crate::progress;
+use crate::targets::rust::context::RsTemplateContext;
 
 /// Generous relative to `targets::typescript`'s 300s `npm install` budget:
 /// a cold Cargo registry has ~150 crates to fetch and compile for this
