@@ -10,8 +10,19 @@ cosine similarity would break silently.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import TYPE_CHECKING
+
+# `tokenizers`' Rayon thread pool acquires the GIL from its worker threads
+# once parallelism is enabled, which registers them with the interpreter
+# and makes CPython's shutdown (Py_FinalizeEx, which — since Python
+# 3.9 — waits for every such thread, not just non-daemon ones) hang
+# forever, since Rayon's global pool never voluntarily exits. Must be set
+# before `sentence_transformers`/`tokenizers` is first imported anywhere
+# in the process (including `populate_embeddings` and `pytest`), so it's
+# set here at module import time rather than inside `_model()`.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer

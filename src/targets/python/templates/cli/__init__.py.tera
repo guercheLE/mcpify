@@ -24,7 +24,7 @@ from ..core.health_check import ComponentRegistry, HealthCheckManager
 from ..core.logger import get_logger, init_logging
 from ..core.mcp_server import build_server
 from ..core.tracing import build_tracer_provider, shutdown_tracing
-from ..data.store import open_store, resolve_store_path
+from ..data.store import close_cached_connections, open_store, resolve_store_path
 from ..http.server import build_http_app, start_http_server
 from ..http.types import HttpServerConfig
 from . import call as cli_call
@@ -166,6 +166,7 @@ async def _run_harness_server() -> None:
             await mcp.run_stdio_async()
     finally:
         health_task.cancel()
+        await close_cached_connections()
         if tracer_provider is not None:
             shutdown_tracing(tracer_provider)
 

@@ -122,6 +122,25 @@ async def cached_store_connection(api_version: str) -> aiosqlite.Connection:
         return mem_conn
 
 
+async def close_cached_connections() -> None:
+    """Closes every connection `cached_store_connection` has handed out and
+    clears the cache. `aiosqlite.Connection` runs a dedicated (non-daemon)
+    worker thread per connection, so a cached connection left open past
+    the last `await` in a one-shot process (`search`/`get`/`call`, and the
+    real embedding e2e test) blocks CPython's interpreter shutdown
+    forever waiting to join that thread — unlike the long-running
+    harness server, where the OS simply kills the process, these short-
+    lived callers must close what they opened. Every one-shot CLI command
+    and the e2e test call this once they're done; the persistent harness
+    server calls it from its own shutdown `finally` block alongside
+    `shutdown_tracing`.
+    """
+    async with _cached_connections_lock:
+        for conn in _cached_connections.values():
+            await conn.close()
+        _cached_connections.clear()
+
+
 @dataclass
 class EndpointRecord:
     operation_id: str

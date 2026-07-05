@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 
 from ..core.config import load_config
-from ..data.store import cached_store_connection
+from ..data.store import cached_store_connection, close_cached_connections
 from ..tools.search_tool import search_operations
 
 
 async def run(query: str, limit: int) -> None:
-    config = load_config()
-    conn = await cached_store_connection(config.api_version)
-    results = await search_operations(conn, query, limit)
-    print(json.dumps(results, indent=2))
+    try:
+        config = load_config()
+        conn = await cached_store_connection(config.api_version)
+        results = await search_operations(conn, query, limit)
+        print(json.dumps(results, indent=2))
+    finally:
+        await close_cached_connections()

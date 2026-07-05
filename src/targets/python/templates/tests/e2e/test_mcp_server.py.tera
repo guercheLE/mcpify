@@ -19,6 +19,7 @@ import sqlite_vec
 from {{ module_name }}.auth.auth_manager import AuthManager
 from {{ module_name }}.core.config import AuthMethod, Config
 from {{ module_name }}.core.mcp_server import build_server
+from {{ module_name }}.data.store import close_cached_connections
 from {{ module_name }}.services.embedding_service import embed
 from {{ module_name }}.services.populate_embeddings import populate
 
@@ -71,17 +72,24 @@ async def test_search_and_get_tools_respond_with_real_embeddings(
     auth_manager = AuthManager(config.auth_method)
     mcp = build_server(config.api_version, config, auth_manager)
 
-    tools = await mcp.list_tools()
-    assert {tool.name for tool in tools} == {"search", "get", "call"}
+    try:
+        tools = await mcp.list_tools()
+        assert {tool.name for tool in tools} == {"search", "get", "call"}
 
-    search_result = await mcp.call_tool("search", {"query": "list all widgets", "limit": 5})
-    search_content = (
-        search_result[0][0] if isinstance(search_result, tuple) else search_result.content[0]
-    )
-    search_parsed = json.loads(search_content.text)
-    assert search_parsed[0]["operation_id"] == "listWidgets"
+        search_result = await mcp.call_tool("search", {"query": "list all widgets", "limit": 5})
+        search_content = (
+            search_result[0][0] if isinstance(search_result, tuple) else search_result.content[0]
+        )
+        search_parsed = json.loads(search_content.text)
+        assert search_parsed[0]["operation_id"] == "listWidgets"
 
-    get_result = await mcp.call_tool("get", {"operation_id": "listWidgets"})
-    get_content = get_result[0][0] if isinstance(get_result, tuple) else get_result.content[0]
-    get_parsed = json.loads(get_content.text)
-    assert get_parsed["path"] == "/widgets"
+        get_result = await mcp.call_tool("get", {"operation_id": "listWidgets"})
+        get_content = get_result[0][0] if isinstance(get_result, tuple) else get_result.content[0]
+        get_parsed = json.loads(get_content.text)
+        assert get_parsed["path"] == "/widgets"
+    finally:
+        # `mcp`'s tool calls went through `cached_store_connection`, which
+        # (unlike `open_store`) is deliberately never closed by its
+        # callers — see `close_cached_connections`'s docstring for why
+        # this test must close it explicitly.
+        await close_cached_connections()
