@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use openapiv3::{OpenAPI, Operation, PathItem, ReferenceOr};
 
 use super::schema_resolve::{resolve_input_schema, resolve_output_schema};
@@ -51,8 +53,17 @@ const METHODS: &[(&str, MethodAccessor)] = &[
 /// actually defined, synthesizing an `operation_id` (`"METHOD /path"`) for
 /// operations that omit one. Path items behind a `$ref` are skipped — mcpify
 /// does not resolve external path references.
+///
+/// Some real-world specs (e.g. Jira Data Center's) reuse the same
+/// `operationId` across unrelated endpoints (multiple `getProperty`
+/// operations across issue/project/application-properties resources). Since
+/// `operation_id` is the `endpoints` table's primary key, and downstream
+/// targets expose it as the MCP tool name, collisions are disambiguated by
+/// appending the method and path — which is always unique per OpenAPI's own
+/// rules — rather than failing the whole generation run.
 pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
     let mut operations = Vec::new();
+    let mut seen_operation_ids: HashSet<String> = HashSet::new();
 
     for (path, item) in doc.paths.paths.iter() {
         let ReferenceOr::Item(item) = item else {
@@ -68,6 +79,12 @@ pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
                 .operation_id
                 .clone()
                 .unwrap_or_else(|| format!("{method} {path}"));
+            let operation_id = if seen_operation_ids.insert(operation_id.clone()) {
+                operation_id
+            } else {
+                format!("{operation_id} ({method} {path})")
+            };
+            seen_operation_ids.insert(operation_id.clone());
 
             let auth_scheme_ref = operation
                 .security
@@ -142,6 +159,42 @@ paths:
                 .iter()
                 .any(|op| op.operation_id == "createWidget" && op.method == "POST")
         );
+    }
+
+    #[test]
+    fn disambiguates_duplicate_operation_ids() {
+        let doc = parse(
+            r#"
+openapi: 3.0.0
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /issue/{issueIdOrKey}/properties/{propertyKey}:
+    get:
+      operationId: getProperty
+      responses:
+        "200":
+          description: OK
+  /project/{projectIdOrKey}/properties/{propertyKey}:
+    get:
+      operationId: getProperty
+      responses:
+        "200":
+          description: OK
+"#,
+        );
+
+        let operations = normalize_operations(&doc);
+        assert_eq!(operations.len(), 2);
+
+        let ids: HashSet<_> = operations
+            .iter()
+            .map(|op| op.operation_id.clone())
+            .collect();
+        assert_eq!(ids.len(), 2, "operation ids must be unique: {ids:?}");
+        assert!(ids.contains("getProperty"));
+        assert!(ids.iter().any(|id| id.starts_with("getProperty (GET /")));
     }
 
     #[test]
