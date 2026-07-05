@@ -128,11 +128,23 @@ async fn run_harness_server() -> anyhow::Result<()> {
     let auth_manager = Arc::new(Mutex::new(AuthManager::new(config.auth_method)));
 
     if config.transport == Transport::Http {
+        {%- if "oauth1" in auth_method_keys %}
+        if config.auth_method == {{ crate_name }}::core::config_schema::AuthMethod::OAuth1 {
+            anyhow::bail!(
+                "OAuth1 is not supported over HTTP transport: OAuth1's signature must be \
+                 recomputed per request against the destination URL using the server's \
+                 consumer key/secret, which a simple incoming-header relay cannot provide. \
+                 Use stdio transport for OAuth1-authenticated APIs, or switch auth_method."
+            );
+        }
+        {%- endif %}
         let http_config = HttpServerConfig {
             host: config.host.clone(),
             port: config.port,
             cors_allow: config.cors_allow.clone(),
         };
+        let (header_location, header_name) =
+            {{ crate_name }}::auth::auth_manager::header_location_for(config.auth_method);
         let factory_config = config.clone();
         start_http_server(
             move || {
@@ -144,6 +156,8 @@ async fn run_harness_server() -> anyhow::Result<()> {
             },
             &http_config,
             registry,
+            header_location,
+            header_name.to_string(),
         )
         .await?;
     } else {

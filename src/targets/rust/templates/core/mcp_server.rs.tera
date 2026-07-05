@@ -7,17 +7,20 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
 };
+use rmcp::service::RequestContext;
 use rmcp::transport::stdio;
 use rmcp::{
-    ErrorData as McpError, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router,
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt, schemars, tool, tool_handler,
+    tool_router,
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
-use crate::auth::auth_manager::AuthManager;
+use crate::auth::auth_manager::{AuthManager, header_location_for};
 use crate::core::config_schema::Config;
 use crate::core::errors::McpifyError;
 use crate::data::store::{cached_store_connection, get_endpoint};
+use crate::http::auth_extractor::extract_request_credentials;
 use crate::tools::call_tool::call_operation;
 use crate::tools::get_tool::get_operation;
 use crate::tools::search_tool::search_operations;
@@ -113,10 +116,27 @@ impl McpifyServer {
     async fn call(
         &self,
         Parameters(args): Parameters<CallArgs>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let api_version = self.api_version.clone();
         let config = self.config.clone();
         let auth_manager = self.auth_manager.clone();
+
+        // HTTP transport only: rmcp injects this call's own
+        // `http::request::Parts` into `context.extensions` regardless of
+        // how long the session's underlying worker task lives (rmcp does
+        // this per JSON-RPC message, not just once at session creation —
+        // see `http::server::auth_gate`'s doc comment for why this is the
+        // one mechanism that actually works here). `None` on stdio, where
+        // no such extension is ever inserted.
+        let request_credentials = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| {
+                let (header_location, header_name) = header_location_for(config.auth_method);
+                extract_request_credentials(&parts.headers, header_location, header_name).ok()
+            });
+
         self.run_tool("call", async move {
             // Looked up and the connection (guard) dropped *before* any
             // `.await` below — `rusqlite::Connection` isn't `Sync`, so a
@@ -136,6 +156,7 @@ impl McpifyServer {
                 &mut auth_manager,
                 &args.operation_id,
                 args.arguments,
+                request_credentials.as_ref(),
             )
             .await
         })

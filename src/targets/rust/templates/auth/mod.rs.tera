@@ -3,4 +3,5 @@
 pub mod auth_manager;
 pub mod auth_strategy;
 pub mod errors;
+pub mod request_credentials;
 pub mod strategies;

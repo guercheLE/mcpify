@@ -6,12 +6,13 @@ use std::time::Duration;
 use {{ crate_name }}::auth::auth_manager::AuthManager;
 use {{ crate_name }}::core::api_url_builder::build_api_url;
 use {{ crate_name }}::core::config_manager::load_config;
+use {{ crate_name }}::core::config_schema::Transport;
 
 pub async fn run() -> anyhow::Result<()> {
     let config = load_config(serde_json::Map::new())?;
     let mut auth_manager = AuthManager::new(config.auth_method);
     let headers = auth_manager
-        .apply_auth_headers(HashMap::new(), "GET", &config.url)
+        .apply_auth_headers(HashMap::new(), "GET", &config.url, Transport::Stdio, None)
         .await?;
 
     let url = build_api_url(&config.url, "/", &[])?;

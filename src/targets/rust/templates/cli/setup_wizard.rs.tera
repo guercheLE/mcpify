@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use {{ crate_name }}::core::config_schema::AuthMethod;
+use {{ crate_name }}::core::config_schema::{AuthMethod, Transport};
 use {{ crate_name }}::core::credential_storage::save_credential;
 
 fn to_env_key(key: &str) -> String {
@@ -82,6 +82,20 @@ async fn prompt_api_version() -> anyhow::Result<String> {
     {%- endif %}
 }
 // mcpify:versions:end
+
+async fn prompt_transport() -> anyhow::Result<Transport> {
+    let choices = vec!["stdio (spawned as a subprocess by the MCP client)", "http (a standalone server the MCP client connects to over the network)"];
+    let selection = tokio::task::spawn_blocking(move || {
+        inquire::Select::new("Which transport will this deployment use?", choices).prompt()
+    })
+    .await??;
+
+    Ok(if selection.starts_with("stdio") {
+        Transport::Stdio
+    } else {
+        Transport::Http
+    })
+}
 
 async fn prompt_credentials(auth_method: AuthMethod) -> anyhow::Result<HashMap<String, String>> {
     tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
@@ -205,11 +219,83 @@ async fn prompt_persistence(env: &HashMap<String, String>) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Prints a ready-to-use MCP client config (the `mcpServers` block a host
+/// like Claude Code/Desktop expects) for whichever transport was selected
+/// — the stdio and http shapes are mutually exclusive, never both, since
+/// they're two different ways of running this same server and a client
+/// only ever picks one. HTTP transport shows credentials as headers only
+/// (never env/CLI args, matching `AuthManager::apply_auth_headers`'s
+/// HTTP-only-uses-per-request-credentials behavior); stdio shows both the
+/// `env` block and the equivalent all-CLI-args invocation, since the
+/// config cascade accepts either for a spawned subprocess.
+fn print_mcp_client_config(transport: Transport, auth_method: AuthMethod, env: &HashMap<String, String>) {
+    match transport {
+        Transport::Stdio => {
+            let config = serde_json::json!({
+                "mcpServers": {
+                    "{{ project_name }}": {
+                        "command": "{{ project_name }}",
+                        "args": ["start"],
+                        "env": env,
+                    }
+                }
+            });
+            println!("\nMCP client config (stdio):");
+            println!("{}", serde_json::to_string_pretty(&config).unwrap());
+
+            let cli_args = env
+                .iter()
+                .map(|(key, value)| format!("--{} {value:?}", key.to_lowercase().replace('_', "-")))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("(equivalently: `{{ project_name }} start {cli_args}`)");
+        }
+        Transport::Http => {
+            {%- if "oauth1" in auth_method_keys %}
+            if auth_method == AuthMethod::OAuth1 {
+                println!(
+                    "\nOAuth1 is not supported over HTTP transport: its signature must be \
+                     recomputed per request against the destination URL using the server's \
+                     consumer key/secret, which a simple incoming-header relay cannot \
+                     provide. Use stdio transport for this API instead."
+                );
+                return;
+            }
+            {%- endif %}
+            let (_, header_name) =
+                {{ crate_name }}::auth::auth_manager::header_location_for(auth_method);
+            let mut headers = serde_json::Map::new();
+            headers.insert(
+                header_name.to_string(),
+                serde_json::Value::String("<credential value here>".to_string()),
+            );
+            let config = serde_json::json!({
+                "mcpServers": {
+                    "{{ project_name }}": {
+                        "url": "http://127.0.0.1:3000/mcp",
+                        "headers": headers,
+                    }
+                }
+            });
+            println!(
+                "\nMCP client config (http) — adjust the host/port to match how you run \
+                 `{{ project_name }} http`:"
+            );
+            println!("{}", serde_json::to_string_pretty(&config).unwrap());
+            println!(
+                "Credentials are never read from local config/env over HTTP transport — \
+                 every request must carry its own \"{header_name}\" header."
+            );
+        }
+    }
+}
+
 pub async fn run_setup_wizard() -> anyhow::Result<()> {
     let url = prompt_base_url().await?;
     let auth_method = prompt_auth_method().await?;
     let credentials = prompt_credentials(auth_method).await?;
     let api_version = prompt_api_version().await?;
+    let transport = prompt_transport().await?;
 
     save_credential("active-credentials", &serde_json::to_string(&credentials)?)?;
 
@@ -223,11 +309,24 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
             .to_string(),
     );
     env.insert("{{ tool_prefix_env }}_API_VERSION".to_string(), api_version);
+    env.insert(
+        "{{ tool_prefix_env }}_TRANSPORT".to_string(),
+        serde_json::to_value(transport)?
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    );
     for (key, value) in &credentials {
         env.insert(format!("{{ tool_prefix_env }}_{}", to_env_key(key)), value.clone());
     }
 
     prompt_persistence(&env).await?;
-    println!("Setup complete! Run: {{ project_name }} start");
+    print_mcp_client_config(transport, auth_method, &env);
+
+    let run_command = match transport {
+        Transport::Stdio => "start",
+        Transport::Http => "http",
+    };
+    println!("Setup complete! Run: {{ project_name }} {run_command}");
     Ok(())
 }

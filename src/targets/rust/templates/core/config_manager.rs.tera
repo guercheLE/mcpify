@@ -93,7 +93,7 @@ mod tests {
     use serde_json::json;
 
     fn base_flags() -> Map<String, Value> {
-        json!({ "url": "https://api.example.com", "auth_method": "basic" })
+        json!({ "url": "https://api.example.com", "auth_method": "{% if auth_methods | length > 0 %}{{ auth_methods.0.key }}{% else %}basic{% endif %}" })
             .as_object()
             .unwrap()
             .clone()

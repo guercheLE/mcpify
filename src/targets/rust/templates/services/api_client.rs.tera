@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Map, Value};
 
 use crate::auth::auth_manager::AuthManager;
+use crate::auth::request_credentials::RequestCredentials;
 use crate::core::api_url_builder::build_api_url;
 use crate::core::circuit_breaker::{CircuitBreaker, CircuitBreakerError};
 use crate::core::config_schema::Config;
@@ -113,6 +114,7 @@ impl ApiClient {
         endpoint: &EndpointRecord,
         args: &Value,
         auth_manager: &mut AuthManager,
+        request_override: Option<&RequestCredentials>,
     ) -> anyhow::Result<Value> {
         self.rate_limiter.acquire()?;
 
@@ -129,7 +131,13 @@ impl ApiClient {
             headers.insert(name, value);
         }
         let headers = auth_manager
-            .apply_auth_headers(headers, &endpoint.method, &url)
+            .apply_auth_headers(
+                headers,
+                &endpoint.method,
+                &url,
+                self.config.transport,
+                request_override,
+            )
             .await?;
 
         let body = args_map.get("body").cloned();

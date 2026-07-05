@@ -11,6 +11,10 @@ const SHARED_FILES: &[(&str, &str)] = &[
     ("auth/mod.rs.tera", "src/auth/mod.rs"),
     ("auth/auth_strategy.rs.tera", "src/auth/auth_strategy.rs"),
     ("auth/errors.rs.tera", "src/auth/errors.rs"),
+    (
+        "auth/request_credentials.rs.tera",
+        "src/auth/request_credentials.rs",
+    ),
     ("auth/strategies/mod.rs.tera", "src/auth/strategies/mod.rs"),
     (
         "auth/strategies/stub.rs.tera",
@@ -77,7 +81,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::auth_profile::AuthSchemeDescriptor;
+    use crate::auth_profile::{AuthSchemeDescriptor, default_location_for};
 
     fn ctx_with_schemes(
         output_dir: PathBuf,
@@ -100,6 +104,7 @@ mod tests {
         AuthSchemeDescriptor {
             name: name.to_string(),
             kind,
+            location: default_location_for(kind),
         }
     }
 
@@ -124,6 +129,7 @@ mod tests {
             "src/auth/mod.rs",
             "src/auth/auth_strategy.rs",
             "src/auth/errors.rs",
+            "src/auth/request_credentials.rs",
             "src/auth/auth_manager.rs",
             "src/auth/strategies/mod.rs",
             "src/auth/strategies/stub.rs",

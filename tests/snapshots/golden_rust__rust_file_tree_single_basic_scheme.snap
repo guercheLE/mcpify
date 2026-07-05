@@ -20,6 +20,7 @@ expression: file_tree(&output_dir)
     "src/auth/auth_strategy.rs",
     "src/auth/errors.rs",
     "src/auth/mod.rs",
+    "src/auth/request_credentials.rs",
     "src/auth/strategies/basic.rs",
     "src/auth/strategies/mod.rs",
     "src/auth/strategies/stub.rs",
@@ -70,7 +71,7 @@ expression: file_tree(&output_dir)
     "src/tools/get_tool.rs",
     "src/tools/mod.rs",
     "src/tools/search_tool.rs",
-    "src/validation/generated_schemas.json",
+    "src/validation/generated_schemas.json.zst",
     "src/validation/mod.rs",
     "src/validation/validator.rs",
 ]

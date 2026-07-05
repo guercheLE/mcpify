@@ -14,7 +14,7 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 use serde_json::json;
 use tokio::sync::Mutex as TokioMutex;
 
-use super::auth_extractor::extract_authorization_header;
+use super::auth_extractor::extract_request_credentials;
 use super::localhost_detector::is_localhost;
 use super::metrics;
 use super::types::HttpServerConfig;
@@ -24,6 +24,11 @@ use crate::core::mcp_server::McpifyServer;
 #[derive(Clone)]
 struct AppState {
     registry: Arc<TokioMutex<ComponentRegistry>>,
+    /// The active auth method's declared credential location — resolved
+    /// once at startup (`auth::auth_manager::header_location_for`), since
+    /// it never changes for the life of the process.
+    header_location: &'static str,
+    header_name: String,
 }
 
 async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
@@ -48,11 +53,25 @@ async fn metrics_handler() -> impl IntoResponse {
     (StatusCode::OK, metrics::render_metrics())
 }
 
-/// Requests from localhost get relaxed auth requirements (see
-/// `localhost_detector`); everything else must carry an `Authorization`
-/// header — enforced here, in front of rmcp's own `/mcp` service, since
-/// this project's auth policy isn't rmcp's concern.
+/// Requests from localhost get a relaxed *gate* (see `localhost_detector`)
+/// — no 401 for a missing credential, so `curl localhost` keeps working
+/// without any header for quick local testing. But this gate is a coarse
+/// pre-flight check only: the *actual* credential forwarded to the
+/// facaded API is extracted independently, per JSON-RPC call, inside
+/// `McpifyServer::call` (via rmcp's `RequestContext::extensions`, which
+/// carries this same request's `http::request::Parts` regardless of how
+/// long the underlying session's worker task lives — see rmcp's
+/// `StreamableHttpService` docs on "Accessing HTTP request data from tool
+/// handlers"; a `tokio::task_local!`/Axum-request-extension approach
+/// does *not* work here, since rmcp dispatches each session's messages
+/// through a long-lived worker task decoupled from the Axum request that
+/// triggered any single message). HTTP transport never falls back to
+/// local config/keychain (see `AuthManager::apply_auth_headers`), so a
+/// localhost caller with no header simply gets a clear per-call error
+/// from `call` instead of a 401 here — never a silent leak of the
+/// operator's own configured secret.
 async fn auth_gate(
+    State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     request: Request,
@@ -60,13 +79,18 @@ async fn auth_gate(
 ) -> Response {
     metrics::increment("http_requests_total");
     let relaxed = is_localhost(addr.ip());
-    if !relaxed && extract_authorization_header(&headers).is_none() {
+
+    if !relaxed
+        && extract_request_credentials(&headers, state.header_location, &state.header_name)
+            .is_err()
+    {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing Authorization header" })),
+            Json(json!({ "error": "missing or invalid credentials for this API's auth method" })),
         )
             .into_response();
     }
+
     next.run(request).await
 }
 
@@ -89,6 +113,8 @@ pub async fn start_http_server(
     mcp_service_factory: impl Fn() -> Result<McpifyServer, std::io::Error> + Send + Sync + 'static,
     config: &HttpServerConfig,
     registry: Arc<TokioMutex<ComponentRegistry>>,
+    header_location: &'static str,
+    header_name: String,
 ) -> anyhow::Result<()> {
     let mut allowed_hosts = vec![
         "localhost".to_string(),
@@ -104,12 +130,16 @@ pub async fn start_http_server(
         StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts),
     );
 
-    let state = AppState { registry };
+    let state = AppState {
+        registry,
+        header_location,
+        header_name,
+    };
     let cors_allow = config.cors_allow.clone();
 
     let mcp_router = Router::new()
         .nest_service("/mcp", mcp_service)
-        .layer(middleware::from_fn(auth_gate));
+        .layer(middleware::from_fn_with_state(state.clone(), auth_gate));
 
     let app = Router::new()
         .route("/healthz", get(healthz))

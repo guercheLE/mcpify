@@ -17,7 +17,7 @@ pub async fn run(operation_id: &str, args_json: &str) -> anyhow::Result<()> {
             .ok_or_else(|| McpifyError::NotFound(format!("unknown operationId '{operation_id}'")))?
     };
 
-    let result = call_operation(&endpoint, &config, &mut auth_manager, operation_id, args).await?;
+    let result = call_operation(&endpoint, &config, &mut auth_manager, operation_id, args, None).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
