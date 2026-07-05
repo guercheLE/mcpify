@@ -1,17 +1,24 @@
 use serde::Serialize;
 
 use super::naming::{pascal_case, screaming_snake_case, snake_case};
-use crate::auth_profile::AuthSchemeKind;
+use crate::auth_profile::{AuthSchemeKind, location_view};
 use crate::context::{GeneratorContext, VersionEntryView};
 
 /// One discovered auth scheme, in the shape templates need: `method_key` is
 /// the literal string value the generated `auth_method` config field takes
 /// (mirrors `targets::typescript::context::TsAuthSchemeView`'s
 /// `'basic' | 'oauth2' | 'oauth1' | 'pat'` union, plus `apiKey`).
+/// `header_location`/`header_name` are where this scheme's credential value
+/// travels on the wire (`"header"`/`"query"`/`"cookie"`/`"none"`) — used by
+/// the HTTP-transport request-credential extractor to know which incoming
+/// header to read (query/cookie/none locations aren't relayable, see
+/// docs/architecture.md's HTTP-transport auth section).
 #[derive(Debug, Clone, Serialize)]
 pub struct RsAuthSchemeView {
     pub name: String,
     pub method_key: &'static str,
+    pub header_location: &'static str,
+    pub header_name: String,
 }
 
 /// One entry in the deduplicated `AuthMethod` enum the config-schema
@@ -19,10 +26,16 @@ pub struct RsAuthSchemeView {
 /// `variant_name` is its PascalCase Rust identifier. Precomputed here
 /// rather than in the template, since Tera's built-in `capitalize` filter
 /// doesn't preserve mixed-case input like `"apiKey"` -> `ApiKey`.
+/// `header_location`/`header_name` mirror the first-discovered scheme of
+/// this kind's (§RsAuthSchemeView) location — the HTTP-transport request
+/// extractor matches on the *active* `AuthMethod` at runtime, so it needs
+/// this per-kind (not per-scheme) lookup.
 #[derive(Debug, Clone, Serialize)]
 pub struct RsAuthMethodView {
     pub key: &'static str,
     pub variant_name: &'static str,
+    pub header_location: &'static str,
+    pub header_name: String,
 }
 
 /// One operation, in the shape templates need to render tool/schema files.
@@ -97,9 +110,14 @@ impl RsTemplateContext {
         let auth_schemes: Vec<RsAuthSchemeView> = ctx
             .auth_schemes
             .iter()
-            .map(|scheme| RsAuthSchemeView {
-                name: scheme.name.clone(),
-                method_key: auth_method_key(scheme.kind),
+            .map(|scheme| {
+                let (header_location, header_name) = location_view(&scheme.location);
+                RsAuthSchemeView {
+                    name: scheme.name.clone(),
+                    method_key: auth_method_key(scheme.kind),
+                    header_location,
+                    header_name,
+                }
             })
             .collect();
 
@@ -125,9 +143,17 @@ impl RsTemplateContext {
         }
         let auth_methods = auth_method_keys
             .iter()
-            .map(|&key| RsAuthMethodView {
-                key,
-                variant_name: auth_method_variant_name(key),
+            .map(|&key| {
+                let first_of_kind = auth_schemes
+                    .iter()
+                    .find(|scheme| scheme.method_key == key)
+                    .expect("every auth_method_keys entry comes from an auth_schemes entry");
+                RsAuthMethodView {
+                    key,
+                    variant_name: auth_method_variant_name(key),
+                    header_location: first_of_kind.header_location,
+                    header_name: first_of_kind.header_name.clone(),
+                }
             })
             .collect();
 
@@ -195,7 +221,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::auth_profile::AuthSchemeDescriptor;
+    use crate::auth_profile::{AuthSchemeDescriptor, AuthSchemeLocation, default_location_for};
     use crate::openapi::NormalizedOperation;
 
     fn sample_context() -> GeneratorContext {
@@ -208,6 +234,7 @@ mod tests {
             auth_schemes: vec![AuthSchemeDescriptor {
                 name: "basicAuth".to_string(),
                 kind: AuthSchemeKind::Basic,
+                location: default_location_for(AuthSchemeKind::Basic),
             }],
             normalized_operations: vec![NormalizedOperation {
                 operation_id: "listWidgets".to_string(),
@@ -259,6 +286,47 @@ mod tests {
         let view = RsTemplateContext::from_context(&sample_context());
         assert_eq!(view.auth_schemes.len(), 1);
         assert_eq!(view.auth_schemes[0].method_key, "basic");
+        assert_eq!(view.auth_schemes[0].header_location, "header");
+        assert_eq!(view.auth_schemes[0].header_name, "Authorization");
+    }
+
+    #[test]
+    fn maps_query_and_cookie_api_key_locations() {
+        let mut ctx = sample_context();
+        ctx.auth_schemes = vec![
+            AuthSchemeDescriptor {
+                name: "queryKey".to_string(),
+                kind: AuthSchemeKind::ApiKey,
+                location: Some(AuthSchemeLocation::Query {
+                    name: "api_key".to_string(),
+                }),
+            },
+            AuthSchemeDescriptor {
+                name: "cookieKey".to_string(),
+                kind: AuthSchemeKind::ApiKey,
+                location: Some(AuthSchemeLocation::Cookie {
+                    name: "session".to_string(),
+                }),
+            },
+        ];
+        let view = RsTemplateContext::from_context(&ctx);
+        assert_eq!(view.auth_schemes[0].header_location, "query");
+        assert_eq!(view.auth_schemes[0].header_name, "api_key");
+        assert_eq!(view.auth_schemes[1].header_location, "cookie");
+        assert_eq!(view.auth_schemes[1].header_name, "session");
+    }
+
+    #[test]
+    fn oauth1_scheme_has_no_relayable_location() {
+        let mut ctx = sample_context();
+        ctx.auth_schemes = vec![AuthSchemeDescriptor {
+            name: "oauth1".to_string(),
+            kind: AuthSchemeKind::OAuth1,
+            location: default_location_for(AuthSchemeKind::OAuth1),
+        }];
+        let view = RsTemplateContext::from_context(&ctx);
+        assert_eq!(view.auth_schemes[0].header_location, "none");
+        assert_eq!(view.auth_schemes[0].header_name, "");
     }
 
     #[test]
@@ -275,14 +343,17 @@ mod tests {
             AuthSchemeDescriptor {
                 name: "oauth2Primary".to_string(),
                 kind: AuthSchemeKind::OAuth2,
+                location: None,
             },
             AuthSchemeDescriptor {
                 name: "basicAuth".to_string(),
                 kind: AuthSchemeKind::Basic,
+                location: None,
             },
             AuthSchemeDescriptor {
                 name: "oauth2Secondary".to_string(),
                 kind: AuthSchemeKind::OAuth2,
+                location: None,
             },
         ];
         let view = RsTemplateContext::from_context(&ctx);
@@ -295,6 +366,7 @@ mod tests {
         ctx.auth_schemes = vec![AuthSchemeDescriptor {
             name: "apiKeyAuth".to_string(),
             kind: AuthSchemeKind::ApiKey,
+            location: None,
         }];
         let view = RsTemplateContext::from_context(&ctx);
         assert_eq!(view.auth_methods.len(), 1);
