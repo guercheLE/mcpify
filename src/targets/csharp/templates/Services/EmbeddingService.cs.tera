@@ -13,9 +13,13 @@ namespace {{ namespace }}.Services;
 ///
 /// `all-mpnet-base-v2` at its native 768 dimensions, matching
 /// `mcp_store.db`'s `semantic_endpoints` schema exactly (mcpify's shared
-/// pipeline hard-codes `FLOAT[768]`) — the same model every other
-/// target's embedding service uses, so `-l csharp` output is
-/// search-behavior equivalent for the same spec. Uses the
+/// pipeline hard-codes `FLOAT[768]`) — the same model every target
+/// except `-l go` uses (Go deliberately diverges: it never touches
+/// `semantic_endpoints`, storing 384-dim `all-MiniLM-L6-v2` vectors in
+/// its own `chromem-go` collection instead — see
+/// v5-implementation-plan.md's embeddings open decision #5), so
+/// `-l csharp` output is search-behavior equivalent to Rust/TypeScript/
+/// Python for the same spec. Uses the
 /// `Xenova/all-mpnet-base-v2` ONNX export `targets::typescript`'s
 /// `@xenova/transformers`-based service already depends on, downloaded
 /// and cached locally on first use (mirroring that target's own caching
