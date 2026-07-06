@@ -82,6 +82,64 @@ pub async fn run(request: AddVersionRequest) -> Result<()> {
     Ok(())
 }
 
+/// Everything `remove-version` needs — the mirror image of
+/// `AddVersionRequest`, minus the fields that only make sense when
+/// *adding* data (`input`, `set_default`, `force`).
+pub struct RemoveVersionRequest {
+    pub project_dir: PathBuf,
+    pub version_label: String,
+}
+
+/// Removes a version from an already-generated project: drops it from the
+/// ledger, re-renders every version-aware code region so the project's
+/// code/setup-wizard/`versions` command all stop mentioning it, and only
+/// then deletes its now-orphaned store/schema files — never before, so a
+/// failure partway through never leaves the ledger pointing at deleted
+/// files. Refuses to remove the current default version, since every
+/// version-aware file assumes exactly one default always exists; promote
+/// a different version first (`add-version --set-default`).
+pub async fn remove(request: RemoveVersionRequest) -> Result<()> {
+    if crate::progress::enabled() {
+        eprintln!(
+            "==> Reading project ledger at {}",
+            request.project_dir.display()
+        );
+    }
+    let mut ledger = ledger::read(&request.project_dir).await?;
+
+    if request.version_label == ledger.default_version {
+        anyhow::bail!(
+            "'{}' is this project's default version — promote a different version first \
+             (`add-version --set-default`) before removing it",
+            request.version_label
+        );
+    }
+
+    let entry = ledger.versions.shift_remove(&request.version_label).with_context(|| {
+        format!(
+            "no version '{}' in this project's ledger — run the 'versions' command to see what's available",
+            request.version_label
+        )
+    })?;
+
+    if crate::progress::enabled() {
+        eprintln!("==> Syncing version-aware code regions");
+    }
+    sync::sync_versions(&request.project_dir, &ledger).await?;
+
+    // Only remove the now-orphaned files once every version-aware code
+    // region has been successfully re-rendered without this version.
+    let _ = tokio::fs::remove_file(request.project_dir.join(&entry.db_file)).await;
+    let _ = tokio::fs::remove_file(request.project_dir.join(&entry.schemas_file)).await;
+
+    if crate::progress::enabled() {
+        eprintln!("==> Writing project ledger");
+    }
+    ledger::write(&request.project_dir, &ledger).await?;
+
+    Ok(())
+}
+
 async fn add_non_default_version(
     request: &AddVersionRequest,
     ledger: &mut Ledger,
@@ -375,5 +433,138 @@ mod tests {
         // The old, now-superseded mcp_store_v11.2.db is gone — nothing in
         // the ledger points at it anymore, so it must not linger orphaned.
         assert!(!dir.path().join("mcp_store_v11.2.db").exists());
+    }
+
+    #[tokio::test]
+    async fn remove_rejects_removing_the_current_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ledger = Ledger::new("typescript", "Widget API", "widget-mcp");
+        ledger.default_version = "11.3".to_string();
+        ledger.versions.insert(
+            "11.3".to_string(),
+            VersionEntry {
+                db_file: "mcp_store.db".to_string(),
+                schemas_file: "schemas.json".to_string(),
+                source: "spec.yaml".to_string(),
+                added_at: ledger::now_unix(),
+            },
+        );
+        ledger::write(dir.path(), &ledger).await.unwrap();
+
+        let err = remove(RemoveVersionRequest {
+            project_dir: dir.path().to_path_buf(),
+            version_label: "11.3".to_string(),
+        })
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("default version"));
+    }
+
+    #[tokio::test]
+    async fn remove_rejects_an_unknown_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ledger = Ledger::new("typescript", "Widget API", "widget-mcp");
+        ledger.default_version = "11.3".to_string();
+        ledger.versions.insert(
+            "11.3".to_string(),
+            VersionEntry {
+                db_file: "mcp_store.db".to_string(),
+                schemas_file: "schemas.json".to_string(),
+                source: "spec.yaml".to_string(),
+                added_at: ledger::now_unix(),
+            },
+        );
+        ledger::write(dir.path(), &ledger).await.unwrap();
+
+        let err = remove(RemoveVersionRequest {
+            project_dir: dir.path().to_path_buf(),
+            version_label: "no-such-version".to_string(),
+        })
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("no version"));
+    }
+
+    #[tokio::test]
+    async fn remove_deletes_orphaned_files_and_drops_the_ledger_entry() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // The five version-aware files typescript::steps::versions::sync
+        // patches — mirrors that module's own
+        // `sync_patches_all_five_version_aware_files` test fixture.
+        for path in [
+            "src/core/config-schema.ts",
+            "src/data/store-repository.ts",
+            "src/validation/validator.ts",
+            "src/cli/setup-wizard.ts",
+            "src/cli/versions-command.ts",
+        ] {
+            let full_path = dir.path().join(path);
+            tokio::fs::create_dir_all(full_path.parent().unwrap())
+                .await
+                .unwrap();
+            tokio::fs::write(
+                &full_path,
+                "// mcpify:versions:begin\nold body\n// mcpify:versions:end\n",
+            )
+            .await
+            .unwrap();
+        }
+        tokio::fs::write(dir.path().join("mcp_store.db"), b"11.3 data")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("mcp_store_v11.2.db"), b"11.2 data")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("schemas_v11.2.json"), b"{}")
+            .await
+            .unwrap();
+
+        let mut ledger = Ledger::new("typescript", "Widget API", "widget-mcp");
+        ledger.default_version = "11.3".to_string();
+        ledger.versions.insert(
+            "11.3".to_string(),
+            VersionEntry {
+                db_file: "mcp_store.db".to_string(),
+                schemas_file: "schemas.json".to_string(),
+                source: "spec.yaml".to_string(),
+                added_at: ledger::now_unix(),
+            },
+        );
+        ledger.versions.insert(
+            "11.2".to_string(),
+            VersionEntry {
+                db_file: "mcp_store_v11.2.db".to_string(),
+                schemas_file: "schemas_v11.2.json".to_string(),
+                source: "spec.yaml".to_string(),
+                added_at: ledger::now_unix(),
+            },
+        );
+        ledger::write(dir.path(), &ledger).await.unwrap();
+
+        remove(RemoveVersionRequest {
+            project_dir: dir.path().to_path_buf(),
+            version_label: "11.2".to_string(),
+        })
+        .await
+        .unwrap();
+
+        // The orphaned files are gone...
+        assert!(!dir.path().join("mcp_store_v11.2.db").exists());
+        assert!(!dir.path().join("schemas_v11.2.json").exists());
+        // ...the default version's own files are untouched...
+        assert!(dir.path().join("mcp_store.db").exists());
+
+        // ...the ledger no longer has an entry for it...
+        let reloaded = ledger::read(dir.path()).await.unwrap();
+        assert!(!reloaded.versions.contains_key("11.2"));
+        assert_eq!(reloaded.default_version, "11.3");
+
+        // ...and every version-aware file was re-rendered without it.
+        let store_repository = tokio::fs::read_to_string(dir.path().join("src/data/store-repository.ts"))
+            .await
+            .unwrap();
+        assert!(store_repository.contains("'11.3': 'mcp_store.db'"));
+        assert!(!store_repository.contains("11.2"));
     }
 }

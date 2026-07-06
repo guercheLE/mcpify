@@ -95,6 +95,22 @@ pub enum Commands {
         #[arg(short = 'f', long = "force")]
         force: bool,
     },
+    /// Removes a version from an already-generated project — deletes its
+    /// store/schema files and drops it from the ledger, then re-renders
+    /// every version-aware code region so the project's code, setup
+    /// wizard, and `versions` command all stop mentioning it. The mirror
+    /// image of `add-version`. Refuses to remove the current default
+    /// version — promote a different version first
+    /// (`add-version --set-default`).
+    RemoveVersion {
+        /// Path to the previously-generated project directory
+        #[arg(long = "project")]
+        project: PathBuf,
+
+        /// Label of the version to remove
+        #[arg(long = "version")]
+        version: String,
+    },
 }
 
 /// Generate-mode arguments, validated out of `Cli` once no subcommand is
@@ -249,7 +265,7 @@ mod tests {
                 assert!(set_default);
                 assert!(!force);
             }
-            None => panic!("expected the add-version subcommand to parse"),
+            _ => panic!("expected the add-version subcommand to parse"),
         }
     }
 
@@ -264,6 +280,24 @@ mod tests {
     fn parses_force_flag() {
         let cli = parse(&["-i", "spec.yaml", "-o", "./out", "--force"]).unwrap();
         assert!(cli.force);
+    }
+
+    #[test]
+    fn parses_remove_version_subcommand() {
+        let cli = parse(&["remove-version", "--project", "./out", "--version", "11.2"]).unwrap();
+        match cli.command {
+            Some(Commands::RemoveVersion { project, version }) => {
+                assert_eq!(project, PathBuf::from("./out"));
+                assert_eq!(version, "11.2");
+            }
+            _ => panic!("expected the remove-version subcommand to parse"),
+        }
+    }
+
+    #[test]
+    fn remove_version_subcommand_requires_project_and_version() {
+        assert!(parse(&["remove-version", "--version", "11.2"]).is_err());
+        assert!(parse(&["remove-version", "--project", "./out"]).is_err());
     }
 
     #[test]

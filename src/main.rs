@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use clap::Parser;
 
-use mcpify::add_version::{self, AddVersionRequest};
+use mcpify::add_version::{self, AddVersionRequest, RemoveVersionRequest};
 use mcpify::cli::{Cli, Commands};
 use mcpify::pipeline::run_shared_pipeline;
 use mcpify::targets;
@@ -46,6 +46,20 @@ async fn run() -> anyhow::Result<()> {
 
             if mcpify::progress::enabled() {
                 eprintln!("==> Version added to project at {}", project_dir.display());
+            }
+
+            Ok(())
+        }
+        Some(Commands::RemoveVersion { project, version }) => {
+            let project_dir = project.clone();
+            add_version::remove(RemoveVersionRequest {
+                project_dir: project,
+                version_label: version,
+            })
+            .await?;
+
+            if mcpify::progress::enabled() {
+                eprintln!("==> Version removed from project at {}", project_dir.display());
             }
 
             Ok(())
