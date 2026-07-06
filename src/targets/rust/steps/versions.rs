@@ -55,7 +55,7 @@ fn config_schema_body(default_label: &str) -> String {
 }
 
 fn store_body(entries: &[VersionEntryView]) -> String {
-    let mut body = String::from("const VERSION_STORE_FILES: &[(&str, &str)] = &[\n");
+    let mut body = String::from("pub const VERSION_STORE_FILES: &[(&str, &str)] = &[\n");
     for entry in entries {
         body.push_str(&format!(
             "    (\"{}\", \"{}\"),\n",
