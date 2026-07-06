@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/mattn/go-sqlite3"
 )
 
 // mcpify:versions:begin
-var versionStoreFiles = map[string]string{
+var VersionStoreFiles = map[string]string{
 {%- for v in version_entries %}
 	"{{ v.label }}": "{{ v.db_file }}",
 {%- endfor %}
@@ -25,11 +26,28 @@ var versionStoreFiles = map[string]string{
 // other version lives in its own mcp_store_v<label>.db sibling, added by
 // a later `mcpify add-version` call.
 func ResolveStorePath(apiVersion string) (string, error) {
-	path, ok := versionStoreFiles[apiVersion]
+	path, ok := VersionStoreFiles[apiVersion]
 	if !ok {
 		return "", fmt.Errorf("unknown api_version '%s' — run the 'versions' command to see what's available", apiVersion)
 	}
 	return path, nil
+}
+
+// ChromemPathFor derives an ApiVersion's chromem-go vector-store persist
+// directory from its .db file name — mcp_store.db becomes
+// mcp_store.chromem, mcp_store_v10.7.db becomes mcp_store_v10.7.chromem —
+// so each version gets its own vector-store directory exactly parallel
+// to its own .db file, matching ResolveStorePath's one-store-per-version
+// scheme on the relational side. Without this, every version shared the
+// same hardcoded "mcp_store.chromem" collection, so semantic search
+// against a non-default ApiVersion would silently query whichever
+// version happened to populate that shared collection last.
+func ChromemPathFor(apiVersion string) (string, error) {
+	dbPath, err := ResolveStorePath(apiVersion)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(dbPath, ".db") + ".chromem", nil
 }
 
 // EndpointRecord is one row of mcp_store.db's endpoints table (written by

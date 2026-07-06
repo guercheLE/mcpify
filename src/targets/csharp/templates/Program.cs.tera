@@ -81,9 +81,19 @@ callCommand.SetAction((parseResult, _) => Roles.RunCallAsync(
     args, parseResult.GetValue(callOperationIdArgument)!, parseResult.GetValue(callArgsOption)!));
 rootCommand.Subcommands.Add(callCommand);
 
+var populateAllOption = new Option<bool>("--all");
+var populateApiVersionArgument = new Argument<string?>("apiVersion") { DefaultValueFactory = _ => null };
 var populateEmbeddingsCommand = new Command(
-    "populate-embeddings", "Backfill mcp_store.db's semantic_endpoints table.");
-populateEmbeddingsCommand.SetAction((_, cancellationToken) => Roles.RunPopulateEmbeddingsAsync(args, cancellationToken));
+    "populate-embeddings", "Backfill a store db's semantic_endpoints table.")
+{
+    populateAllOption,
+    populateApiVersionArgument,
+};
+populateEmbeddingsCommand.SetAction((parseResult, cancellationToken) => Roles.RunPopulateEmbeddingsAsync(
+    args,
+    parseResult.GetValue(populateAllOption),
+    parseResult.GetValue(populateApiVersionArgument),
+    cancellationToken));
 rootCommand.Subcommands.Add(populateEmbeddingsCommand);
 
 var setupCommand = new Command(

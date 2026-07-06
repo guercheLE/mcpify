@@ -13,6 +13,32 @@ namespace {{ namespace }}.Services;
 /// </summary>
 public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingService embeddingService)
 {
+    /// <summary>
+    /// Which store file(s) to populate: bare invocation (both <paramref
+    /// name="all"/> and <paramref name="apiVersion"/> unset) targets just
+    /// `mcp_store.db` (the default version), matching every deployment
+    /// that only ever ships that one file (this project's own Dockerfile
+    /// included); an explicit <paramref name="apiVersion"/> targets
+    /// exactly that version's file; <paramref name="all"/> walks every
+    /// version this project's ledger knows about
+    /// (<see cref="SqliteVecStore.AllStoreFiles"/>) — the one-time local
+    /// backfill needed after `mcpify add-version` adds a new version
+    /// file, since each version's `.db` gets its own independent
+    /// `semantic_endpoints` table.
+    /// </summary>
+    public static IEnumerable<string> TargetDbPaths(bool all, string? apiVersion)
+    {
+        if (all)
+        {
+            return SqliteVecStore.AllStoreFiles;
+        }
+        if (apiVersion is not null)
+        {
+            return [SqliteVecStore.ResolveStorePath(apiVersion)];
+        }
+        return ["mcp_store.db"];
+    }
+
     public async Task<int> PopulateAsync(CancellationToken cancellationToken = default)
     {
         var rows = new List<(string OperationId, string Text)>();

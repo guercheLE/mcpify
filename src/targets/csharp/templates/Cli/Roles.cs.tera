@@ -174,11 +174,18 @@ public static class Roles
         return 0;
     }
 
-    public static async Task<int> RunPopulateEmbeddingsAsync(string[] args, CancellationToken cancellationToken)
+    public static async Task<int> RunPopulateEmbeddingsAsync(
+        string[] args, bool all, string? apiVersion, CancellationToken cancellationToken)
     {
         using var host = BuildServicesHost(args);
-        var count = await host.Services.GetRequiredService<PopulateEmbeddingsService>().PopulateAsync(cancellationToken);
-        Console.WriteLine($"populated {count} embedding(s)");
+        var embeddingService = host.Services.GetRequiredService<EmbeddingService>();
+
+        foreach (var dbPath in PopulateEmbeddingsService.TargetDbPaths(all, apiVersion))
+        {
+            var count = await new PopulateEmbeddingsService(new SqliteVecStore(dbPath), embeddingService)
+                .PopulateAsync(cancellationToken);
+            Console.WriteLine($"populated {count} embedding(s) in '{dbPath}'");
+        }
         return 0;
     }
 

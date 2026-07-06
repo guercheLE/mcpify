@@ -34,7 +34,7 @@ export interface Store {
 }
 
 // mcpify:versions:begin
-const VERSION_STORE_FILES: Record<string, string> = {
+export const VERSION_STORE_FILES: Record<string, string> = {
 {%- for v in version_entries %}
   '{{ v.label }}': '{{ v.db_file }}',
 {%- endfor %}

@@ -25,7 +25,7 @@ _ENDPOINT_COLUMNS = (
 )
 
 # mcpify:versions:begin
-_VERSION_STORE_FILES: dict[str, str] = {
+VERSION_STORE_FILES: dict[str, str] = {
 {%- for v in version_entries %}
     "{{ v.label }}": "{{ v.db_file }}",
 {%- endfor %}
@@ -40,7 +40,7 @@ def resolve_store_path(api_version: str) -> Path:
     version lives in its own `mcp_store_v<label>.db` sibling, added by a
     later `mcpify add-version` call.
     """
-    file_name = _VERSION_STORE_FILES.get(api_version)
+    file_name = VERSION_STORE_FILES.get(api_version)
     if file_name is None:
         raise ValueError(
             f"unknown api_version '{api_version}' — run the 'versions' command to see what's available"

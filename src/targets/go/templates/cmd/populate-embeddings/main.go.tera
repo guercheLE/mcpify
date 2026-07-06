@@ -10,14 +10,23 @@ import (
 	"{{ module_path }}/internal/services"
 )
 
-// Backfills the chromem-go vector store persisted alongside mcp_store.db —
-// mcpify's shared generation pipeline writes mcp_store.db's schema but
-// this project's Go target never populates its own semantic_endpoints
-// vec0 table (v5-implementation-plan.md's deliberate divergence); this is
-// the equivalent step for the sibling chromem-go collection it actually
-// queries. Invoked by Dockerfile before the image is considered usable,
-// and by run_generated_tests (Story G8) before the test suite runs, the
-// same way v1 sequences populate-embeddings before npm test.
+// Backfills the chromem-go vector store persisted alongside each
+// version's mcp_store*.db — mcpify's shared generation pipeline writes
+// mcp_store.db's schema but this project's Go target never populates its
+// own semantic_endpoints vec0 table (v5-implementation-plan.md's
+// deliberate divergence); this is the equivalent step for the sibling
+// chromem-go collection it actually queries. Invoked by Dockerfile before
+// the image is considered usable, and by run_generated_tests (Story G8)
+// before the test suite runs, the same way v1 sequences
+// populate-embeddings before npm test.
+//
+// Bare invocation targets just mcp_store.db / mcp_store.chromem (the
+// default version), matching every deployment that only ever ships that
+// one file (this project's own Dockerfile included); an explicit
+// argument names an api_version to target exactly; --all walks every
+// version this project's ledger knows about (data.VersionStoreFiles) —
+// the one-time local backfill needed after `mcpify add-version` adds a
+// new version, since each version's chromem collection is independent.
 func main() {
 	// Split into `run` so `defer`s below actually execute before exit —
 	// `os.Exit` in the same scope as a `defer` would skip it (gocritic
@@ -28,14 +37,57 @@ func main() {
 	}
 }
 
+// target pairs one api_version's relational store with its sibling
+// vector-store directory.
+type target struct {
+	dbPath      string
+	chromemPath string
+}
+
+// newTarget avoids the elided composite-literal form for a one-element
+// []target slice: perfectly valid Go, but its doubled opening/closing
+// braces are indistinguishable from Tera's own variable-interpolation
+// syntax, which breaks parsing this file as a template.
+func newTarget(dbPath, chromemPath string) target {
+	return target{dbPath: dbPath, chromemPath: chromemPath}
+}
+
+func targets() ([]target, error) {
+	if len(os.Args) > 1 && os.Args[1] == "--all" {
+		result := make([]target, 0, len(data.VersionStoreFiles))
+		for label, dbPath := range data.VersionStoreFiles {
+			chromemPath, err := data.ChromemPathFor(label)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, target{dbPath: dbPath, chromemPath: chromemPath})
+		}
+		return result, nil
+	}
+
+	if len(os.Args) > 1 {
+		label := os.Args[1]
+		dbPath, err := data.ResolveStorePath(label)
+		if err != nil {
+			return nil, err
+		}
+		chromemPath, err := data.ChromemPathFor(label)
+		if err != nil {
+			return nil, err
+		}
+		return []target{newTarget(dbPath, chromemPath)}, nil
+	}
+
+	return []target{newTarget("mcp_store.db", "mcp_store.chromem")}, nil
+}
+
 func run() error {
 	ctx := context.Background()
 
-	store, err := data.Open("mcp_store.db")
+	wanted, err := targets()
 	if err != nil {
-		return fmt.Errorf("failed to open mcp_store.db: %w", err)
+		return err
 	}
-	defer func() { _ = store.Close() }()
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -49,9 +101,24 @@ func run() error {
 	}
 	defer func() { _ = embedSvc.Close() }()
 
-	vectorStore, err := services.NewVectorStore("mcp_store.chromem", embedSvc.Embed)
+	for _, t := range wanted {
+		if err := populateOne(ctx, t, embedSvc); err != nil {
+			return fmt.Errorf("'%s': %w", t.dbPath, err)
+		}
+	}
+	return nil
+}
+
+func populateOne(ctx context.Context, t target, embedSvc *services.EmbeddingService) error {
+	store, err := data.Open(t.dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to open vector store: %w", err)
+		return fmt.Errorf("failed to open %s: %w", t.dbPath, err)
+	}
+	defer func() { _ = store.Close() }()
+
+	vectorStore, err := services.NewVectorStore(t.chromemPath, embedSvc.Embed)
+	if err != nil {
+		return fmt.Errorf("failed to open vector store '%s': %w", t.chromemPath, err)
 	}
 
 	count, err := services.PopulateEmbeddings(ctx, store, vectorStore)
@@ -59,6 +126,6 @@ func run() error {
 		return fmt.Errorf("failed to populate embeddings: %w", err)
 	}
 
-	fmt.Printf("populated %d embedding(s)\n", count)
+	fmt.Printf("populated %d embedding(s) in '%s'\n", count, t.chromemPath)
 	return nil
 }

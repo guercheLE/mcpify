@@ -61,7 +61,7 @@ fn config_schema_body(entries: &[VersionEntryView], default_label: &str) -> Stri
 }
 
 fn store_repository_body(entries: &[VersionEntryView]) -> String {
-    let mut body = String::from("const VERSION_STORE_FILES: Record<string, string> = {\n");
+    let mut body = String::from("export const VERSION_STORE_FILES: Record<string, string> = {\n");
     for entry in entries {
         body.push_str(&format!("  '{}': '{}',\n", entry.label, entry.db_file));
     }

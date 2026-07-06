@@ -5,5 +5,5 @@
 coverage.html
 profile/
 .env
-mcp_store.chromem/
+mcp_store*.chromem/
 .DS_Store
