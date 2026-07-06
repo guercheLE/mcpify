@@ -6,14 +6,24 @@ import { getCorrelationId } from './correlation-context.js';
 import { resolveLogTransport } from './log-transport.js';
 import { REDACT_PATHS } from './sanitizer.js';
 
+const transport = resolveLogTransport();
+
 /** Structured JSON logger with automatic secret redaction and traceId
- * correlation — REQ-2.3.1. */
-export const logger = pino({
-  level: process.env['{{ tool_prefix_env }}_LOG_LEVEL'] ?? 'info',
-  redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
-  mixin() {
-    const traceId = getCorrelationId();
-    return traceId ? { traceId } : {};
+ * correlation — REQ-2.3.1. Always writes to stderr: the MCP stdio transport
+ * speaks JSON-RPC over stdout, and pino defaults to that same stream, which
+ * would corrupt every frame parsed on the client side. `transport` (when
+ * set) routes its own destination to stderr itself (see
+ * `resolveLogTransport`); the plain JSON path needs the explicit
+ * `pino.destination(2)` since there's no transport object to carry it. */
+export const logger = pino(
+  {
+    level: process.env['{{ tool_prefix_env }}_LOG_LEVEL'] ?? 'info',
+    redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
+    mixin() {
+      const traceId = getCorrelationId();
+      return traceId ? { traceId } : {};
+    },
+    transport,
   },
-  transport: resolveLogTransport(),
-});
+  transport ? undefined : pino.destination(2),
+);

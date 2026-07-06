@@ -44,7 +44,11 @@ public static partial class ServiceCollectionExtensions
             .MinimumLevel.Is(minimumLevel)
             .Enrich.With(new RedactionEnricher())
             .Enrich.FromLogContext()
-            .WriteTo.Console(new CompactJsonFormatter()));
+            // `standardErrorFromLevel: LogEventLevel.Verbose`: Serilog's
+            // Console sink writes to stdout by default, but the MCP stdio
+            // transport speaks JSON-RPC over that same stream — routing
+            // every level to stderr instead keeps logs from corrupting it.
+            .WriteTo.Console(new CompactJsonFormatter(), standardErrorFromLevel: LogEventLevel.Verbose));
     }
 
     private static LogEventLevel ParseLevel(string? level) => level?.ToLowerInvariant() switch

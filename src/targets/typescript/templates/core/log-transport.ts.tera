@@ -3,14 +3,17 @@
 import type { TransportTargetOptions } from 'pino';
 
 /** Pretty-printed to an interactive TTY, structured JSON otherwise
- * (containers/CI) — REQ-2.3.1. */
+ * (containers/CI) — REQ-2.3.1. Checks stderr, not stdout: that's where logs
+ * are actually written (see `logger.ts`), since stdout is reserved for the
+ * MCP stdio transport's JSON-RPC frames. `destination: 2` routes
+ * pino-pretty's own output to stderr too, for the same reason. */
 export function resolveLogTransport(): TransportTargetOptions | undefined {
-  if (!process.stdout.isTTY) {
+  if (!process.stderr.isTTY) {
     return undefined; // default pino JSON transport
   }
   return {
     target: 'pino-pretty',
-    options: { colorize: true, translateTime: 'SYS:standard' },
+    options: { colorize: true, translateTime: 'SYS:standard', destination: 2 },
     level: process.env['{{ tool_prefix_env }}_LOG_LEVEL'] ?? 'info',
   };
 }
