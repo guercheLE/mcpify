@@ -62,6 +62,14 @@ fn store_body(entries: &[VersionEntryView]) -> String {
             entry.label, entry.db_file
         ));
     }
+    body.push_str("];\n\n");
+    body.push_str("const VERSION_STORE_BYTES: &[(&str, &[u8])] = &[\n");
+    for entry in entries {
+        body.push_str(&format!(
+            "    (\"{}\", include_bytes!(\"../../{}\")),\n",
+            entry.label, entry.db_file
+        ));
+    }
     body.push_str("];\n");
     body
 }
@@ -200,6 +208,8 @@ mod tests {
             .unwrap();
         assert!(store.contains("(\"11.3\", \"mcp_store.db\")"));
         assert!(store.contains("(\"11.2\", \"mcp_store_v11.2.db\")"));
+        assert!(store.contains("(\"11.3\", include_bytes!(\"../../mcp_store.db\"))"));
+        assert!(store.contains("(\"11.2\", include_bytes!(\"../../mcp_store_v11.2.db\"))"));
 
         let validator = tokio::fs::read_to_string(dir.path().join(VALIDATOR_PATH))
             .await
