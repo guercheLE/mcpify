@@ -1,6 +1,6 @@
 [package]
 name = "mcpify"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 description = "Generate a deployment-ready, enterprise-grade MCP server project from an OpenAPI spec."
 license = "MIT"
