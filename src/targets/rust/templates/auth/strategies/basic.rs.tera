@@ -30,6 +30,12 @@ impl AuthStrategy for BasicAuthStrategy {
 
     fn validate_credentials(&self, credentials: &Credentials) -> bool {
         credentials.contains_key("authorization_header")
+            || (credentials
+                .get("username")
+                .is_some_and(|username| !username.is_empty())
+                && credentials
+                    .get("password")
+                    .is_some_and(|password| !password.is_empty()))
     }
 }
 
@@ -69,6 +75,7 @@ mod tests {
         let credentials =
             Credentials::from([("authorization_header".to_string(), "Basic abc".to_string())]);
         assert!(strategy.validate_credentials(&credentials));
+        assert!(strategy.validate_credentials(&config("alice", "s3cr3t")));
         assert!(!strategy.validate_credentials(&Credentials::new()));
     }
 }
