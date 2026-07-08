@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use indexmap::IndexMap;
 use openapiv3::{Components, MediaType, Operation, Parameter, ReferenceOr, Schema, StatusCode};
 use serde_json::{Map, Value};
@@ -28,30 +30,69 @@ fn rewrite_refs(value: &mut Value) {
     }
 }
 
+fn collect_component_refs(value: &Value, refs: &mut HashSet<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(reference)) = map.get("$ref")
+                && let Some(name) = reference.strip_prefix("#/$defs/")
+            {
+                refs.insert(name.to_string());
+            }
+            for v in map.values() {
+                collect_component_refs(v, refs);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_component_refs(item, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn to_ref_rewritten_value<T: serde::Serialize>(value: &T) -> Value {
     let mut json = serde_json::to_value(value).unwrap_or(Value::Null);
     rewrite_refs(&mut json);
     json
 }
 
-/// All of `components.schemas`, keyed by name, with internal `$ref`s
-/// rewritten to `#/$defs/...` — embedded as `$defs` in every generated
-/// operation schema so each one is a fully standalone, Ajv-compilable
-/// document. This duplicates shared definitions across operations rather
-/// than registering them once in Ajv; simpler and more robust than
-/// cross-schema `$ref` resolution, at the cost of some file size.
-fn build_defs(components: Option<&Components>) -> Value {
+/// Only the component schemas transitively reachable from this operation
+/// schema, keyed by name, with internal `$ref`s rewritten to `#/$defs/...`.
+///
+/// Endpoint rows stay self-contained for Ajv: every referenced component is
+/// embedded in the operation's `$defs`. Unlike the older all-components
+/// strategy, unrelated schemas are not duplicated into every operation.
+fn build_defs(schema: &Value, components: Option<&Components>) -> Value {
     let mut defs = Map::new();
-    if let Some(components) = components {
-        for (name, schema) in &components.schemas {
-            defs.insert(name.clone(), to_ref_rewritten_value(schema));
+    let Some(components) = components else {
+        return Value::Object(defs);
+    };
+
+    let mut pending = HashSet::new();
+    let mut visited = HashSet::new();
+    collect_component_refs(schema, &mut pending);
+
+    while let Some(name) = pending.iter().next().cloned() {
+        pending.remove(&name);
+        if !visited.insert(name.clone()) {
+            continue;
         }
+
+        let Some(component_schema) = components.schemas.get(&name) else {
+            continue;
+        };
+
+        let def = to_ref_rewritten_value(component_schema);
+        collect_component_refs(&def, &mut pending);
+        defs.insert(name, def);
     }
+
     Value::Object(defs)
 }
 
 fn insert_defs_if_any(schema: &mut Value, components: Option<&Components>) {
-    let defs = build_defs(components);
+    let defs = build_defs(schema, components);
     if defs.as_object().is_some_and(|map| !map.is_empty())
         && let Value::Object(map) = schema
     {
@@ -246,6 +287,11 @@ components:
           type: string
         parent:
           $ref: "#/components/schemas/Widget"
+    Unused:
+      type: object
+      properties:
+        ignored:
+          type: string
 "##,
         );
 
@@ -263,6 +309,7 @@ components:
             output["$defs"]["Widget"]["properties"]["parent"]["$ref"],
             "#/$defs/Widget"
         );
+        assert!(output["$defs"].get("Unused").is_none());
     }
 
     #[test]
@@ -296,7 +343,17 @@ components:
     Base:
       type: object
       properties:
+        child:
+          $ref: "#/components/schemas/Child"
+    Child:
+      type: object
+      properties:
         id:
+          type: string
+    Unused:
+      type: object
+      properties:
+        ignored:
           type: string
 "##,
         );
@@ -315,7 +372,15 @@ components:
         let all_of = input["properties"]["body"]["allOf"].as_array().unwrap();
         assert_eq!(all_of[0]["$ref"], "#/$defs/Base");
         assert_eq!(all_of[1]["properties"]["extra"]["type"], "string");
-        assert_eq!(input["$defs"]["Base"]["properties"]["id"]["type"], "string");
+        assert_eq!(
+            input["$defs"]["Base"]["properties"]["child"]["$ref"],
+            "#/$defs/Child"
+        );
+        assert_eq!(
+            input["$defs"]["Child"]["properties"]["id"]["type"],
+            "string"
+        );
+        assert!(input["$defs"].get("Unused").is_none());
     }
 
     #[test]
