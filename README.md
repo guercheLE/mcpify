@@ -1,10 +1,16 @@
 # mcpify ⚡
 
+[![CI](https://github.com/guercheLE/mcpify/actions/workflows/ci.yml/badge.svg)](https://github.com/guercheLE/mcpify/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/mcpify.svg)](https://crates.io/crates/mcpify)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Turn any OpenAPI/Swagger specification into an enterprise-grade Model Context Protocol (MCP) server in seconds.
 
-`mcpify` is a Rust CLI generator that emits TypeScript-first MCP projects. Point it at an OpenAPI spec — a local file or a remote URL — and it emits a complete, production-ready Node.js/TypeScript MCP project: three token-efficient tools backed by an embedded semantic database, authentication already wired up, and enterprise capabilities (observability, resilience, testing, packaging) built in from the very first generated file.
+`mcpify` is a Rust CLI generator. Point it at an OpenAPI spec — a local file or a remote URL — and it emits a complete, production-ready MCP server project in the language of your choice: three token-efficient tools backed by an embedded semantic database, authentication already wired up, and enterprise capabilities (observability, resilience, testing, packaging) built in from the very first generated file.
 
-See [product-brief.md](product-brief.md), [prd.md](prd.md), and [architecture.md](architecture.md) for the full rationale and specification.
+Five target languages ship with full feature parity, each validated end-to-end in CI: **TypeScript**, **Rust**, **Python**, **C#**, and **Go**.
+
+See [docs/product-brief.md](docs/product-brief.md), [docs/prd.md](docs/prd.md), and [docs/architecture.md](docs/architecture.md) for the full rationale and specification.
 
 ---
 
@@ -22,7 +28,7 @@ Hand-building an MCP server for a large enterprise API means dropping a giant Op
 
 ## Installation
 
-`mcpify` is a native Rust binary — no Node.js required to run the generator itself (Node.js is only needed to run the *projects it generates*).
+`mcpify` is a native Rust binary — no other toolchain is required to run the generator itself. Running a *generated* project needs the runtime for whichever `--language` you chose (Node.js for TypeScript, Cargo for Rust, `uv`/Python for Python, .NET for C#, or Go).
 
 ```bash
 # Via Cargo
@@ -82,6 +88,8 @@ my-api-mcp/
 ├── docker-compose.yml      # stdio + http service variants
 └── .github/workflows/      # CI/CD (build, test, release)
 ```
+
+The tree above is the TypeScript (`-l typescript`) layout. The other four targets follow the same conceptual structure, adapted to each ecosystem's own conventions — e.g. Go's `internal/{auth,cli,core,data,http,services,tools,validation}` packages, Python's `auth/`, `cli/`, `core/`, `tools/` package under `pyproject.toml`, C#'s `Auth/`, `Cli/`, `Core/`, `Tools/` folders under a `.csproj`, and Rust's `src/{auth,cli,core,data,http,services,tools,validation}` modules under `Cargo.toml`.
 
 ### The 3 Universal Tools
 
@@ -152,6 +160,14 @@ mcpify add-version --project ./my-api-mcp --version 11.3 -i ./specs/api-v11.3.ya
 `--set-default` promotes the new version to be the project's default/latest. The version it replaces is never destroyed — it's demoted to its own sibling store file (e.g. `mcp_store_v11.2.db`), so its data stays queryable under its old label.
 
 Every version's bookkeeping (labels, file paths, which one is default) lives in a generator-only `.mcpify/versions.json` ledger inside the generated project — it's never read by the generated runtime code itself.
+
+### Removing a version
+
+```bash
+mcpify remove-version --project ./my-api-mcp --version 11.2
+```
+
+Deletes that version's store/schema files, drops it from the ledger, and re-renders every version-aware file so the project's code, setup wizard, and `versions` command stop mentioning it. Refuses to remove the current default version — promote a different version first with `add-version --set-default`.
 
 ### Selecting a version in the generated project
 
