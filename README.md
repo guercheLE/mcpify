@@ -34,9 +34,14 @@ Hand-building an MCP server for a large enterprise API means dropping a giant Op
 # Via Cargo
 cargo install mcpify
 
-# Via Homebrew (coming soon)
-brew install guercheLE/tap/mcpify
+# Via shell installer (macOS, Linux)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/guercheLE/mcpify/releases/latest/download/mcpify-installer.sh | sh
+
+# Via PowerShell installer (Windows)
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/guercheLE/mcpify/releases/latest/download/mcpify-installer.ps1 | iex"
 ```
+
+Prebuilt binaries for macOS (Intel/Apple Silicon), Linux (x86_64/arm64), and Windows are also available directly on the [Releases page](https://github.com/guercheLE/mcpify/releases).
 
 ## Quick Start
 
