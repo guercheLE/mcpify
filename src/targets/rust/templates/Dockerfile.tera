@@ -17,7 +17,12 @@ RUN apt-get update \
 
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
-COPY mcp_store.db ./mcp_store.db
+# Every version's `.db`, not just the default `mcp_store.db` — `store.rs`'s
+# `VERSION_STORE_BYTES` embeds all of them via `include_bytes!`, so
+# `cargo build` fails below if any are missing from the build context.
+{%- for v in version_entries %}
+COPY {{ v.db_file }} ./{{ v.db_file }}
+{%- endfor %}
 
 RUN cargo build --release
 

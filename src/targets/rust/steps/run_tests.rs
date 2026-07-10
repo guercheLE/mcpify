@@ -60,7 +60,7 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     Ok(())
 }
 
-async fn run_cargo_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
+pub(crate) async fn run_cargo_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
     let mut command = Command::new("cargo");
     command
         .args(args)

@@ -17,7 +17,23 @@ pub async fn sync_versions(project_dir: &Path, ledger: &Ledger) -> Result<()> {
         "typescript" => {
             crate::targets::typescript::steps::versions::sync(project_dir, ledger).await
         }
-        "rust" => crate::targets::rust::steps::versions::sync(project_dir, ledger).await,
+        "rust" => {
+            crate::targets::rust::steps::versions::sync(project_dir, ledger).await?;
+            // Unlike Go's hand-rendered bodies (already gofmt-compliant
+            // by construction), Rust's rewrap long tuple entries once
+            // they cross rustfmt's line-length heuristics — replicating
+            // that reflow logic by hand would be fragile, so just run
+            // the formatter for real, exactly like `run_tests.rs` does
+            // after a full `generate`. Otherwise a long version label or
+            // `.db` filename left the project's own `cargo fmt --check`
+            // red in CI after every `add-version`/`remove-version`.
+            crate::targets::rust::steps::run_tests::run_cargo_command(
+                project_dir,
+                &["fmt"],
+                "cargo fmt",
+            )
+            .await
+        }
         "python" => crate::targets::python::steps::versions::sync(project_dir, ledger).await,
         "csharp" => crate::targets::csharp::steps::versions::sync(project_dir, ledger).await,
         "go" => crate::targets::go::steps::versions::sync(project_dir, ledger).await,
