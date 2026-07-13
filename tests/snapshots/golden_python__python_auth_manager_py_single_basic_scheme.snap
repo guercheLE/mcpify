@@ -66,24 +66,41 @@ class AuthManager:
         if self._cached_credentials is not None and self._strategy.validate_credentials(
             self._cached_credentials
         ):
-            return self._cached_credentials
+            return await self._normalize_credentials(self._cached_credentials)
 
         stored = load_credential(CREDENTIAL_ACCOUNT)
         if stored is not None:
             parsed: Credentials = json.loads(stored)
             if self._strategy.validate_credentials(parsed):
-                self._cached_credentials = parsed
-                return parsed
+                normalized = await self._normalize_credentials(parsed)
+                self._cached_credentials = normalized
+                save_credential(CREDENTIAL_ACCOUNT, json.dumps(normalized))
+                return normalized
             try:
                 refreshed = await self._strategy.refresh_token(parsed)
             except Exception:
                 pass
             else:
-                self._cached_credentials = refreshed
-                save_credential(CREDENTIAL_ACCOUNT, json.dumps(refreshed))
-                return refreshed
+                normalized = await self._normalize_credentials(refreshed)
+                self._cached_credentials = normalized
+                save_credential(CREDENTIAL_ACCOUNT, json.dumps(normalized))
+                return normalized
 
         raise NoActiveCredentialsError(self._auth_method.value)
+
+    async def _normalize_credentials(self, credentials: Credentials) -> Credentials:
+        if any(
+            key in credentials
+            for key in ("authorization_header", "api_key", "request_header_name")
+        ):
+            return dict(credentials)
+
+        if access_token := credentials.get("access_token"):
+            normalized = dict(credentials)
+            normalized["authorization_header"] = f"Bearer {access_token}"
+            return normalized
+
+        return await self._strategy.authenticate(credentials)
 
     async def apply_auth_headers(
         self,

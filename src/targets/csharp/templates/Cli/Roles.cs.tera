@@ -200,17 +200,26 @@ public static class Roles
     {
         using var host = BuildServicesHost(args);
         var options = host.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
+        var authManager = host.Services.GetRequiredService<AuthManager>();
 
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, options.Url));
-            Console.WriteLine($"reachable (status {(int)response.StatusCode})");
+            var headers = await authManager.ApplyAuthHeadersAsync(
+                [], HttpMethod.Get.Method, options.Url, Transport.Stdio);
+            using var request = new HttpRequestMessage(HttpMethod.Get, options.Url);
+            foreach (var (name, value) in headers)
+            {
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+            using var response = await client.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            Console.WriteLine("connection OK");
             return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"unreachable: {ex.Message}");
+            Console.Error.WriteLine($"connection failed: {ex.Message}");
             return 1;
         }
     }

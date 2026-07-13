@@ -72,7 +72,7 @@ Only `TypeScriptTargetGenerator` ships in v1; the registry that dispatches on `-
 
 * **Async runtime:** `tokio`, `async-trait`.
 * **CLI parsing:** `clap`.
-* **OpenAPI ingestion:** `reqwest` (remote URL fetch), `tokio::fs` (local file read), `serde_json` / `serde_yaml` (parsing), `url` (input-kind detection).
+* **OpenAPI ingestion:** `reqwest` (remote URL fetch), `tokio::fs` (local file read), `serde_json` / `serde_yaml` (ordered raw document parsing), `openapiv3` (OpenAPI 3.0 structural validation), `oas3` (OpenAPI 3.1 structural validation), `url` (input-kind detection).
 * **Database assembly:** `rusqlite` with the `sqlite-vec` extension.
 * **Template synthesis:** `tera` (or plain string/file emitters) to render the TypeScript project files.
 * **Error handling:** `anyhow`.

@@ -155,3 +155,20 @@ async fn curated_file_contents_all_four_schemes() {
         insta::assert_snapshot!(format!("python_{name}_all_four_schemes"), contents);
     }
 }
+
+#[tokio::test]
+async fn auth_manager_normalizes_valid_raw_credentials_before_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-multi-scheme.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let manager = std::fs::read_to_string(output_dir.join("src/out/auth/auth_manager.py"))
+        .expect("generated auth manager must be readable");
+    assert!(manager.contains("async def _normalize_credentials"));
+    assert!(manager.contains("await self._normalize_credentials(self._cached_credentials)"));
+    assert!(manager.contains("authorization_header\"] = f\"Bearer {access_token}\""));
+}

@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 
-use openapiv3::{OpenAPI, Operation, PathItem, ReferenceOr};
+use serde_json::Value;
 
-use super::schema_resolve::{resolve_input_schema, resolve_output_schema};
+use super::parse::OpenApiDocument;
+use super::schema_resolve::{resolve_input_schema_value, resolve_output_schema_value};
 
 /// One HTTP operation flattened out of `doc.paths`, ready for both
 /// `mcp_store.db` assembly (Story 5) and, later, target template contexts
@@ -36,17 +37,15 @@ pub struct NormalizedOperation {
     pub validation_output_schema: serde_json::Value,
 }
 
-type MethodAccessor = fn(&PathItem) -> &Option<Operation>;
-
-const METHODS: &[(&str, MethodAccessor)] = &[
-    ("GET", |item| &item.get),
-    ("PUT", |item| &item.put),
-    ("POST", |item| &item.post),
-    ("DELETE", |item| &item.delete),
-    ("OPTIONS", |item| &item.options),
-    ("HEAD", |item| &item.head),
-    ("PATCH", |item| &item.patch),
-    ("TRACE", |item| &item.trace),
+const METHODS: &[(&str, &str)] = &[
+    ("GET", "get"),
+    ("PUT", "put"),
+    ("POST", "post"),
+    ("DELETE", "delete"),
+    ("OPTIONS", "options"),
+    ("HEAD", "head"),
+    ("PATCH", "patch"),
+    ("TRACE", "trace"),
 ];
 
 /// Flattens `doc.paths` into one `NormalizedOperation` per HTTP method
@@ -61,23 +60,35 @@ const METHODS: &[(&str, MethodAccessor)] = &[
 /// targets expose it as the MCP tool name, collisions are disambiguated by
 /// appending the method and path — which is always unique per OpenAPI's own
 /// rules — rather than failing the whole generation run.
-pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
+pub fn normalize_operations(doc: &OpenApiDocument) -> Vec<NormalizedOperation> {
     let mut operations = Vec::new();
     let mut seen_operation_ids: HashSet<String> = HashSet::new();
+    let Some(paths) = doc.raw().get("paths").and_then(Value::as_object) else {
+        return operations;
+    };
+    let components = doc
+        .raw()
+        .pointer("/components/schemas")
+        .and_then(Value::as_object);
+    let document_security = doc.raw().get("security");
 
-    for (path, item) in doc.paths.paths.iter() {
-        let ReferenceOr::Item(item) = item else {
+    for (path, item) in paths {
+        let Some(item) = item.as_object() else {
             continue;
         };
+        if item.contains_key("$ref") {
+            continue;
+        }
 
-        for (method, accessor) in METHODS {
-            let Some(operation) = accessor(item) else {
+        for (method, method_key) in METHODS {
+            let Some(operation) = item.get(*method_key).and_then(Value::as_object) else {
                 continue;
             };
 
             let operation_id = operation
-                .operation_id
-                .clone()
+                .get("operationId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
                 .unwrap_or_else(|| format!("{method} {path}"));
             let operation_id = if seen_operation_ids.insert(operation_id.clone()) {
                 operation_id
@@ -87,10 +98,11 @@ pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
             seen_operation_ids.insert(operation_id.clone());
 
             let auth_scheme_ref = operation
-                .security
-                .as_ref()
-                .or(doc.security.as_ref())
+                .get("security")
+                .or(document_security)
+                .and_then(Value::as_array)
                 .and_then(|requirements| requirements.first())
+                .and_then(Value::as_object)
                 .and_then(|requirement| requirement.keys().next())
                 .cloned();
 
@@ -98,16 +110,22 @@ pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
                 operation_id,
                 path: path.clone(),
                 method: method.to_string(),
-                summary: operation.summary.clone(),
-                description: operation.description.clone(),
+                summary: operation.get("summary").and_then(Value::as_str).map(str::to_string),
+                description: operation
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 input_schema: serde_json::json!({
-                    "parameters": operation.parameters,
-                    "requestBody": operation.request_body,
+                    "parameters": operation.get("parameters").cloned().unwrap_or_else(|| serde_json::json!([])),
+                    "requestBody": operation.get("requestBody").cloned().unwrap_or(Value::Null),
                 }),
-                output_schema: serde_json::json!(operation.responses),
+                output_schema: operation
+                    .get("responses")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
                 auth_scheme_ref,
-                validation_input_schema: resolve_input_schema(operation, doc.components.as_ref()),
-                validation_output_schema: resolve_output_schema(operation, doc.components.as_ref()),
+                validation_input_schema: resolve_input_schema_value(operation, components, doc.is_31()),
+                validation_output_schema: resolve_output_schema_value(operation, components, doc.is_31()),
             });
         }
     }
@@ -119,8 +137,9 @@ pub fn normalize_operations(doc: &OpenAPI) -> Vec<NormalizedOperation> {
 mod tests {
     use super::*;
 
-    fn parse(yaml: &str) -> OpenAPI {
-        serde_yaml::from_str(yaml).expect("fixture must parse as OpenAPI")
+    fn parse(yaml: &str) -> OpenApiDocument {
+        crate::openapi::parse::parse_document(yaml, Some(crate::openapi::parse::Format::Yaml))
+            .expect("fixture must parse as OpenAPI")
     }
 
     #[test]
@@ -297,5 +316,47 @@ paths:
 
         let operations = normalize_operations(&doc);
         assert_eq!(operations[0].auth_scheme_ref, None);
+    }
+
+    #[test]
+    fn preserves_openapi_31_schema_keywords_for_generated_validators() {
+        let doc = parse(
+            r#"
+openapi: 3.1.0
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: [string, "null"]
+                score:
+                  type: number
+                  exclusiveMinimum: 0
+      responses:
+        "204":
+          description: Created
+"#,
+        );
+
+        let operations = normalize_operations(&doc);
+        let body = &operations[0].validation_input_schema["properties"]["body"];
+        assert_eq!(
+            body["properties"]["name"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+        assert_eq!(body["properties"]["score"]["exclusiveMinimum"], 0);
+        assert_eq!(
+            operations[0].validation_input_schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
     }
 }

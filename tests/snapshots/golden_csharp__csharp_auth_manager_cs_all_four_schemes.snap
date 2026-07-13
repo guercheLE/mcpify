@@ -70,7 +70,7 @@ public sealed class AuthManager(
     {
         if (_cachedCredentials is not null && Strategy.ValidateCredentials(_cachedCredentials))
         {
-            return _cachedCredentials;
+            return await NormalizeCredentialsAsync(_cachedCredentials, cancellationToken);
         }
 
         var stored = await credentialStore.GetAsync(CredentialKey, cancellationToken);
@@ -79,16 +79,19 @@ public sealed class AuthManager(
             var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(stored) ?? [];
             if (Strategy.ValidateCredentials(parsed))
             {
-                _cachedCredentials = parsed;
-                return parsed;
+                var normalized = await NormalizeCredentialsAsync(parsed, cancellationToken);
+                _cachedCredentials = normalized;
+                await credentialStore.SaveAsync(CredentialKey, JsonSerializer.Serialize(normalized), cancellationToken);
+                return normalized;
             }
 
             try
             {
                 var refreshed = await Strategy.RefreshTokenAsync(parsed, cancellationToken);
-                _cachedCredentials = refreshed;
-                await credentialStore.SaveAsync(CredentialKey, JsonSerializer.Serialize(refreshed), cancellationToken);
-                return refreshed;
+                var normalized = await NormalizeCredentialsAsync(refreshed, cancellationToken);
+                _cachedCredentials = normalized;
+                await credentialStore.SaveAsync(CredentialKey, JsonSerializer.Serialize(normalized), cancellationToken);
+                return normalized;
             }
             catch
             {
@@ -99,6 +102,29 @@ public sealed class AuthManager(
         }
 
         throw new NoActiveCredentialsException(options.Value.AuthMethod.ToString());
+    }
+
+    private async Task<Dictionary<string, string>> NormalizeCredentialsAsync(
+        Dictionary<string, string> credentials,
+        CancellationToken cancellationToken)
+    {
+        if (credentials.ContainsKey("authorization_header") ||
+            credentials.ContainsKey("api_key") ||
+            credentials.ContainsKey("request_header_name"))
+        {
+            return new Dictionary<string, string>(credentials);
+        }
+
+        if (credentials.TryGetValue("access_token", out var accessToken))
+        {
+            var normalized = new Dictionary<string, string>(credentials)
+            {
+                ["authorization_header"] = $"Bearer {accessToken}",
+            };
+            return normalized;
+        }
+
+        return await Strategy.AuthenticateAsync(credentials, cancellationToken);
     }
 
     /// <summary>

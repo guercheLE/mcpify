@@ -105,7 +105,7 @@ func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 	cached := m.cachedCredentials
 	m.mu.Unlock()
 	if cached != nil && m.strategy.ValidateCredentials(cached) {
-		return cached, nil
+		return m.normalizeCredentials(ctx, cached)
 	}
 
 	stored, ok, err := m.credentials.Get(credentialKey)
@@ -116,21 +116,32 @@ func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 		var parsed Credentials
 		if err := json.Unmarshal([]byte(stored), &parsed); err == nil {
 			if m.strategy.ValidateCredentials(parsed) {
+				normalized, err := m.normalizeCredentials(ctx, parsed)
+				if err != nil {
+					return nil, err
+				}
 				m.mu.Lock()
-				m.cachedCredentials = parsed
+				m.cachedCredentials = normalized
 				m.mu.Unlock()
-				return parsed, nil
+				if encoded, err := json.Marshal(normalized); err == nil {
+					_ = m.credentials.Save(credentialKey, string(encoded))
+				}
+				return normalized, nil
 			}
 
 			refreshed, err := m.strategy.RefreshToken(ctx, parsed)
 			if err == nil {
+				normalized, err := m.normalizeCredentials(ctx, refreshed)
+				if err != nil {
+					return nil, err
+				}
 				m.mu.Lock()
-				m.cachedCredentials = refreshed
+				m.cachedCredentials = normalized
 				m.mu.Unlock()
-				if encoded, err := json.Marshal(refreshed); err == nil {
+				if encoded, err := json.Marshal(normalized); err == nil {
 					_ = m.credentials.Save(credentialKey, string(encoded))
 				}
-				return refreshed, nil
+				return normalized, nil
 			}
 			// Fall through to NewNoActiveCredentialsError below — a
 			// failed refresh means "no valid credentials", not a fatal
@@ -139,6 +150,32 @@ func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 	}
 
 	return nil, NewNoActiveCredentialsError(string(m.authMethod))
+}
+
+func (m *Manager) normalizeCredentials(ctx context.Context, credentials Credentials) (Credentials, error) {
+	if _, ok := credentials["authorization_header"]; ok {
+		return copyCredentials(credentials), nil
+	}
+	if _, ok := credentials["api_key"]; ok {
+		return copyCredentials(credentials), nil
+	}
+	if _, ok := credentials["request_header_name"]; ok {
+		return copyCredentials(credentials), nil
+	}
+	if accessToken, ok := credentials["access_token"]; ok && accessToken != "" {
+		normalized := copyCredentials(credentials)
+		normalized["authorization_header"] = "Bearer " + accessToken
+		return normalized, nil
+	}
+	return m.strategy.Authenticate(ctx, credentials)
+}
+
+func copyCredentials(credentials Credentials) Credentials {
+	cloned := make(Credentials, len(credentials))
+	for key, value := range credentials {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // ApplyAuthHeaders decorates outgoing request headers with credentials

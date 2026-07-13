@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/xeipuuv/gojsonschema"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"{{ module_path }}/internal/core"
 )
@@ -51,7 +51,7 @@ var schemasByVersionMu sync.Mutex
 var schemasByVersion = map[string]map[string]operationSchemas{}
 
 var validatorCacheMu sync.Mutex
-var validatorCache = map[string]*gojsonschema.Schema{}
+var validatorCache = map[string]*jsonschema.Schema{}
 
 func schemasByOperation(apiVersion string) map[string]operationSchemas {
 	schemasByVersionMu.Lock()
@@ -74,7 +74,7 @@ func schemasByOperation(apiVersion string) map[string]operationSchemas {
 	return parsed
 }
 
-func validatorFor(apiVersion, operationID, schemaKey string) (*gojsonschema.Schema, error) {
+func validatorFor(apiVersion, operationID, schemaKey string) (*jsonschema.Schema, error) {
 	cacheKey := apiVersion + "\x00" + operationID + "\x00" + schemaKey
 	validatorCacheMu.Lock()
 	defer validatorCacheMu.Unlock()
@@ -94,7 +94,18 @@ func validatorFor(apiVersion, operationID, schemaKey string) (*gojsonschema.Sche
 		raw = json.RawMessage("{}")
 	}
 
-	schema, err := gojsonschema.NewSchema(gojsonschema.NewBytesLoader(raw))
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, err
+	}
+	compiler := jsonschema.NewCompiler()
+	// Each compiler owns exactly one root schema, so a stable, URI-safe name is
+	// sufficient even when generated operation IDs contain spaces or path syntax.
+	resourceURL := "urn:mcpify:schema"
+	if err := compiler.AddResource(resourceURL, document); err != nil {
+		return nil, err
+	}
+	schema, err := compiler.Compile(resourceURL)
 	if err != nil {
 		return nil, err
 	}
@@ -107,18 +118,11 @@ func validateAgainst(apiVersion, operationID, schemaKey string, data any) ([]str
 	if err != nil {
 		return nil, err
 	}
-	result, err := schema.Validate(gojsonschema.NewGoLoader(data))
-	if err != nil {
-		return nil, err
-	}
-	if result.Valid() {
+	if err := schema.Validate(data); err == nil {
 		return nil, nil
+	} else {
+		return []string{err.Error()}, nil
 	}
-	messages := make([]string, len(result.Errors()))
-	for i, e := range result.Errors() {
-		messages[i] = e.String()
-	}
-	return messages, nil
 }
 
 // ValidateInput raises a ValidationError if data doesn't satisfy

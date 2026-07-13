@@ -23,4 +23,6 @@ class BasicAuthStrategy(AuthStrategy):
         }
 
     def validate_credentials(self, credentials: Credentials) -> bool:
-        return "authorization_header" in credentials
+        return "authorization_header" in credentials or bool(
+            credentials.get("username") and credentials.get("password")
+        )

@@ -2,12 +2,11 @@ pub mod dir_guard;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
-use openapiv3::OpenAPI;
-
 use crate::context::GeneratorContext;
 use crate::openapi::normalize::normalize_operations;
+use crate::openapi::parse::OpenApiDocument;
 use crate::{auth_profile, db, openapi};
+use anyhow::Result;
 
 /// Glues the shared, target-independent steps of the compile-time lifecycle
 /// (architecture.md §1, steps 1-4) into the fully populated
@@ -69,7 +68,7 @@ async fn assemble_context(
     interactive_auth_prompt: bool,
     publish_registry: bool,
     version_label: &str,
-    doc: &OpenAPI,
+    doc: &OpenApiDocument,
 ) -> Result<GeneratorContext> {
     if crate::progress::enabled() {
         eprintln!("==> Profiling auth schemes");
@@ -92,7 +91,7 @@ async fn assemble_context(
         output_dir_preexisted,
         auth_schemes,
         normalized_operations,
-        api_title: doc.info.title.clone(),
+        api_title: doc.title().to_string(),
         version_label: version_label.to_string(),
     };
 

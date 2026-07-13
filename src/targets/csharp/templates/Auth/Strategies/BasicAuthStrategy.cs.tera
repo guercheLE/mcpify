@@ -23,5 +23,7 @@ public sealed class BasicAuthStrategy : IAuthStrategy
     }
 
     public bool ValidateCredentials(Dictionary<string, string> credentials) =>
-        credentials.ContainsKey("authorization_header");
+        credentials.ContainsKey("authorization_header") ||
+        (credentials.TryGetValue("username", out var username) && !string.IsNullOrEmpty(username) &&
+         credentials.TryGetValue("password", out var password) && !string.IsNullOrEmpty(password));
 }

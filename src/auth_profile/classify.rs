@@ -1,5 +1,6 @@
-use indexmap::IndexMap;
-use openapiv3::{APIKeyLocation, OpenAPI, ReferenceOr, SecurityScheme};
+use serde_json::{Map, Value};
+
+use crate::openapi::parse::OpenApiDocument;
 
 use super::descriptor::{
     AuthSchemeDescriptor, AuthSchemeKind, AuthSchemeLocation, default_location_for,
@@ -8,18 +9,19 @@ use super::descriptor::{
 /// Turns `components.securitySchemes` into `Vec<AuthSchemeDescriptor>`
 /// (architecture.md §1, step 3). `$ref`-based scheme entries are skipped —
 /// mcpify only classifies inline scheme definitions.
-pub fn classify_schemes(doc: &OpenAPI) -> Vec<AuthSchemeDescriptor> {
-    let Some(components) = &doc.components else {
+pub fn classify_schemes(doc: &OpenApiDocument) -> Vec<AuthSchemeDescriptor> {
+    let Some(schemes) = doc
+        .raw()
+        .pointer("/components/securitySchemes")
+        .and_then(Value::as_object)
+    else {
         return Vec::new();
     };
 
-    components
-        .security_schemes
+    schemes
         .iter()
         .filter_map(|(name, scheme)| {
-            let ReferenceOr::Item(scheme) = scheme else {
-                return None;
-            };
+            let scheme = scheme.as_object()?;
             classify_one(scheme).map(|kind| AuthSchemeDescriptor {
                 name: name.clone(),
                 kind,
@@ -36,16 +38,18 @@ pub fn classify_schemes(doc: &OpenAPI) -> Vec<AuthSchemeDescriptor> {
 /// read (OAuth1's vendor extension can attach to either an `apiKey` or an
 /// `http` scheme shape, but OAuth1 itself has no relayable HTTP location
 /// regardless of which shape carried the hint).
-fn location_for(scheme: &SecurityScheme, kind: AuthSchemeKind) -> Option<AuthSchemeLocation> {
+fn location_for(scheme: &Map<String, Value>, kind: AuthSchemeKind) -> Option<AuthSchemeLocation> {
     if kind == AuthSchemeKind::OAuth1 {
         return None;
     }
-    if let SecurityScheme::APIKey { location, name, .. } = scheme {
-        return Some(match location {
-            APIKeyLocation::Header => AuthSchemeLocation::Header { name: name.clone() },
-            APIKeyLocation::Query => AuthSchemeLocation::Query { name: name.clone() },
-            APIKeyLocation::Cookie => AuthSchemeLocation::Cookie { name: name.clone() },
-        });
+    if scheme.get("type").and_then(Value::as_str) == Some("apiKey") {
+        let name = scheme.get("name").and_then(Value::as_str)?.to_string();
+        return match scheme.get("in").and_then(Value::as_str) {
+            Some("header") => Some(AuthSchemeLocation::Header { name }),
+            Some("query") => Some(AuthSchemeLocation::Query { name }),
+            Some("cookie") => Some(AuthSchemeLocation::Cookie { name }),
+            _ => None,
+        };
     }
     default_location_for(kind)
 }
@@ -53,29 +57,30 @@ fn location_for(scheme: &SecurityScheme, kind: AuthSchemeKind) -> Option<AuthSch
 /// OpenAPI 3 has no native OAuth1 scheme `type`, so OAuth1 is detected via
 /// the vendor extension `x-auth-type: oauth1` on any scheme shape — a real
 /// ambiguity source, since a spec author could omit or misspell this hint.
-fn has_oauth1_extension(extensions: &IndexMap<String, serde_json::Value>) -> bool {
-    extensions
+fn has_oauth1_extension(scheme: &Map<String, Value>) -> bool {
+    scheme
         .get("x-auth-type")
         .and_then(|value| value.as_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("oauth1"))
 }
 
-fn classify_one(scheme: &SecurityScheme) -> Option<AuthSchemeKind> {
-    match scheme {
-        SecurityScheme::APIKey { extensions, .. } => Some(if has_oauth1_extension(extensions) {
+fn classify_one(scheme: &Map<String, Value>) -> Option<AuthSchemeKind> {
+    match scheme.get("type").and_then(Value::as_str)? {
+        "apiKey" => Some(if has_oauth1_extension(scheme) {
             AuthSchemeKind::OAuth1
         } else {
             AuthSchemeKind::ApiKey
         }),
-        SecurityScheme::HTTP {
-            scheme: http_scheme,
-            extensions,
-            ..
-        } => {
-            if has_oauth1_extension(extensions) {
+        "http" => {
+            if has_oauth1_extension(scheme) {
                 return Some(AuthSchemeKind::OAuth1);
             }
-            match http_scheme.to_ascii_lowercase().as_str() {
+            match scheme
+                .get("scheme")
+                .and_then(Value::as_str)?
+                .to_ascii_lowercase()
+                .as_str()
+            {
                 "basic" => Some(AuthSchemeKind::Basic),
                 // ponytail: both reference servers only ever implement a
                 // PAT-style bearer strategy (no separate generic-bearer
@@ -85,8 +90,9 @@ fn classify_one(scheme: &SecurityScheme) -> Option<AuthSchemeKind> {
                 _ => None,
             }
         }
-        SecurityScheme::OAuth2 { .. } => Some(AuthSchemeKind::OAuth2),
-        SecurityScheme::OpenIDConnect { .. } => None,
+        "oauth2" => Some(AuthSchemeKind::OAuth2),
+        "openIdConnect" => None,
+        _ => None,
     }
 }
 
@@ -94,7 +100,7 @@ fn classify_one(scheme: &SecurityScheme) -> Option<AuthSchemeKind> {
 mod tests {
     use super::*;
 
-    fn doc_with_scheme(scheme_yaml: &str) -> OpenAPI {
+    fn doc_with_scheme(scheme_yaml: &str) -> OpenApiDocument {
         let yaml = format!(
             r#"
 openapi: 3.0.0
@@ -108,7 +114,8 @@ components:
 {scheme_yaml}
 "#
         );
-        serde_yaml::from_str(&yaml).expect("fixture must parse as OpenAPI")
+        crate::openapi::parse::parse_document(&yaml, Some(crate::openapi::parse::Format::Yaml))
+            .expect("fixture must parse as OpenAPI")
     }
 
     #[test]
@@ -222,7 +229,7 @@ components:
 
     #[test]
     fn missing_components_yields_no_schemes() {
-        let doc: OpenAPI = serde_yaml::from_str(
+        let doc = crate::openapi::parse::parse_document(
             r#"
 openapi: 3.0.0
 info:
@@ -230,6 +237,7 @@ info:
   version: "1.0.0"
 paths: {}
 "#,
+            Some(crate::openapi::parse::Format::Yaml),
         )
         .unwrap();
         assert!(classify_schemes(&doc).is_empty());

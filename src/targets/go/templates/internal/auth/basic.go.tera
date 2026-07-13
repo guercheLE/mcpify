@@ -24,6 +24,10 @@ func (BasicStrategy) Authenticate(ctx context.Context, config Credentials) (Cred
 }
 
 func (BasicStrategy) ValidateCredentials(credentials Credentials) bool {
-	_, ok := credentials["authorization_header"]
-	return ok
+	if _, ok := credentials["authorization_header"]; ok {
+		return true
+	}
+	username, hasUsername := credentials["username"]
+	password, hasPassword := credentials["password"]
+	return hasUsername && username != "" && hasPassword && password != ""
 }

@@ -14,6 +14,12 @@ export class BasicAuthStrategy implements AuthStrategy {
   }
 
   validateCredentials(credentials: Credentials): boolean {
-    return typeof credentials.authorizationHeader === 'string';
+    return (
+      typeof credentials.authorizationHeader === 'string' ||
+      (typeof credentials.username === 'string' &&
+        credentials.username.length > 0 &&
+        typeof credentials.password === 'string' &&
+        credentials.password.length > 0)
+    );
   }
 }

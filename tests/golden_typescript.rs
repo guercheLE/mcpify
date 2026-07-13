@@ -149,3 +149,55 @@ async fn curated_file_contents_all_four_schemes() {
         insta::assert_snapshot!(format!("{name}_all_four_schemes"), contents);
     }
 }
+
+#[tokio::test]
+async fn auth_manager_normalizes_valid_raw_credentials_before_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-multi-scheme.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let manager = std::fs::read_to_string(output_dir.join("src/auth/auth-manager.ts"))
+        .expect("generated auth manager must be readable");
+    assert!(manager.contains("private async normalizeCredentials"));
+    assert!(manager.contains("await this.normalizeCredentials(this.cachedCredentials)"));
+    assert!(manager.contains("authorizationHeader: `Bearer ${credentials.accessToken}`"));
+}
+
+#[tokio::test]
+async fn validator_uses_json_schema_2020_12_for_openapi_31() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/json-schema-2020-12.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let validator = std::fs::read_to_string(output_dir.join("src/validation/validator.ts"))
+        .expect("generated validator must be readable");
+    assert!(validator.contains("ajv/dist/2020"));
+    assert!(!validator.contains("const ajv = new Ajv2020"));
+    assert!(validator.contains("new Ajv2020({ allErrors: true, strict: false }).compile"));
+
+    let compressed = std::fs::read(output_dir.join("src/validation/generated-schemas.json.zst"))
+        .expect("generated schemas must be readable");
+    let decoded = zstd::decode_all(compressed.as_slice()).expect("schemas must decompress");
+    let schemas: serde_json::Value =
+        serde_json::from_slice(&decoded).expect("schemas must be valid JSON");
+    assert_eq!(
+        schemas["listNodes"]["outputSchema"]["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert_eq!(
+        schemas["listNodes"]["outputSchema"]["$dynamicRef"],
+        "#/$defs/Node"
+    );
+    assert_eq!(
+        schemas["getRoot"]["outputSchema"]["$defs"]["Node"]["$id"],
+        "https://example.test/schemas/node"
+    );
+}

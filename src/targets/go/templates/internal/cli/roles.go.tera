@@ -286,18 +286,36 @@ func RunTestConnection(ctx context.Context, overrides core.CLIOverrides) error {
 		return err
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, config.URL, http.NoBody)
+	credentialStore, err := core.NewCredentialStore()
 	if err != nil {
 		return err
+	}
+	authManager, err := auth.NewManager(config.AuthMethod, auth.NewStrategies(), credentialStore)
+	if err != nil {
+		return err
+	}
+	headers, err := authManager.ApplyAuthHeaders(ctx, nil, http.MethodGet, config.URL, core.TransportStdio, nil)
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.URL, http.NoBody)
+	if err != nil {
+		return err
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("unreachable: %v\n", err)
-		return err
+		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	fmt.Printf("reachable (status %d)\n", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("connection failed: HTTP %d", resp.StatusCode)
+	}
+	fmt.Println("connection OK")
 	return nil
 }
 

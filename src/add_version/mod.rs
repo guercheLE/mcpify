@@ -561,9 +561,10 @@ mod tests {
         assert_eq!(reloaded.default_version, "11.3");
 
         // ...and every version-aware file was re-rendered without it.
-        let store_repository = tokio::fs::read_to_string(dir.path().join("src/data/store-repository.ts"))
-            .await
-            .unwrap();
+        let store_repository =
+            tokio::fs::read_to_string(dir.path().join("src/data/store-repository.ts"))
+                .await
+                .unwrap();
         assert!(store_repository.contains("'11.3': 'mcp_store.db'"));
         assert!(!store_repository.contains("11.2"));
     }

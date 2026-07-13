@@ -59,7 +59,10 @@ async fn run() -> anyhow::Result<()> {
             .await?;
 
             if mcpify::progress::enabled() {
-                eprintln!("==> Version removed from project at {}", project_dir.display());
+                eprintln!(
+                    "==> Version removed from project at {}",
+                    project_dir.display()
+                );
             }
 
             Ok(())

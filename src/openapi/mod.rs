@@ -5,17 +5,15 @@ pub mod schema_resolve;
 pub mod source;
 
 use anyhow::Result;
-use openapiv3::OpenAPI;
-
 use fetch::load_raw;
-use parse::{detect_format_from_name, parse_document};
+use parse::{OpenApiDocument, detect_format_from_name, parse_document};
 use source::{InputSource, classify};
 
 pub use normalize::NormalizedOperation;
 
 /// Loads and parses an OpenAPI spec from a local path or remote URL, JSON or
 /// YAML, into a normalized document (architecture.md §1, step 1).
-pub async fn ingest(input: &str) -> Result<OpenAPI> {
+pub async fn ingest(input: &str) -> Result<OpenApiDocument> {
     let source = classify(input);
     let raw = load_raw(&source).await?;
     let hint = match &source {
@@ -35,15 +33,15 @@ mod tests {
     #[tokio::test]
     async fn ingests_local_json_fixture() {
         let doc = ingest("tests/fixtures/openapi/minimal.json").await.unwrap();
-        assert_eq!(doc.info.title, "Minimal API");
-        assert!(doc.paths.paths.contains_key("/ping"));
+        assert_eq!(doc.title(), "Minimal API");
+        assert!(doc.raw()["paths"].get("/ping").is_some());
     }
 
     #[tokio::test]
     async fn ingests_local_yaml_fixture() {
         let doc = ingest("tests/fixtures/openapi/minimal.yaml").await.unwrap();
-        assert_eq!(doc.info.title, "Minimal API");
-        assert!(doc.paths.paths.contains_key("/ping"));
+        assert_eq!(doc.title(), "Minimal API");
+        assert!(doc.raw()["paths"].get("/ping").is_some());
     }
 
     #[tokio::test]
@@ -79,7 +77,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(doc.info.title, "Minimal API");
+        assert_eq!(doc.title(), "Minimal API");
     }
 
     #[tokio::test]
@@ -98,6 +96,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(doc.info.title, "Minimal API");
+        assert_eq!(doc.title(), "Minimal API");
     }
 }

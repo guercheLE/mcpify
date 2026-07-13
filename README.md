@@ -6,7 +6,7 @@
 
 Turn any OpenAPI/Swagger specification into an enterprise-grade Model Context Protocol (MCP) server in seconds.
 
-`mcpify` is a Rust CLI generator. Point it at an OpenAPI spec — a local file or a remote URL — and it emits a complete, production-ready MCP server project in the language of your choice: three token-efficient tools backed by an embedded semantic database, authentication already wired up, and enterprise capabilities (observability, resilience, testing, packaging) built in from the very first generated file.
+`mcpify` is a Rust CLI generator. Point it at an OpenAPI 3.0 or 3.1 spec — a local file or a remote URL, in JSON or YAML — and it emits a complete, production-ready MCP server project in the language of your choice: three token-efficient tools backed by an embedded semantic database, authentication already wired up, and enterprise capabilities (observability, resilience, testing, packaging) built in from the very first generated file.
 
 Five target languages ship with full feature parity, each validated end-to-end in CI: **TypeScript**, **Rust**, **Python**, **C#**, and **Go**.
 

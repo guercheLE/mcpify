@@ -90,25 +90,42 @@ export class AuthManager {
 
   async getCredentials(): Promise<Credentials> {
     if (this.cachedCredentials && this.strategy.validateCredentials(this.cachedCredentials)) {
-      return this.cachedCredentials;
+      return await this.normalizeCredentials(this.cachedCredentials);
     }
 
     const stored = await loadCredential(CREDENTIAL_ACCOUNT);
     if (stored) {
       const parsed = JSON.parse(stored) as Credentials;
       if (this.strategy.validateCredentials(parsed)) {
-        this.cachedCredentials = parsed;
-        return parsed;
+        const normalized = await this.normalizeCredentials(parsed);
+        this.cachedCredentials = normalized;
+        await saveCredential(CREDENTIAL_ACCOUNT, JSON.stringify(normalized));
+        return normalized;
       }
       if (this.strategy.refreshToken) {
         const refreshed = await this.strategy.refreshToken(parsed);
-        this.cachedCredentials = refreshed;
-        await saveCredential(CREDENTIAL_ACCOUNT, JSON.stringify(refreshed));
-        return refreshed;
+        const normalized = await this.normalizeCredentials(refreshed);
+        this.cachedCredentials = normalized;
+        await saveCredential(CREDENTIAL_ACCOUNT, JSON.stringify(normalized));
+        return normalized;
       }
     }
 
     throw new NoActiveCredentialsError(this.authMethod);
+  }
+
+  private async normalizeCredentials(credentials: Credentials): Promise<Credentials> {
+    if (
+      'authorizationHeader' in credentials ||
+      'apiKey' in credentials ||
+      'requestHeaderName' in credentials
+    ) {
+      return { ...credentials };
+    }
+    if (credentials.accessToken) {
+      return { ...credentials, authorizationHeader: `Bearer ${credentials.accessToken}` };
+    }
+    return this.strategy.authenticate(credentials);
   }
 
   /**

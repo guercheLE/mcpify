@@ -156,3 +156,37 @@ async fn curated_file_contents_all_four_schemes() {
         insta::assert_snapshot!(format!("csharp_{name}_all_four_schemes"), contents);
     }
 }
+
+#[tokio::test]
+async fn auth_manager_normalizes_valid_raw_credentials_before_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-multi-scheme.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let manager = std::fs::read_to_string(output_dir.join("Auth/AuthManager.cs"))
+        .expect("generated auth manager must be readable");
+    assert!(manager.contains("NormalizeCredentialsAsync"));
+    assert!(manager.contains("await NormalizeCredentialsAsync(_cachedCredentials"));
+    assert!(manager.contains("$\"Bearer {accessToken}\""));
+}
+
+#[tokio::test]
+async fn test_connection_authenticates_and_rejects_non_success_statuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let roles = std::fs::read_to_string(output_dir.join("Cli/Roles.cs"))
+        .expect("generated CLI roles must be readable");
+    assert!(roles.contains("GetRequiredService<AuthManager>"));
+    assert!(roles.contains("ApplyAuthHeadersAsync"));
+    assert!(roles.contains("response.EnsureSuccessStatusCode()"));
+}

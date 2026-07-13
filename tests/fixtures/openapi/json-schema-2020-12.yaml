@@ -1,0 +1,40 @@
+openapi: 3.1.0
+info:
+  title: JSON Schema 2020-12 API
+  version: "1.0.0"
+paths:
+  /nodes:
+    get:
+      operationId: listNodes
+      responses:
+        2XX:
+          description: Nodes
+          content:
+            application/json:
+              schema:
+                $dynamicRef: "#/components/schemas/Node"
+  /root:
+    get:
+      operationId: getRoot
+      responses:
+        "200":
+          description: Root node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+components:
+  schemas:
+    Node:
+      $id: "https://example.test/schemas/node"
+      $dynamicAnchor: node
+      type: object
+      properties:
+        label:
+          type: [string, "null"]
+        child:
+          $dynamicRef: "#/components/schemas/Node"
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic

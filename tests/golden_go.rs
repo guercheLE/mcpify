@@ -147,3 +147,54 @@ async fn curated_file_contents_all_four_schemes() {
         insta::assert_snapshot!(format!("go_{name}_all_four_schemes"), contents);
     }
 }
+
+#[tokio::test]
+async fn auth_manager_normalizes_valid_raw_credentials_before_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-multi-scheme.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let manager = std::fs::read_to_string(output_dir.join("internal/auth/manager.go"))
+        .expect("generated auth manager must be readable");
+    assert!(manager.contains("func (m *Manager) normalizeCredentials"));
+    assert!(manager.contains("m.normalizeCredentials(ctx, cached)"));
+    assert!(manager.contains("\"Bearer \" + accessToken"));
+}
+
+#[tokio::test]
+async fn test_connection_authenticates_and_rejects_non_success_statuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let roles = std::fs::read_to_string(output_dir.join("internal/cli/roles.go"))
+        .expect("generated CLI roles must be readable");
+    assert!(roles.contains("authManager.ApplyAuthHeaders"));
+    assert!(roles.contains("resp.StatusCode < 200 || resp.StatusCode >= 300"));
+}
+
+#[tokio::test]
+async fn validator_supports_json_schema_2020_12() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let go_mod = std::fs::read_to_string(output_dir.join("go.mod"))
+        .expect("generated go.mod must be readable");
+    let validator = std::fs::read_to_string(output_dir.join("internal/validation/validator.go"))
+        .expect("generated validator must be readable");
+    assert!(go_mod.contains("github.com/santhosh-tekuri/jsonschema/v6"));
+    assert!(validator.contains("jsonschema.NewCompiler"));
+}

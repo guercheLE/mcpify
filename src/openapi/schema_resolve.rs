@@ -11,11 +11,13 @@ use serde_json::{Map, Value};
 fn rewrite_refs(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            if let Some(Value::String(reference)) = map.get("$ref")
-                && let Some(name) = reference.strip_prefix("#/components/schemas/")
-            {
-                let rewritten = format!("#/$defs/{name}");
-                map.insert("$ref".to_string(), Value::String(rewritten));
+            for keyword in ["$ref", "$dynamicRef"] {
+                if let Some(Value::String(reference)) = map.get(keyword)
+                    && let Some(name) = reference.strip_prefix("#/components/schemas/")
+                {
+                    let rewritten = format!("#/$defs/{name}");
+                    map.insert(keyword.to_string(), Value::String(rewritten));
+                }
             }
             for v in map.values_mut() {
                 rewrite_refs(v);
@@ -33,10 +35,12 @@ fn rewrite_refs(value: &mut Value) {
 fn collect_component_refs(value: &Value, refs: &mut HashSet<String>) {
     match value {
         Value::Object(map) => {
-            if let Some(Value::String(reference)) = map.get("$ref")
-                && let Some(name) = reference.strip_prefix("#/$defs/")
-            {
-                refs.insert(name.to_string());
+            for keyword in ["$ref", "$dynamicRef"] {
+                if let Some(Value::String(reference)) = map.get(keyword)
+                    && let Some(name) = reference.strip_prefix("#/$defs/")
+                {
+                    refs.insert(name.to_string());
+                }
             }
             for v in map.values() {
                 collect_component_refs(v, refs);
@@ -98,6 +102,150 @@ fn insert_defs_if_any(schema: &mut Value, components: Option<&Components>) {
     {
         map.insert("$defs".to_string(), defs);
     }
+}
+
+fn build_defs_from_value(schema: &Value, components: Option<&Map<String, Value>>) -> Value {
+    let mut defs = Map::new();
+    let Some(components) = components else {
+        return Value::Object(defs);
+    };
+
+    let mut pending = HashSet::new();
+    let mut visited = HashSet::new();
+    collect_component_refs(schema, &mut pending);
+    while let Some(name) = pending.iter().next().cloned() {
+        pending.remove(&name);
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        let Some(component) = components.get(&name) else {
+            continue;
+        };
+        let mut definition = component.clone();
+        rewrite_refs(&mut definition);
+        collect_component_refs(&definition, &mut pending);
+        defs.insert(name, definition);
+    }
+    Value::Object(defs)
+}
+
+fn decorate_value_schema(
+    mut schema: Value,
+    components: Option<&Map<String, Value>>,
+    openapi_31: bool,
+) -> Value {
+    rewrite_refs(&mut schema);
+    let defs = build_defs_from_value(&schema, components);
+    if !schema.is_object() {
+        schema = serde_json::json!({ "allOf": [schema] });
+    }
+    let object = schema
+        .as_object_mut()
+        .expect("schema was wrapped as an object");
+    if defs.as_object().is_some_and(|map| !map.is_empty()) {
+        object.insert("$defs".to_string(), defs);
+    }
+    if openapi_31 {
+        object.insert(
+            "$schema".to_string(),
+            Value::String("https://json-schema.org/draft/2020-12/schema".to_string()),
+        );
+    }
+    schema
+}
+
+pub fn resolve_input_schema_value(
+    operation: &Map<String, Value>,
+    components: Option<&Map<String, Value>>,
+    openapi_31: bool,
+) -> Value {
+    let mut properties = Map::new();
+    let mut required = Vec::new();
+
+    if let Some(parameters) = operation.get("parameters").and_then(Value::as_array) {
+        for parameter in parameters {
+            let Some(parameter) = parameter.as_object() else {
+                continue;
+            };
+            if parameter.contains_key("$ref") {
+                continue;
+            }
+            let Some(name) = parameter.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            properties.insert(
+                name.to_string(),
+                parameter
+                    .get("schema")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            );
+            if parameter.get("required").and_then(Value::as_bool) == Some(true) {
+                required.push(Value::String(name.to_string()));
+            }
+        }
+    }
+
+    if let Some(request_body) = operation.get("requestBody").and_then(Value::as_object)
+        && !request_body.contains_key("$ref")
+    {
+        let body_schema = request_body
+            .get("content")
+            .and_then(Value::as_object)
+            .and_then(|content| content.get("application/json"))
+            .and_then(Value::as_object)
+            .and_then(|media| media.get("schema"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        properties.insert("body".to_string(), body_schema);
+        if request_body.get("required").and_then(Value::as_bool) == Some(true) {
+            required.push(Value::String("body".to_string()));
+        }
+    }
+
+    let mut schema = Map::new();
+    schema.insert("type".to_string(), Value::String("object".to_string()));
+    schema.insert("properties".to_string(), Value::Object(properties));
+    if !required.is_empty() {
+        schema.insert("required".to_string(), Value::Array(required));
+    }
+    decorate_value_schema(Value::Object(schema), components, openapi_31)
+}
+
+pub fn resolve_output_schema_value(
+    operation: &Map<String, Value>,
+    components: Option<&Map<String, Value>>,
+    openapi_31: bool,
+) -> Value {
+    let responses = operation.get("responses").and_then(Value::as_object);
+    let response = responses
+        .and_then(|responses| {
+            responses
+                .iter()
+                .find_map(|(status, response)| {
+                    if status.eq_ignore_ascii_case("2XX") {
+                        Some(response)
+                    } else {
+                        status
+                            .parse::<u16>()
+                            .ok()
+                            .filter(|status| (200..300).contains(status))
+                            .map(|_| response)
+                    }
+                })
+                .or_else(|| responses.get("default"))
+        })
+        .and_then(Value::as_object);
+    let schema = response
+        .filter(|response| !response.contains_key("$ref"))
+        .and_then(|response| response.get("content"))
+        .and_then(Value::as_object)
+        .and_then(|content| content.get("application/json"))
+        .and_then(Value::as_object)
+        .and_then(|media| media.get("schema"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    decorate_value_schema(schema, components, openapi_31)
 }
 
 fn parameter_data(parameter: &Parameter) -> &openapiv3::ParameterData {
@@ -413,5 +561,60 @@ paths:
 
         let output = resolve_output_schema(operation, doc.components.as_ref());
         assert_eq!(output, Value::Object(Map::new()));
+    }
+
+    #[test]
+    fn raw_resolver_accepts_success_response_ranges() {
+        let operation = serde_json::json!({
+            "responses": {
+                "2XX": {
+                    "description": "Success",
+                    "content": {
+                        "application/json": {
+                            "schema": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        });
+
+        let output = resolve_output_schema_value(operation.as_object().unwrap(), None, true);
+        assert_eq!(output["type"], "string");
+    }
+
+    #[test]
+    fn raw_resolver_rebases_dynamic_refs_and_embeds_dependencies() {
+        let operation = serde_json::json!({
+            "responses": {
+                "200": {
+                    "description": "Success",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$dynamicRef": "#/components/schemas/Node" }
+                        }
+                    }
+                }
+            }
+        });
+        let components = serde_json::json!({
+            "Node": {
+                "$dynamicAnchor": "node",
+                "type": "object",
+                "properties": {
+                    "child": { "$dynamicRef": "#/components/schemas/Node" }
+                }
+            }
+        });
+
+        let output = resolve_output_schema_value(
+            operation.as_object().unwrap(),
+            components.as_object(),
+            true,
+        );
+        assert_eq!(output["$dynamicRef"], "#/$defs/Node");
+        assert_eq!(
+            output["$defs"]["Node"]["properties"]["child"]["$dynamicRef"],
+            "#/$defs/Node"
+        );
     }
 }
