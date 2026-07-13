@@ -21,9 +21,8 @@ import (
 // populate-embeddings before npm test.
 //
 // Bare invocation targets just mcp_store.db / mcp_store.chromem (the
-// default version), matching every deployment that only ever ships that
-// one file (this project's own Dockerfile included); an explicit
-// argument names an api_version to target exactly; --all walks every
+// default version); an explicit argument names an api_version to target
+// exactly; --all walks every
 // version this project's ledger knows about (data.VersionStoreFiles) —
 // the one-time local backfill needed after `mcpify add-version` adds a
 // new version, since each version's chromem collection is independent.

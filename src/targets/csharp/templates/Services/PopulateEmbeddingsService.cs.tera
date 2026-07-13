@@ -16,9 +16,8 @@ public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingSer
     /// <summary>
     /// Which store file(s) to populate: bare invocation (both <paramref
     /// name="all"/> and <paramref name="apiVersion"/> unset) targets just
-    /// `mcp_store.db` (the default version), matching every deployment
-    /// that only ever ships that one file (this project's own Dockerfile
-    /// included); an explicit <paramref name="apiVersion"/> targets
+    /// `mcp_store.db` (the default version); an explicit <paramref
+    /// name="apiVersion"/> targets
     /// exactly that version's file; <paramref name="all"/> walks every
     /// version this project's ledger knows about
     /// (<see cref="SqliteVecStore.AllStoreFiles"/>) — the one-time local

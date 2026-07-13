@@ -12,12 +12,12 @@ RUN dotnet publish {{ namespace }}.csproj -c Release -o /app/publish --no-restor
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
-COPY mcp_store.db ./mcp_store.db
+COPY mcp_store*.db ./
 
 # mcp_store.db leaves the generator with an empty semantic_endpoints table
 # (vectors are computed here, not by mcpify itself — see the plan's
 # embeddings decision), so it must be populated before the image is usable.
-RUN dotnet {{ namespace }}.dll populate-embeddings
+RUN dotnet {{ namespace }}.dll populate-embeddings --all
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD ["dotnet", "{{ namespace }}.dll", "test-connection"]

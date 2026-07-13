@@ -64,9 +64,8 @@ async def populate(db_path: Path) -> int:
 
 def _targets() -> list[Path]:
     """Which store file(s) to populate: bare invocation targets just
-    `mcp_store.db` (the default version), matching every deployment that
-    only ever ships that one file (this project's own Dockerfile
-    included); an explicit path targets exactly that file; `--all` walks
+    `mcp_store.db` (the default version); an explicit path targets exactly
+    that file; `--all` walks
     every version this project's ledger knows about
     (`data.store.VERSION_STORE_FILES`) — the one-time local backfill
     needed after `mcpify add-version` adds a new version file, since each

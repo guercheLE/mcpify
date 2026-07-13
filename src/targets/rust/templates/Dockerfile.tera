@@ -17,19 +17,19 @@ RUN apt-get update \
 
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
-# Every version's `.db`, not just the default `mcp_store.db` — `store.rs`'s
-# `VERSION_STORE_BYTES` embeds all of them via `include_bytes!`, so
-# `cargo build` fails below if any are missing from the build context.
-{%- for v in version_entries %}
-COPY {{ v.db_file }} ./{{ v.db_file }}
-{%- endfor %}
+# The wildcard remains valid after `mcpify add-version` adds another store;
+# `store.rs` embeds every matching version via `include_bytes!`.
+COPY mcp_store*.db ./
 
-RUN cargo build --release
+# Build the helper first, populate every version, then perform the final
+# release build so `include_bytes!` captures the populated database bytes.
+RUN cargo build --release --bin {{ project_name }}-populate-embeddings
 
 # mcp_store.db leaves the Rust generator with an empty semantic_endpoints
 # table (vectors are computed here, not by mcpify itself — see the plan's
 # embeddings decision), so it must be populated before the image is usable.
-RUN ./target/release/{{ project_name }}-populate-embeddings
+RUN ./target/release/{{ project_name }}-populate-embeddings --all
+RUN cargo build --release
 
 # `fastembed`/`ort` (Story R6) may dynamically link an ONNX Runtime shared
 # library rather than statically linking it — if `cargo build --release`
@@ -46,7 +46,7 @@ RUN apt-get update \
 
 COPY --from=builder /app/target/release/{{ project_name }} ./{{ project_name }}
 COPY --from=builder /app/target/release/{{ project_name }}-healthcheck ./{{ project_name }}-healthcheck
-COPY --from=builder /app/mcp_store.db ./mcp_store.db
+COPY --from=builder /app/mcp_store*.db ./
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["./{{ project_name }}-healthcheck"]
 
