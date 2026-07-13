@@ -25,7 +25,7 @@ Interactively collects the API URL and the credentials your chosen auth method n
 ```bash
 dotnet run -- search "create an issue"
 dotnet run -- get <operationId>
-dotnet run -- call <operationId> --some-arg value
+dotnet run -- call <operationId> --args '{"key":"value"}'
 ```
 
 ### Harness Server

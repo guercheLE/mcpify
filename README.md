@@ -108,7 +108,7 @@ The tree above is the TypeScript (`-l typescript`) layout. The other four target
 # Terminal Client mode (default) — direct CLI usage
 my-api-mcp search "create an issue"
 my-api-mcp get createIssue
-my-api-mcp call createIssue --project ABC --summary "..."
+my-api-mcp call createIssue --args '{"project":"ABC","summary":"..."}'
 
 # Harness Server mode — for agent hosts
 my-api-mcp start                              # stdio transport (default)

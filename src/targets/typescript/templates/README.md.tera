@@ -26,7 +26,7 @@ Interactively collects the API URL and the credentials your chosen auth method n
 ```bash
 {{ project_name }} search "create an issue"
 {{ project_name }} get <operationId>
-{{ project_name }} call <operationId> --some-arg value
+{{ project_name }} call <operationId> --args '{"key":"value"}'
 ```
 
 ### Harness Server
