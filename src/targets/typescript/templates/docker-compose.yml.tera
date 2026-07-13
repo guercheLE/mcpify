@@ -2,6 +2,7 @@ services:
   {{ project_name }}:
     build: .
     image: {{ project_name }}:latest
+    command: ["start"]
     env_file:
       - .env
     volumes:
@@ -12,6 +13,7 @@ services:
   {{ project_name }}-http:
     build: .
     image: {{ project_name }}:latest
+    command: ["http", "--host", "0.0.0.0", "--port", "3000"]
     env_file:
       - .env
     environment:

@@ -35,6 +35,22 @@ Interactively collects the API URL and the credentials your chosen auth method n
 {{ project_name }} http --host 127.0.0.1 --port 3000  # HTTP transport
 ```
 
+## Docker
+
+```bash
+# Stdio: the MCP client launches this one-off process and owns its stdin/stdout pipes
+docker compose run --rm -T {{ project_name }}
+
+# HTTP: a long-running network endpoint published on http://localhost:3000
+docker compose up {{ project_name }}-http
+```
+
+Run these commands from the repository root. Docker Compose automatically discovers `docker-compose.yml`; `{{ project_name }}` and `{{ project_name }}-http` are service names inside that file, not filenames. Writing `docker compose -f docker-compose.yml ...` is equivalent, but `-f` is only needed when the file has another name or location, or when combining multiple Compose files.
+
+Both services read configuration from a local `.env` file (copy `.env.example`) and persist credentials and configuration under `~/.{{ project_name }}` on the host. For stdio, `-T` disables pseudo-TTY allocation so MCP JSON-RPC stays on raw stdin/stdout, and `--rm` removes the one-off container when the client exits.
+
+Stdio is a process transport, not a listening service: the MCP client must start the server and communicate through that exact child process's stdin/stdout. This is useful when an MCP client is configured to launch `docker compose run --rm -T {{ project_name }}`, in local scripts or CI that directly exchange MCP messages with the process, or in a custom image where your application launches the generated server's `start` subcommand as a child process. Merely putting the application and server in the same image—or starting the stdio container separately with `docker compose up`—does not connect their streams. One stdio server process normally serves one client. Use HTTP when independently started applications, multiple clients, another container, or a remote machine need to connect over the network.
+
 ## Testing
 
 ```bash
