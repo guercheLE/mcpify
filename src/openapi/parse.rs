@@ -232,7 +232,12 @@ fn convert_swagger_2(mut swagger: Value) -> Result<Value> {
     if let Some(value) = parameters {
         components.insert("parameters".to_string(), value);
     }
-    if let Some(value) = responses {
+    if let Some(mut value) = responses {
+        if let Some(responses) = value.as_object_mut() {
+            for response in responses.values_mut().filter_map(Value::as_object_mut) {
+                convert_swagger_response(response);
+            }
+        }
         components.insert("responses".to_string(), value);
     }
     if !components.is_empty() {
@@ -361,12 +366,21 @@ fn convert_swagger_operation(operation: &mut Map<String, Value>) {
         .and_then(Value::as_object_mut)
     {
         for response in responses.values_mut().filter_map(Value::as_object_mut) {
-            if let Some(schema) = response.remove("schema") {
-                response.insert(
-                    "content".to_string(),
-                    json!({ "application/json": { "schema": schema } }),
-                );
-            }
+            convert_swagger_response(response);
+        }
+    }
+}
+
+fn convert_swagger_response(response: &mut Map<String, Value>) {
+    if let Some(schema) = response.remove("schema") {
+        response.insert(
+            "content".to_string(),
+            json!({ "application/json": { "schema": schema } }),
+        );
+    }
+    if let Some(headers) = response.get_mut("headers").and_then(Value::as_object_mut) {
+        for header in headers.values_mut().filter_map(Value::as_object_mut) {
+            repair_parameter_schema(header);
         }
     }
 }
@@ -410,6 +424,14 @@ fn repair_missing_parameter_schemas(raw: &mut Value) {
             }
         }
     }
+    if let Some(parameters) = raw
+        .pointer_mut("/components/parameters")
+        .and_then(Value::as_object_mut)
+    {
+        for parameter in parameters.values_mut().filter_map(Value::as_object_mut) {
+            repair_parameter_schema(parameter);
+        }
+    }
 }
 
 fn repair_parameter_array(parameters: Option<&mut Value>) {
@@ -417,17 +439,84 @@ fn repair_parameter_array(parameters: Option<&mut Value>) {
         return;
     };
     for parameter in parameters.iter_mut().filter_map(Value::as_object_mut) {
-        if parameter.contains_key("$ref")
-            || parameter.contains_key("schema")
-            || parameter.contains_key("content")
-            || parameter.get("in").and_then(Value::as_str) == Some("body")
-        {
-            continue;
+        repair_parameter_schema(parameter);
+    }
+}
+
+fn repair_parameter_schema(parameter: &mut Map<String, Value>) {
+    if parameter.contains_key("$ref")
+        || parameter.contains_key("schema")
+        || parameter.contains_key("content")
+        || parameter.get("in").and_then(Value::as_str) == Some("body")
+    {
+        return;
+    }
+
+    let mut schema = Map::new();
+    for key in [
+        "type",
+        "format",
+        "items",
+        "default",
+        "maximum",
+        "exclusiveMaximum",
+        "minimum",
+        "exclusiveMinimum",
+        "maxLength",
+        "minLength",
+        "pattern",
+        "maxItems",
+        "minItems",
+        "uniqueItems",
+        "enum",
+        "multipleOf",
+    ] {
+        if let Some(value) = parameter.remove(key) {
+            schema.insert(key.to_string(), value);
         }
-        let schema_type = parameter
-            .remove("type")
-            .unwrap_or_else(|| Value::String("string".to_string()));
-        parameter.insert("schema".to_string(), json!({ "type": schema_type }));
+    }
+    schema
+        .entry("type".to_string())
+        .or_insert_with(|| Value::String("string".to_string()));
+    if schema.get("type").and_then(Value::as_str) == Some("array") {
+        schema
+            .entry("items".to_string())
+            .or_insert_with(|| json!({ "type": "string" }));
+    }
+    parameter.insert("schema".to_string(), Value::Object(schema));
+
+    let collection_format = parameter
+        .remove("collectionFormat")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned));
+    let location = parameter.get("in").and_then(Value::as_str);
+    match (location, collection_format.as_deref()) {
+        (Some("query"), Some("ssv")) => {
+            parameter.insert(
+                "style".to_string(),
+                Value::String("spaceDelimited".to_string()),
+            );
+            parameter.insert("explode".to_string(), Value::Bool(false));
+        }
+        (Some("query"), Some("pipes")) => {
+            parameter.insert(
+                "style".to_string(),
+                Value::String("pipeDelimited".to_string()),
+            );
+            parameter.insert("explode".to_string(), Value::Bool(false));
+        }
+        (Some("query"), Some("multi")) => {
+            parameter.insert("style".to_string(), Value::String("form".to_string()));
+            parameter.insert("explode".to_string(), Value::Bool(true));
+        }
+        (Some("query"), Some("csv")) => {
+            parameter.insert("style".to_string(), Value::String("form".to_string()));
+            parameter.insert("explode".to_string(), Value::Bool(false));
+        }
+        (Some("path" | "header"), Some(_)) => {
+            parameter.insert("style".to_string(), Value::String("simple".to_string()));
+            parameter.insert("explode".to_string(), Value::Bool(false));
+        }
+        _ => {}
     }
 }
 
@@ -447,7 +536,7 @@ pub fn parse_document(raw: &str, hint: Option<Format>) -> Result<OpenApiDocument
 
     match parse_value_as(raw, second).and_then(validate_document) {
         Ok(doc) => Ok(doc),
-        Err(_) => bail!("failed to parse OpenAPI spec as JSON or YAML: {first_err}"),
+        Err(_) => bail!("failed to parse OpenAPI spec as JSON or YAML: {first_err:#}"),
     }
 }
 
@@ -494,6 +583,44 @@ paths: {}
         // A wrong hint must not prevent parsing — both formats are tried.
         let doc = parse_document(MINIMAL_YAML, Some(Format::Json)).unwrap();
         assert_eq!(doc.title(), "Minimal API");
+    }
+
+    #[test]
+    fn converts_swagger_array_parameter_schema_and_serialization() {
+        let doc = parse_document(
+            r#"
+swagger: "2.0"
+info: { title: Legacy arrays, version: "1.0.0" }
+paths:
+  /widgets:
+    get:
+      parameters:
+        - name: ids
+          in: query
+          type: array
+          items: { type: string, format: uuid }
+          collectionFormat: multi
+      responses:
+        "200":
+          description: ok
+          headers:
+            X-RateLimit-Remaining: { type: integer, format: int32 }
+"#,
+            Some(Format::Yaml),
+        )
+        .unwrap();
+
+        let parameter = &doc.raw()["paths"]["/widgets"]["get"]["parameters"][0];
+        assert_eq!(parameter["schema"]["type"], "array");
+        assert_eq!(parameter["schema"]["items"]["format"], "uuid");
+        assert_eq!(parameter["style"], "form");
+        assert_eq!(parameter["explode"], true);
+        assert!(parameter.get("collectionFormat").is_none());
+        assert_eq!(
+            doc.raw()["paths"]["/widgets"]["get"]["responses"]["200"]["headers"]["X-RateLimit-Remaining"]
+                ["schema"]["format"],
+            "int32"
+        );
     }
 
     #[test]

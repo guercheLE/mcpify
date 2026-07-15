@@ -106,7 +106,7 @@ fn collect(root: &Path, current: &Path, files: &mut Vec<SizedPath>) -> Result<()
         if entry.file_type()?.is_dir() {
             let always_skip = matches!(
                 name.to_str(),
-                Some(".git" | "target" | "node_modules" | ".venv")
+                Some(".git" | ".fastembed_cache" | "target" | "node_modules" | ".venv")
             );
             let root_build_dir = current == root && matches!(name.to_str(), Some("bin" | "obj"));
             if always_skip || root_build_dir {

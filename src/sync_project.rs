@@ -13,7 +13,8 @@ use crate::project_config::{PreprocessCommand, ProjectManifest, VersionSpec, sel
 use crate::targets;
 
 pub async fn run(manifest_path: &Path) -> Result<PathBuf> {
-    let manifest = ProjectManifest::read(manifest_path).await?;
+    let (portable_manifest, manifest) =
+        ProjectManifest::read_portable_and_resolved(manifest_path).await?;
     let selected = select_versions(&manifest.versions, &manifest.version_policy)?;
     let default = selected
         .iter()
@@ -65,7 +66,8 @@ pub async fn run(manifest_path: &Path) -> Result<PathBuf> {
     crate::add_version::ledger::write(&manifest.output, &ledger).await?;
     crate::package_preflight::enforce_project_limit(&ctx)?;
 
-    let canonical = serde_yaml::to_string(&manifest).context("failed to serialize manifest")?;
+    let canonical =
+        serde_yaml::to_string(&portable_manifest).context("failed to serialize manifest")?;
     tokio::fs::write(manifest.output.join("mcpify.yaml"), canonical)
         .await
         .context("failed to write generated project's mcpify.yaml")?;

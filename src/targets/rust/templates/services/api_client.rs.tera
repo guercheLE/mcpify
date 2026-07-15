@@ -17,6 +17,10 @@ use crate::core::config_schema::Config;
 use crate::core::rate_limiter::RateLimiter;
 use crate::data::store::EndpointRecord;
 
+{% if automatic_user_agent -%}
+const DEFAULT_USER_AGENT: &str = concat!("{{ project_name }}/", env!("CARGO_PKG_VERSION"));
+
+{% endif -%}
 fn parameters_of(endpoint: &EndpointRecord) -> Vec<Value> {
     endpoint
         .input_schema
@@ -127,6 +131,9 @@ impl ApiClient {
 
         let mut headers: HashMap<String, String> = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
+{% if automatic_user_agent %}
+        headers.insert("User-Agent".to_string(), DEFAULT_USER_AGENT.to_string());
+{% endif %}
 {% for header in default_headers %}
         headers.insert({{ header.name | json_encode }}.to_string(), {{ header.value | json_encode }}.to_string());
 {% endfor %}

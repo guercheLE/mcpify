@@ -141,15 +141,21 @@ impl ProjectManifest {
     }
 
     pub async fn read(path: &Path) -> Result<Self> {
+        Ok(Self::read_portable_and_resolved(path).await?.1)
+    }
+
+    pub async fn read_portable_and_resolved(path: &Path) -> Result<(Self, Self)> {
         let yaml = tokio::fs::read_to_string(path)
             .await
             .with_context(|| format!("failed to read manifest '{}'", path.display()))?;
-        let mut manifest = Self::from_yaml(&yaml)?;
-        if manifest.output.is_relative() {
+        let portable = Self::from_yaml(&yaml)?;
+        portable.validate()?;
+        let mut resolved = portable.clone();
+        if resolved.output.is_relative() {
             let parent = path.parent().unwrap_or_else(|| Path::new("."));
-            manifest.output = parent.join(&manifest.output);
+            resolved.output = parent.join(&resolved.output);
         }
-        for version in &mut manifest.versions {
+        for version in &mut resolved.versions {
             if !version.source.starts_with("http://") && !version.source.starts_with("https://") {
                 let source = Path::new(&version.source);
                 if source.is_relative() {
@@ -167,8 +173,7 @@ impl ProjectManifest {
                 }
             }
         }
-        manifest.validate()?;
-        Ok(manifest)
+        Ok((portable, resolved))
     }
 
     pub fn validate(&self) -> Result<()> {

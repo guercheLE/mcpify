@@ -60,6 +60,7 @@ const FILES: &[(&str, &str)] = &[
         "src/bin/populate_embeddings.rs",
     ),
     ("Dockerfile.tera", "Dockerfile"),
+    (".dockerignore.tera", ".dockerignore"),
     ("docker-compose.yml.tera", "docker-compose.yml"),
     (".github/workflows/ci.yml.tera", ".github/workflows/ci.yml"),
     (
@@ -69,6 +70,10 @@ const FILES: &[(&str, &str)] = &[
     (
         ".github/workflows/release.yml.tera",
         ".github/workflows/release.yml",
+    ),
+    (
+        ".github/workflows/container-image.yml.tera",
+        ".github/workflows/container-image.yml",
     ),
     (
         ".github/workflows/publish-crate.yml.tera",

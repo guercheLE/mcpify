@@ -3,8 +3,10 @@ source: tests/golden_rust.rs
 expression: file_tree(&output_dir)
 ---
 [
+    ".dockerignore",
     ".env.example",
     ".github/workflows/ci.yml",
+    ".github/workflows/container-image.yml",
     ".github/workflows/docker-build.yml",
     ".github/workflows/release.yml",
     ".gitignore",
