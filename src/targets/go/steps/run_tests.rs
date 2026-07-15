@@ -71,7 +71,7 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     )
     .await?;
 
-    Ok(())
+    crate::package_preflight::enforce_project_limit(ctx)
 }
 
 async fn run_command(cwd: &Path, program: &str, args: &[&str], label: &str) -> Result<()> {

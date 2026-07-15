@@ -37,7 +37,13 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     )
     .await?;
     run_npm_command(&ctx.output_dir, &["test"], "npm test").await?;
-    Ok(())
+    run_npm_command(
+        &ctx.output_dir,
+        &["pack", "--dry-run", "--json"],
+        "npm pack --dry-run",
+    )
+    .await?;
+    crate::package_preflight::enforce_project_limit(ctx)
 }
 
 async fn run_npm_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {

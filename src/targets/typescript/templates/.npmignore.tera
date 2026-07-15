@@ -1,0 +1,3 @@
+{% for value in publication.exclude -%}
+{{ value }}
+{% endfor -%}

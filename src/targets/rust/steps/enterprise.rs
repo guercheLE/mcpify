@@ -70,6 +70,11 @@ const FILES: &[(&str, &str)] = &[
         ".github/workflows/release.yml.tera",
         ".github/workflows/release.yml",
     ),
+    (
+        ".github/workflows/publish-crate.yml.tera",
+        ".github/workflows/publish-crate.yml",
+    ),
+    ("dist-workspace.toml.tera", "dist-workspace.toml"),
 ];
 
 /// `generate_enterprise_scaffolding` (architecture.md §1, step 6).
@@ -79,6 +84,9 @@ pub async fn generate_enterprise_scaffolding(ctx: &GeneratorContext) -> Result<(
     let tera_ctx = tera::Context::from_serialize(&view)?;
 
     for (template, out_name) in FILES {
+        if *out_name == ".github/workflows/publish-crate.yml" && !ctx.publish_registry {
+            continue;
+        }
         render_and_write(&tera, template, &tera_ctx, &ctx.output_dir.join(out_name)).await?;
     }
 
@@ -117,6 +125,9 @@ mod tests {
         generate_enterprise_scaffolding(&ctx).await.unwrap();
 
         for (_, out_name) in FILES {
+            if *out_name == ".github/workflows/publish-crate.yml" {
+                continue;
+            }
             assert!(dir.path().join(out_name).is_file(), "missing {out_name}");
         }
     }

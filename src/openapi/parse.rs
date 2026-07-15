@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use openapiv3::OpenAPI;
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone)]
 pub struct OpenApiDocument {
@@ -152,7 +152,11 @@ fn validate_openapi_31_shape(raw: &Value, version: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_document(raw: Value) -> Result<OpenApiDocument> {
+fn validate_document(mut raw: Value) -> Result<OpenApiDocument> {
+    if raw.get("swagger").and_then(Value::as_str) == Some("2.0") {
+        raw = convert_swagger_2(raw)?;
+    }
+    repair_missing_parameter_schemas(&mut raw);
     let version = raw
         .get("openapi")
         .and_then(Value::as_str)
@@ -182,6 +186,249 @@ fn validate_document(raw: Value) -> Result<OpenApiDocument> {
     }
 
     Ok(OpenApiDocument { raw })
+}
+
+/// Converts the Swagger 2 surface mcpify consumes into OpenAPI 3.0.3 before
+/// the normal validator/normalizer sees it. It covers reusable definitions,
+/// security definitions, body/form parameters, response schemas and server
+/// URL fields while retaining unknown vendor extensions.
+fn convert_swagger_2(mut swagger: Value) -> Result<Value> {
+    let root = swagger
+        .as_object_mut()
+        .context("Swagger 2 document root must be an object")?;
+    root.remove("swagger");
+    root.insert("openapi".to_string(), Value::String("3.0.3".to_string()));
+
+    let definitions = root.remove("definitions");
+    let security_definitions = root.remove("securityDefinitions");
+    let parameters = root.remove("parameters");
+    let responses = root.remove("responses");
+    let mut components = root
+        .remove("components")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(value) = definitions {
+        components.insert("schemas".to_string(), value);
+    }
+    if let Some(Value::Object(schemes)) = security_definitions {
+        let converted = schemes
+            .into_iter()
+            .map(|(name, mut value)| {
+                if let Some(scheme) = value.as_object_mut() {
+                    match scheme.get("type").and_then(Value::as_str) {
+                        Some("basic") => {
+                            scheme.insert("type".to_string(), Value::String("http".to_string()));
+                            scheme.insert("scheme".to_string(), Value::String("basic".to_string()));
+                        }
+                        Some("oauth2") => convert_swagger_oauth2(scheme),
+                        _ => {}
+                    }
+                }
+                (name, value)
+            })
+            .collect();
+        components.insert("securitySchemes".to_string(), Value::Object(converted));
+    }
+    if let Some(value) = parameters {
+        components.insert("parameters".to_string(), value);
+    }
+    if let Some(value) = responses {
+        components.insert("responses".to_string(), value);
+    }
+    if !components.is_empty() {
+        root.insert("components".to_string(), Value::Object(components));
+    }
+
+    let base_path = root
+        .remove("basePath")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "/".to_string());
+    let host = root
+        .remove("host")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned));
+    let scheme = root
+        .remove("schemes")
+        .and_then(|value| value.as_array().and_then(|items| items.first()).cloned())
+        .and_then(|value| value.as_str().map(ToOwned::to_owned));
+    let server_url = match host {
+        Some(host) => format!(
+            "{}://{}{}",
+            scheme.as_deref().unwrap_or("https"),
+            host,
+            base_path
+        ),
+        None => base_path,
+    };
+    root.insert("servers".to_string(), json!([{ "url": server_url }]));
+    root.remove("consumes");
+    root.remove("produces");
+
+    if let Some(paths) = root.get_mut("paths").and_then(Value::as_object_mut) {
+        for path_item in paths.values_mut().filter_map(Value::as_object_mut) {
+            for method in ["get", "put", "post", "delete", "options", "head", "patch"] {
+                if let Some(operation) = path_item.get_mut(method).and_then(Value::as_object_mut) {
+                    convert_swagger_operation(operation);
+                }
+            }
+        }
+    }
+    rewrite_swagger_refs(&mut swagger);
+    Ok(swagger)
+}
+
+fn convert_swagger_oauth2(scheme: &mut Map<String, Value>) {
+    let flow = scheme
+        .remove("flow")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned));
+    let authorization_url = scheme.remove("authorizationUrl");
+    let token_url = scheme.remove("tokenUrl");
+    let scopes = scheme.remove("scopes").unwrap_or_else(|| json!({}));
+    let (flow_name, mut flow_value) = match flow.as_deref() {
+        Some("implicit") => ("implicit", json!({ "scopes": scopes })),
+        Some("password") => ("password", json!({ "scopes": scopes })),
+        Some("application") => ("clientCredentials", json!({ "scopes": scopes })),
+        _ => ("authorizationCode", json!({ "scopes": scopes })),
+    };
+    if let Some(url) = authorization_url {
+        flow_value["authorizationUrl"] = url;
+    }
+    if let Some(url) = token_url {
+        flow_value["tokenUrl"] = url;
+    }
+    let mut flows = Map::new();
+    flows.insert(flow_name.to_string(), flow_value);
+    scheme.insert("flows".to_string(), Value::Object(flows));
+}
+
+fn convert_swagger_operation(operation: &mut Map<String, Value>) {
+    if let Some(parameters) = operation
+        .get_mut("parameters")
+        .and_then(Value::as_array_mut)
+    {
+        let mut request_body = None;
+        let mut form_properties = Map::new();
+        let mut required_form_fields = Vec::new();
+        parameters.retain_mut(|parameter| {
+            let Some(object) = parameter.as_object_mut() else {
+                return true;
+            };
+            let location = object.get("in").and_then(Value::as_str);
+            if location == Some("formData") {
+                let name = object
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("value")
+                    .to_string();
+                let schema_type = object
+                    .remove("type")
+                    .unwrap_or_else(|| Value::String("string".to_string()));
+                form_properties.insert(name.clone(), json!({ "type": schema_type }));
+                if object.get("required").and_then(Value::as_bool) == Some(true) {
+                    required_form_fields.push(Value::String(name));
+                }
+                return false;
+            }
+            if location != Some("body") {
+                return true;
+            }
+            let schema = object
+                .remove("schema")
+                .unwrap_or_else(|| json!({ "type": "object" }));
+            request_body = Some(json!({
+                "required": object.get("required").and_then(Value::as_bool).unwrap_or(false),
+                "content": { "application/json": { "schema": schema } }
+            }));
+            false
+        });
+        if let Some(body) = request_body {
+            operation.insert("requestBody".to_string(), body);
+        } else if !form_properties.is_empty() {
+            let mut schema = json!({
+                "type": "object",
+                "properties": Value::Object(form_properties)
+            });
+            if !required_form_fields.is_empty() {
+                schema["required"] = Value::Array(required_form_fields);
+            }
+            operation.insert(
+                "requestBody".to_string(),
+                json!({ "content": { "application/x-www-form-urlencoded": { "schema": schema } } }),
+            );
+        }
+    }
+    if let Some(responses) = operation
+        .get_mut("responses")
+        .and_then(Value::as_object_mut)
+    {
+        for response in responses.values_mut().filter_map(Value::as_object_mut) {
+            if let Some(schema) = response.remove("schema") {
+                response.insert(
+                    "content".to_string(),
+                    json!({ "application/json": { "schema": schema } }),
+                );
+            }
+        }
+    }
+}
+
+fn rewrite_swagger_refs(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::String(reference)) = object.get_mut("$ref") {
+                if let Some(rest) = reference.strip_prefix("#/definitions/") {
+                    *reference = format!("#/components/schemas/{rest}");
+                } else if let Some(rest) = reference.strip_prefix("#/parameters/") {
+                    *reference = format!("#/components/parameters/{rest}");
+                } else if let Some(rest) = reference.strip_prefix("#/responses/") {
+                    *reference = format!("#/components/responses/{rest}");
+                }
+            }
+            for child in object.values_mut() {
+                rewrite_swagger_refs(child);
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                rewrite_swagger_refs(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn repair_missing_parameter_schemas(raw: &mut Value) {
+    let Some(paths) = raw.get_mut("paths").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for path_item in paths.values_mut().filter_map(Value::as_object_mut) {
+        repair_parameter_array(path_item.get_mut("parameters"));
+        for method in [
+            "get", "put", "post", "delete", "options", "head", "patch", "trace",
+        ] {
+            if let Some(operation) = path_item.get_mut(method).and_then(Value::as_object_mut) {
+                repair_parameter_array(operation.get_mut("parameters"));
+            }
+        }
+    }
+}
+
+fn repair_parameter_array(parameters: Option<&mut Value>) {
+    let Some(parameters) = parameters.and_then(Value::as_array_mut) else {
+        return;
+    };
+    for parameter in parameters.iter_mut().filter_map(Value::as_object_mut) {
+        if parameter.contains_key("$ref")
+            || parameter.contains_key("schema")
+            || parameter.contains_key("content")
+            || parameter.get("in").and_then(Value::as_str) == Some("body")
+        {
+            continue;
+        }
+        let schema_type = parameter
+            .remove("type")
+            .unwrap_or_else(|| Value::String("string".to_string()));
+        parameter.insert("schema".to_string(), json!({ "type": schema_type }));
+    }
 }
 
 /// Parses `raw` as JSON or YAML into a normalized `OpenAPI` document,

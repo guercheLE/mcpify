@@ -70,7 +70,13 @@ export class ApiClient {
     const url = buildApiUrl(this.config.url, applyPathParams(endpoint, params), query);
     const extraHeaders = pickByLocation(endpoint, params, 'header');
 
-    let headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
+    let headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+{% for header in default_headers %}
+      {{ header.name | json_encode }}: {{ header.value | json_encode }},
+{% endfor %}
+      ...extraHeaders,
+    };
     headers = await this.authManager.applyAuthHeaders(
       headers,
       endpoint.method,

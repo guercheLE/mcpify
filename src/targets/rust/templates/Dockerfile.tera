@@ -23,13 +23,13 @@ COPY mcp_store*.db ./
 
 # Build the helper first, populate every version, then perform the final
 # release build so `include_bytes!` captures the populated database bytes.
-RUN cargo build --release --bin {{ project_name }}-populate-embeddings
+RUN cargo build --locked --release --bin {{ project_name }}-populate-embeddings
 
 # mcp_store.db leaves the Rust generator with an empty semantic_endpoints
 # table (vectors are computed here, not by mcpify itself — see the plan's
 # embeddings decision), so it must be populated before the image is usable.
 RUN ./target/release/{{ project_name }}-populate-embeddings --all
-RUN cargo build --release
+RUN cargo build --locked --release
 
 # `fastembed`/`ort` (Story R6) may dynamically link an ONNX Runtime shared
 # library rather than statically linking it — if `cargo build --release`

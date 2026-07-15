@@ -157,6 +157,9 @@ func (c *ApiClient) Execute(
 	}
 
 	headers := map[string]string{"Content-Type": "application/json"}
+{% for header in default_headers %}
+	headers[{{ header.name | json_encode }}] = {{ header.value | json_encode }}
+{% endfor %}
 	for name, value := range pickByLocation(endpoint, args, "header") {
 		headers[name] = value
 	}

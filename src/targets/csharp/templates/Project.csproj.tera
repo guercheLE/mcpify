@@ -14,21 +14,24 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <UserSecretsId>{{ namespace }}</UserSecretsId>
 {%- if publish_registry %}
-    <!-- Generated with the publish-registry flag: pack as a dotnet global
-         tool (`dotnet tool install -g`), the .NET-ecosystem equivalent of
-         npx/cargo install/pip install for the other targets. Fill in a
-         real Authors/PackageId before the first real `dotnet nuget push`
-         — see release.yml. -->
+    <!-- Generated with the publish-registry flag: pack as a dotnet global tool. -->
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>{{ project_name }}</ToolCommandName>
     <PackageId>{{ namespace }}</PackageId>
     <Version>0.1.0</Version>
-    <Authors>TODO: set your name or organization</Authors>
+    <Authors>{{ publication.authors | join(sep="; ") | escape }}</Authors>
+    <PackageLicenseExpression>{{ publication.license | escape }}</PackageLicenseExpression>
+    <RepositoryUrl>{{ publication.repository | escape }}</RepositoryUrl>
+    <PackageReadmeFile>{{ publication.readme | escape }}</PackageReadmeFile>
+    <PackageTags>{{ publication.keywords | join(sep=";") | escape }}{% if publication.keywords | length > 0 and publication.categories | length > 0 %};{% endif %}{{ publication.categories | join(sep=";") | escape }}</PackageTags>
 {%- endif %}
   </PropertyGroup>
 
   <ItemGroup>
+{%- if publish_registry %}
+    <None Update="{{ publication.readme | escape }}" Pack="true" PackagePath="/" />
+{%- endif %}
     <!-- Roslyn analyzers: enforced as a hard gate via `-p:TreatWarningsAsErrors=true`
          passed at verification time (`run_tests.rs`/generated CI), not baked into
          this file, so an end user's own local `dotnet build` isn't unexpectedly

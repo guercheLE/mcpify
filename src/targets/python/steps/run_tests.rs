@@ -60,7 +60,14 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     .await?;
 
     run_uv_command(&ctx.output_dir, &["run", "pytest"], "uv run pytest").await?;
-    Ok(())
+    if ctx.publish_registry {
+        run_uv_command(&ctx.output_dir, &["build"], "uv build").await?;
+    }
+    if ctx.publish_registry {
+        crate::package_preflight::enforce_artifact_limit(ctx, &["whl", "gz"])
+    } else {
+        crate::package_preflight::enforce_project_limit(ctx)
+    }
 }
 
 async fn run_uv_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {

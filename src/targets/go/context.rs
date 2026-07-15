@@ -3,6 +3,7 @@ use serde::Serialize;
 use super::naming::{pascal_case, screaming_snake_case};
 use crate::auth_profile::{AuthSchemeKind, location_view};
 use crate::context::{GeneratorContext, VersionEntryView};
+use crate::project_config::{HeaderSetting, PublicationMetadata, read_settings};
 
 /// One discovered auth scheme, in the shape templates need: `method_key` is
 /// the literal string value the generated `AuthMethod` config field takes
@@ -77,6 +78,8 @@ pub struct GoTemplateContext {
     /// built from.
     pub auth_methods: Vec<GoAuthMethodView>,
     pub operations: Vec<GoOperationView>,
+    pub default_headers: Vec<HeaderSetting>,
+    pub publication: PublicationMetadata,
     /// v8 multi-version support — see `targets::typescript::context::TsTemplateContext::version_entries`.
     pub version_entries: Vec<VersionEntryView>,
     pub default_version_label: String,
@@ -84,6 +87,7 @@ pub struct GoTemplateContext {
 
 impl GoTemplateContext {
     pub fn from_context(ctx: &GeneratorContext) -> Self {
+        let settings = read_settings(&ctx.output_dir);
         let project_name = ctx
             .output_dir
             .file_name()
@@ -161,6 +165,8 @@ impl GoTemplateContext {
             auth_method_keys,
             auth_methods,
             operations,
+            default_headers: settings.default_headers,
+            publication: settings.publication,
             version_entries,
             default_version_label: ctx.version_label.clone(),
         }

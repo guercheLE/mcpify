@@ -33,13 +33,28 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     // (which runs `cargo fmt --check`) is never red on first push
     // regardless.
     run_cargo_command(&ctx.output_dir, &["fmt"], "cargo fmt").await?;
+    // Fresh projects do not have Cargo.lock until Cargo resolves once. Create
+    // it explicitly, then require every build/test/package command to honor it.
+    run_cargo_command(
+        &ctx.output_dir,
+        &["generate-lockfile"],
+        "cargo generate-lockfile",
+    )
+    .await?;
     // Mirrors the generated project's own CI (`ci.yml.tera`'s
     // `cargo clippy --all-targets -- -D warnings`) so a template that
     // introduces a clippy violation fails generation itself, instead of
     // only being caught downstream in the end user's CI.
     run_cargo_command(
         &ctx.output_dir,
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
+        &[
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
         "cargo clippy",
     )
     .await?;
@@ -52,12 +67,29 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     let populate_label = format!("cargo run --bin {populate_bin}");
     run_cargo_command(
         &ctx.output_dir,
-        &["run", "--bin", populate_bin.as_str()],
+        &["run", "--locked", "--bin", populate_bin.as_str()],
         populate_label.as_str(),
     )
     .await?;
-    run_cargo_command(&ctx.output_dir, &["test"], "cargo test").await?;
-    Ok(())
+    run_cargo_command(
+        &ctx.output_dir,
+        &["test", "--locked"],
+        "cargo test --locked",
+    )
+    .await?;
+    if ctx.publish_registry {
+        run_cargo_command(
+            &ctx.output_dir,
+            &["package", "--locked", "--allow-dirty"],
+            "cargo package --locked",
+        )
+        .await?;
+    }
+    if ctx.publish_registry {
+        crate::package_preflight::enforce_artifact_limit(ctx, &["crate"])
+    } else {
+        crate::package_preflight::enforce_project_limit(ctx)
+    }
 }
 
 pub(crate) async fn run_cargo_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {

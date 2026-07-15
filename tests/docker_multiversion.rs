@@ -45,8 +45,8 @@ fn rust_rebuilds_after_population_to_refresh_embedded_database_bytes() {
         .find("{{ project_name }}-populate-embeddings --all")
         .expect("Rust Dockerfile must populate all stores");
     let final_build = RUST_DOCKERFILE
-        .rfind("RUN cargo build --release")
-        .expect("Rust Dockerfile must perform its final release build");
+        .rfind("RUN cargo build --locked --release")
+        .expect("Rust Dockerfile must perform its final locked release build");
 
     assert!(
         populate < final_build,

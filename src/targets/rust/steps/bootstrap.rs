@@ -21,6 +21,7 @@ const STATIC_FILES: &[(&str, &str)] = &[
     (".gitignore.tera", ".gitignore"),
     (".env.example.tera", ".env.example"),
     ("README.md.tera", "README.md"),
+    ("LICENSE.tera", "LICENSE"),
     ("lib.rs.tera", "src/lib.rs"),
 ];
 

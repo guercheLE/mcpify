@@ -105,7 +105,12 @@ class ApiClient:
         path = _apply_path_params(endpoint, args)
         url = build_api_url(self._config.url, path, query)
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+{% for header in default_headers %}
+            {{ header.name | json_encode }}: {{ header.value | json_encode }},
+{% endfor %}
+        }
         headers.update(_pick_by_location(endpoint, args, "header"))
         headers = await auth_manager.apply_auth_headers(
             headers, endpoint.method, url, self._config.transport, request_override

@@ -70,7 +70,19 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     )
     .await?;
 
-    Ok(())
+    if ctx.publish_registry {
+        run_dotnet_command(
+            &ctx.output_dir,
+            &["pack", "--no-restore"],
+            "dotnet pack --no-restore",
+        )
+        .await?;
+    }
+    if ctx.publish_registry {
+        crate::package_preflight::enforce_artifact_limit(ctx, &["nupkg"])
+    } else {
+        crate::package_preflight::enforce_project_limit(ctx)
+    }
 }
 
 async fn run_dotnet_command(cwd: &Path, args: &[&str], label: &str) -> Result<()> {

@@ -127,6 +127,9 @@ impl ApiClient {
 
         let mut headers: HashMap<String, String> = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
+{% for header in default_headers %}
+        headers.insert({{ header.name | json_encode }}.to_string(), {{ header.value | json_encode }}.to_string());
+{% endfor %}
         for (name, value) in pick_by_location(endpoint, args_map, "header") {
             headers.insert(name, value);
         }

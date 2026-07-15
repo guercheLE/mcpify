@@ -6,7 +6,7 @@
 
 Turn any OpenAPI/Swagger specification into an enterprise-grade Model Context Protocol (MCP) server in seconds.
 
-`mcpify` is a Rust CLI generator. Point it at an OpenAPI 3.0 or 3.1 spec — a local file or a remote URL, in JSON or YAML — and it emits a complete, production-ready MCP server project in the language of your choice: three token-efficient tools backed by an embedded semantic database, authentication already wired up, and enterprise capabilities (observability, resilience, testing, packaging) built in from the very first generated file.
+`mcpify` is a Rust CLI generator. Point it at a Swagger 2.0, OpenAPI 3.0, or OpenAPI 3.1 spec — a local file or a remote URL, in JSON or YAML — and it emits a complete, production-ready MCP server project in the language of your choice: three token-efficient tools backed by an embedded semantic database, authentication already wired up, and enterprise capabilities (observability, resilience, testing, packaging) built in from the very first generated file.
 
 Five target languages ship with full feature parity, each validated end-to-end in CI: **TypeScript**, **Rust**, **Python**, **C#**, and **Go**.
 
@@ -51,6 +51,9 @@ mcpify -i https://developers.example.com/swagger/spec.yaml -o ./my-api-mcp
 
 # From a local file
 mcpify -i ./specs/enterprise-api.yaml -o ./my-api-mcp
+
+# Reproducibly synchronize a multi-version project with overlays
+mcpify sync --manifest ./mcpify.yaml
 ```
 
 ### CLI Flags
@@ -62,6 +65,14 @@ Options:
   -l, --language <LANG>       Target stack: "typescript" (default), "rust", "python", "csharp", or "go"
   -f, --force                 Overwrite the destination folder if it already contains files
       --publish-registry     Emit a registry-publish step in the generated release workflow
+      --license <SPDX>       Package license (default: MIT)
+      --repository <URL>     Source repository; required with --publish-registry
+      --author <NAME>        Package author/organization (repeatable)
+      --keyword <VALUE>      Package keyword (repeatable)
+      --category <VALUE>     Package category (repeatable)
+      --exclude <GLOB>       Package exclusion pattern (repeatable)
+      --default-header <N=V> Static target-API request header (repeatable)
+      --package-size-limit-mb <MB>  Maximum generated package size
       --api-version <LABEL>  Label for the spec version ingested by this run (default: "default")
   -h, --help                  Print help information
 ```
@@ -69,6 +80,11 @@ Options:
 If the output directory is non-empty, `mcpify` aborts with a warning unless `--force` is passed.
 
 If you expect to layer more spec versions onto this project later (see [Multi-Version OpenAPI Specs](#multi-version-openapi-specs) below), pass `--api-version` explicitly at generate time (e.g. `--api-version 11.3`) rather than relying on the default sentinel.
+
+For repeatable generation, use a project manifest. It can select versions,
+supplement incomplete auth declarations, set default request headers, run
+argument-safe preprocessors, configure publication metadata, and enforce a
+package-size ceiling. See [Project Manifest](docs/project-manifest.md).
 
 ---
 
@@ -132,6 +148,10 @@ Interactively collects the API URL and the credentials needed for your chosen au
 ## Authentication
 
 `mcpify` auto-discovers the auth schemes declared in the OpenAPI spec's `components.securitySchemes` and generates one strategy per scheme (Basic, API Key/PAT, OAuth1-style, OAuth2). At runtime, the operator selects **one** active strategy per deployment via the `auth_method` config value — the same simple, proven model used in production, without a runtime engine for resolving multiple simultaneous auth requirements.
+
+When an enterprise spec is incomplete, the manifest's `auth` list supplements
+the discovered schemes instead of replacing them. This is useful when a spec
+declares Basic auth but the deployed product also supports a PAT.
 
 ## Configuration
 

@@ -21,6 +21,7 @@ const STATIC_FILES: &[(&str, &str)] = &[
     (".gitignore.tera", ".gitignore"),
     (".env.example.tera", ".env.example"),
     ("README.md.tera", "README.md"),
+    ("LICENSE.tera", "LICENSE"),
 ];
 
 /// `bootstrap_project` (architecture.md §1, step 5): project skeleton,

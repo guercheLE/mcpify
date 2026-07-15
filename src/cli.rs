@@ -53,6 +53,38 @@ pub struct Cli {
     #[arg(long = "publish-registry")]
     pub publish_registry: bool,
 
+    /// SPDX license used by generated package manifests and LICENSE.
+    #[arg(long, default_value = "MIT")]
+    pub license: String,
+
+    /// Source repository URL. Required with --publish-registry.
+    #[arg(long)]
+    pub repository: Option<String>,
+
+    /// Package author/organization (repeatable).
+    #[arg(long = "author")]
+    pub authors: Vec<String>,
+
+    /// Package keyword (repeatable).
+    #[arg(long = "keyword")]
+    pub keywords: Vec<String>,
+
+    /// Package category (repeatable).
+    #[arg(long = "category")]
+    pub categories: Vec<String>,
+
+    /// Package exclusion pattern (repeatable).
+    #[arg(long = "exclude")]
+    pub exclude: Vec<String>,
+
+    /// Static request header as NAME=VALUE (repeatable).
+    #[arg(long = "default-header")]
+    pub default_headers: Vec<String>,
+
+    /// Maximum generated package size in MiB.
+    #[arg(long = "package-size-limit-mb")]
+    pub package_size_limit_mb: Option<u64>,
+
     /// v8: label recorded for the spec ingested by this `generate` run, so a
     /// later `add-version` call can extend this project with more versions.
     /// Defaults to `DEFAULT_VERSION_LABEL` ("default") for projects that
@@ -67,6 +99,13 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Generate and synchronize every selected API version declared in a
+    /// project manifest, including auth/header overlays and preprocessing.
+    Sync {
+        /// Path to mcpify.yaml.
+        #[arg(long = "manifest", default_value = "mcpify.yaml")]
+        manifest: PathBuf,
+    },
     /// Add another OpenAPI spec version to an already-generated project as
     /// an extra, independently-queryable store, without regenerating the
     /// whole project (v8 multi-version support).
@@ -126,6 +165,14 @@ pub struct GenerateArgs {
     pub force: bool,
     pub publish_registry: bool,
     pub version: String,
+    pub license: String,
+    pub repository: Option<String>,
+    pub authors: Vec<String>,
+    pub keywords: Vec<String>,
+    pub categories: Vec<String>,
+    pub exclude: Vec<String>,
+    pub default_headers: Vec<(String, String)>,
+    pub package_size_limit_mb: Option<u64>,
 }
 
 impl Cli {
@@ -156,6 +203,27 @@ impl Cli {
         let output = self.output.ok_or_else(|| {
             anyhow::anyhow!("the following required arguments were not provided: --output <OUTPUT>")
         })?;
+        if self.publish_registry && self.repository.as_deref().is_none_or(str::is_empty) {
+            anyhow::bail!(
+                "--publish-registry requires --repository <URL> (or use a project manifest)"
+            );
+        }
+        if self.publish_registry && self.authors.is_empty() {
+            anyhow::bail!("--publish-registry requires at least one --author <NAME>");
+        }
+        let default_headers = self
+            .default_headers
+            .iter()
+            .map(|header| {
+                let (name, value) = header.split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!("invalid --default-header '{header}'; expected NAME=VALUE")
+                })?;
+                if name.trim().is_empty() {
+                    anyhow::bail!("default header name cannot be empty");
+                }
+                Ok((name.trim().to_string(), value.trim().to_string()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(GenerateArgs {
             input,
             output,
@@ -163,6 +231,14 @@ impl Cli {
             force: self.force,
             publish_registry: self.publish_registry,
             version: self.api_version,
+            license: self.license,
+            repository: self.repository,
+            authors: self.authors,
+            keywords: self.keywords,
+            categories: self.categories,
+            exclude: self.exclude,
+            default_headers,
+            package_size_limit_mb: self.package_size_limit_mb,
         })
     }
 }
@@ -219,6 +295,12 @@ mod tests {
             "go",
             "--force",
             "--publish-registry",
+            "--repository",
+            "https://github.com/example/out",
+            "--author",
+            "Example Org",
+            "--default-header",
+            "Accept=application/json",
             "--api-version",
             "11.3",
         ])
@@ -230,12 +312,42 @@ mod tests {
         assert!(args.force);
         assert!(args.publish_registry);
         assert_eq!(args.version, "11.3");
+        assert_eq!(
+            args.repository.as_deref(),
+            Some("https://github.com/example/out")
+        );
+        assert_eq!(
+            args.default_headers,
+            vec![("Accept".to_string(), "application/json".to_string())]
+        );
+    }
+
+    #[test]
+    fn publish_registry_requires_repository_metadata() {
+        let cli = parse(&["-i", "spec.yaml", "-o", "./out", "--publish-registry"]).unwrap();
+        assert!(
+            cli.into_generate_args()
+                .unwrap_err()
+                .to_string()
+                .contains("--repository")
+        );
     }
 
     #[test]
     fn no_subcommand_parses_as_generate() {
         let cli = parse(&["-i", "spec.yaml", "-o", "./out"]).unwrap();
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_sync_manifest_subcommand() {
+        let cli = parse(&["sync", "--manifest", "projects/widget.yaml"]).unwrap();
+        match cli.command {
+            Some(Commands::Sync { manifest }) => {
+                assert_eq!(manifest, PathBuf::from("projects/widget.yaml"));
+            }
+            _ => panic!("expected sync command"),
+        }
     }
 
     #[test]

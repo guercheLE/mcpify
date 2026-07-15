@@ -38,7 +38,12 @@ public sealed class ApiClient(
         var path = ApplyPathParams(endpoint, args);
         var url = BuildApiUrl(options.Value.Url, path, query);
 
-        var headers = new Dictionary<string, string>();
+        var headers = new Dictionary<string, string>
+        {
+{% for header in default_headers %}
+            [{{ header.name | json_encode }}] = {{ header.value | json_encode }},
+{% endfor %}
+        };
         foreach (var (name, value) in PickByLocation(endpoint, args, "header"))
         {
             headers[name] = value;
