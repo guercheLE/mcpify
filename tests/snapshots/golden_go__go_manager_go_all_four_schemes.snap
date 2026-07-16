@@ -116,14 +116,17 @@ func (m *Manager) SetCredentials(credentials Credentials) {
 // Returns raw (pre-strategy) credentials; the caller runs them through
 // normalizeCredentials the same as any stored/refreshed credentials.
 func envCredentials(authMethod core.AuthMethod) (Credentials, bool) {
-	switch authMethod {
-	case core.AuthMethodBasic:
+	// Independent `if`s, not a `switch`: a spec with a single auth method
+	// configured (the common case) would otherwise generate a single-case
+	// switch, which golangci-lint's gocritic flags (singleCaseSwitch).
+	if authMethod == core.AuthMethodBasic {
 		username, hasUsername := os.LookupEnv("OUT_USERNAME")
 		password, hasPassword := os.LookupEnv("OUT_PASSWORD")
 		if hasUsername && hasPassword && username != "" && password != "" {
 			return Credentials{"username": username, "password": password}, true
 		}
-	case core.AuthMethodPat:
+	}
+	if authMethod == core.AuthMethodPat {
 		if v, ok := os.LookupEnv("OUT_TOKEN"); ok && v != "" {
 			return Credentials{"token": v}, true
 		}

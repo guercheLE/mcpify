@@ -111,28 +111,32 @@ func (m *Manager) SetCredentials(credentials Credentials) {
 // Returns raw (pre-strategy) credentials; the caller runs them through
 // normalizeCredentials the same as any stored/refreshed credentials.
 func envCredentials(authMethod core.AuthMethod) (Credentials, bool) {
-	switch authMethod {
+	// Independent `if`s, not a `switch`: a spec with a single auth method
+	// configured (the common case) would otherwise generate a single-case
+	// switch, which golangci-lint's gocritic flags (singleCaseSwitch).
 {%- for method in auth_methods %}
 {%- if method.key == "pat" %}
-	case core.AuthMethod{{ method.type_name }}:
+	if authMethod == core.AuthMethod{{ method.type_name }} {
 		if v, ok := os.LookupEnv("{{ tool_prefix_env }}_TOKEN"); ok && v != "" {
 			return Credentials{"token": v}, true
 		}
+	}
 {%- elif method.key == "apiKey" %}
-	case core.AuthMethod{{ method.type_name }}:
+	if authMethod == core.AuthMethod{{ method.type_name }} {
 		if v, ok := os.LookupEnv("{{ tool_prefix_env }}_API_KEY"); ok && v != "" {
 			return Credentials{"api_key": v}, true
 		}
+	}
 {%- elif method.key == "basic" %}
-	case core.AuthMethod{{ method.type_name }}:
+	if authMethod == core.AuthMethod{{ method.type_name }} {
 		username, hasUsername := os.LookupEnv("{{ tool_prefix_env }}_USERNAME")
 		password, hasPassword := os.LookupEnv("{{ tool_prefix_env }}_PASSWORD")
 		if hasUsername && hasPassword && username != "" && password != "" {
 			return Credentials{"username": username, "password": password}, true
 		}
+	}
 {%- endif %}
 {%- endfor %}
-	}
 	return nil, false
 }
 

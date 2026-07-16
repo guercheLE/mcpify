@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"{{ module_path }}/internal/data"
@@ -40,7 +41,15 @@ import (
 func TestSemanticEndpointsCountMatchesEndpointsCountForEveryVersion(t *testing.T) {
 	var mismatches []string
 	for label, dbPath := range data.VersionStoreFiles {
-		store, err := data.Open(dbPath)
+		// data.VersionStoreFiles/ChromemPathFor return paths relative to
+		// the module root — correct for the compiled binary (always run
+		// from the project root, per this target's README/Dockerfile) and
+		// for `cmd/populate-embeddings`, but `go test` runs every
+		// package's tests with that package's own directory as the
+		// working directory, not the module root. This test lives 2
+		// directories below the module root (internal/services), so its
+		// relative paths need that same prefix restored.
+		store, err := data.Open(moduleRootRelative(dbPath))
 		if err != nil {
 			t.Fatalf("failed to open store for '%s' (%s): %v", label, dbPath, err)
 		}
@@ -52,10 +61,11 @@ func TestSemanticEndpointsCountMatchesEndpointsCountForEveryVersion(t *testing.T
 		}
 		_ = store.Close()
 
-		chromemPath, err := data.ChromemPathFor(label)
+		relativeChromemPath, err := data.ChromemPathFor(label)
 		if err != nil {
 			t.Fatalf("failed to resolve chromem path for '%s': %v", label, err)
 		}
+		chromemPath := moduleRootRelative(relativeChromemPath)
 
 		// No documents are added here, only counted — GetOrCreateCollection
 		// loads whatever chromem-go already persisted to chromemPath on an
@@ -85,4 +95,11 @@ func TestSemanticEndpointsCountMatchesEndpointsCountForEveryVersion(t *testing.T
 			mismatches,
 		)
 	}
+}
+
+// moduleRootRelative rebases a data.VersionStoreFiles/ChromemPathFor path
+// (relative to the module root) onto this package's own directory
+// (internal/services, 2 levels below root) — see the doc comment above.
+func moduleRootRelative(path string) string {
+	return filepath.Join("..", "..", path)
 }
