@@ -28,6 +28,15 @@ const FILES: &[(&str, &str)] = &[
         "internal/services/embedding_integration_test.go.tera",
         "internal/services/embedding_integration_test.go",
     ),
+    // Fix 8b regression test: asserts the chromem-go vector collection's
+    // document count equals `endpoints`' row count for every version,
+    // once `populate-embeddings --all` has been run. Gated by the same
+    // "integration" build tag as its sibling above, so it belongs in
+    // this same always-emitted list.
+    (
+        "internal/services/embeddings_populated_test.go.tera",
+        "internal/services/embeddings_populated_test.go",
+    ),
     ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
     ("scripts/profile.sh.tera", "scripts/profile.sh"),
 ];

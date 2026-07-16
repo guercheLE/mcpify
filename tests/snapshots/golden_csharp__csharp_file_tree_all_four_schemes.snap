@@ -58,6 +58,7 @@ expression: file_tree(&output_dir)
     "Tests/Auth/PatAuthStrategyTests.cs",
     "Tests/Auth/StubAuthStrategyTests.cs",
     "Tests/Core/ConfigTests.cs",
+    "Tests/Data/EmbeddingsPopulatedTests.cs",
     "Tests/Data/SqliteVecStoreTests.cs",
     "Tests/Out.Tests.csproj",
     "Tests/Validation/ValidatorTests.cs",

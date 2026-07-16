@@ -18,6 +18,25 @@ cargo run -- setup
 
 Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a `config.json` file, or a ready-to-run CLI invocation.
 
+## Configuration
+
+| Env var | Purpose |
+|---|---|
+| `{{ tool_prefix_env }}_URL` | Base URL of the target API. |
+{%- if "pat" in auth_method_keys or "apiKey" in auth_method_keys %}
+| `{{ tool_prefix_env }}_TOKEN` / `{{ tool_prefix_env }}_API_KEY` | Overrides any stored credential for token/API-key auth — set either to authenticate without running `setup` first (checked before the OS keychain/encrypted-file fallback). |
+{%- endif %}
+{%- if "basic" in auth_method_keys %}
+| `{{ tool_prefix_env }}_USERNAME` / `{{ tool_prefix_env }}_PASSWORD` | Overrides any stored credential for basic auth — set both to authenticate without running `setup` first (checked before the OS keychain/encrypted-file fallback). |
+{%- endif %}
+| `{{ tool_prefix_env }}_LOG_LEVEL` | Log verbosity (`trace`/`debug`/`info`/`warn`/`error`). |
+
+See `.env.example` for the full list of supported variables.
+
+Some APIs define their OpenAPI `servers[].url` with a path prefix (commonly `/rest` or `/api`).
+If requests 404, check whether your API's base URL needs that suffix appended (see your API's
+OpenAPI spec `servers` entry).
+
 ## Usage
 
 ### Terminal Client (default)

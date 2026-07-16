@@ -76,6 +76,7 @@ expression: file_tree(&output_dir)
     "src/tools/tool-executor.ts",
     "src/validation/generated-schemas.json.zst",
     "src/validation/validator.ts",
+    "tests/e2e/embeddings-populated.test.ts",
     "tests/e2e/mcp-server.test.ts",
     "tests/helpers/dummy-credentials.ts",
     "tests/helpers/log-capture.ts",

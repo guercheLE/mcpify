@@ -2,6 +2,19 @@ namespace {{ namespace }}.Auth.Strategies;
 
 public sealed class ApiKeyAuthStrategy : IAuthStrategy
 {
+    /// <summary>
+    /// The scheme's real configured header name (e.g. <c>X-Octopus-ApiKey</c>),
+    /// carried alongside the raw <c>api_key</c> credential under a distinct
+    /// key — deliberately not <c>request_header_name</c>, which
+    /// <see cref="Auth.AuthManager.ApplyAuthHeadersAsync"/> already reserves
+    /// for the HTTP-transport <c>RequestCredentials</c> override shape (which
+    /// always pairs it with <c>request_header_value</c>) — so
+    /// <c>ApplyAuthHeadersAsync</c> can place the key under the correct
+    /// header on the stdio path instead of falling back to the
+    /// <c>X-Api-Key</c> default.
+    /// </summary>
+    private const string ApiKeyHeaderName = "{% for method in auth_methods %}{% if method.key == "apiKey" %}{{ method.header_name }}{% endif %}{% endfor %}";
+
     public Task<Dictionary<string, string>> AuthenticateAsync(
         Dictionary<string, string> config, CancellationToken cancellationToken = default)
     {
@@ -10,7 +23,13 @@ public sealed class ApiKeyAuthStrategy : IAuthStrategy
             throw new MissingCredentialsException("api_key");
         }
 
-        return Task.FromResult(new Dictionary<string, string> { ["api_key"] = apiKey });
+        var credentials = new Dictionary<string, string> { ["api_key"] = apiKey };
+        if (!string.IsNullOrEmpty(ApiKeyHeaderName))
+        {
+            credentials["api_key_header_name"] = ApiKeyHeaderName;
+        }
+
+        return Task.FromResult(credentials);
     }
 
     public bool ValidateCredentials(Dictionary<string, string> credentials) =>

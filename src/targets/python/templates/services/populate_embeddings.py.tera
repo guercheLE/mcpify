@@ -21,6 +21,14 @@ from ..data.store import VERSION_STORE_FILES, open_store_read_write
 from .embedding_service import embed
 
 
+class IncompleteEmbeddingPopulationError(RuntimeError):
+    """Raised when a store's `semantic_endpoints` row count doesn't match
+    its `endpoints` row count after populating — surfaced as a hard
+    failure instead of letting the store silently ship with missing
+    embeddings for some operations.
+    """
+
+
 async def populate(db_path: Path) -> int:
     async with open_store_read_write(db_path) as conn:
         cursor = await conn.execute(
@@ -40,6 +48,10 @@ async def populate(db_path: Path) -> int:
                 )
                 if part
             )
+            # No try/except here by design: a failure computing or
+            # inserting one operation's embedding must abort the whole run
+            # with a hard error, not be silently skipped, since a partially
+            # populated store would otherwise ship as if it were complete.
             vector = embed(text)
             blob = sqlite_vec.serialize_float32(vector)
             # sqlite-vec's vec0 virtual tables don't implement conflict
@@ -59,24 +71,45 @@ async def populate(db_path: Path) -> int:
             count += 1
 
         await conn.commit()
+
+        endpoints_cursor = await conn.execute("SELECT COUNT(*) AS n FROM endpoints")
+        endpoints_row = await endpoints_cursor.fetchone()
+        endpoints_count = endpoints_row["n"]
+
+        semantic_cursor = await conn.execute("SELECT COUNT(*) AS n FROM semantic_endpoints")
+        semantic_row = await semantic_cursor.fetchone()
+        semantic_count = semantic_row["n"]
+
+        if semantic_count != endpoints_count:
+            missing_cursor = await conn.execute(
+                "SELECT operation_id FROM endpoints "
+                "WHERE operation_id NOT IN (SELECT operation_id FROM semantic_endpoints)"
+            )
+            missing_rows = await missing_cursor.fetchall()
+            missing_ids = ", ".join(row["operation_id"] for row in missing_rows) or "<unknown>"
+            raise IncompleteEmbeddingPopulationError(
+                f"'{db_path}': semantic_endpoints has {semantic_count} row(s) but "
+                f"endpoints has {endpoints_count} — missing operation_id(s): {missing_ids}"
+            )
+
         return count
 
 
 def _targets() -> list[Path]:
-    """Which store file(s) to populate: bare invocation targets just
-    `mcp_store.db` (the default version); an explicit path targets exactly
-    that file; `--all` walks
-    every version this project's ledger knows about
-    (`data.store.VERSION_STORE_FILES`) — the one-time local backfill
-    needed after `mcpify add-version` adds a new version file, since each
-    version's `.db` gets its own independent `semantic_endpoints` table.
+    """Which store file(s) to populate: bare invocation (and `--all`) both
+    target every version this project's ledger knows about
+    (`data.store.VERSION_STORE_FILES`), since a bare run that only fills the
+    default version's store silently leaves every other version's store at
+    0 embedding rows; an explicit path targets exactly that file, for a
+    single targeted re-run (e.g. right after `mcpify add-version` adds one
+    new version file).
     """
     args = sys.argv[1:]
     if args and args[0] == "--all":
         return [Path(file_name) for file_name in VERSION_STORE_FILES.values()]
     if args:
         return [Path(args[0])]
-    return [Path("mcp_store.db")]
+    return [Path(file_name) for file_name in VERSION_STORE_FILES.values()]
 
 
 def main() -> None:

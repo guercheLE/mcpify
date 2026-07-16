@@ -2,14 +2,18 @@
 //
 // Interactive setup wizard (REQ-1.6): collects the API URL and the
 // credentials the discovered auth scheme(s) need, then persists them per
-// the operator's choice: a .env file, a config.json file, or a
-// ready-to-run CLI invocation printed to stdout (nothing written to disk).
+// the operator's choice: a .env file, a config.yml file (global or local —
+// whichever the config loader's cascade in core/config-manager.ts actually
+// reads), or a ready-to-run CLI invocation printed to stdout (nothing
+// written to disk).
 
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import axios from 'axios';
 import inquirer from 'inquirer';
+import yaml from 'js-yaml';
 
 import { headerLocationFor } from '../auth/auth-manager.js';
 import type { ApiVersion, AuthMethod, Config } from '../core/config-schema.js';
@@ -132,15 +136,46 @@ async function promptCredentials(authMethod: AuthMethod): Promise<Record<string,
   }
 }
 
-async function promptPersistence(env: Record<string, string>): Promise<void> {
-  const { method } = await inquirer.prompt<{ method: 'env' | 'json' | 'print' }>([
+async function promptConfigScope(): Promise<'global' | 'local'> {
+  const { scope } = await inquirer.prompt<{ scope: 'global' | 'local' }>([
+    {
+      type: 'list',
+      name: 'scope',
+      message: 'Write the config file globally or locally?',
+      choices: [
+        {
+          name: 'Globally (~/.{{ project_name }}/config.yml — applies on this machine regardless of cwd)',
+          value: 'global',
+        },
+        {
+          name: 'Locally (./{{ project_name }}.config.yml — applies only when run from this directory)',
+          value: 'local',
+        },
+      ],
+    },
+  ]);
+  return scope;
+}
+
+/**
+ * `configFields` holds only the non-secret keys `core/config-manager.ts`'s
+ * `envOverrides()`/cascade actually reads back (`url`, `auth_method`,
+ * `api_version`, `transport`, ...) — credentials are deliberately excluded
+ * here and persisted only through `saveCredential()` (OS keychain /
+ * encrypted file), never written to a plaintext config file.
+ */
+async function promptPersistence(
+  env: Record<string, string>,
+  configFields: Record<string, string>,
+): Promise<void> {
+  const { method } = await inquirer.prompt<{ method: 'env' | 'yaml' | 'print' }>([
     {
       type: 'list',
       name: 'method',
       message: 'How should these settings be saved?',
       choices: [
         { name: 'Write a .env file', value: 'env' },
-        { name: 'Write a config.json file', value: 'json' },
+        { name: 'Write a config.yml file (read by the config loader)', value: 'yaml' },
         { name: 'Print a ready-to-run CLI invocation (nothing written to disk)', value: 'print' },
       ],
     },
@@ -152,9 +187,16 @@ async function promptPersistence(env: Record<string, string>): Promise<void> {
       .join('\n');
     writeFileSync(join(process.cwd(), '.env'), `${contents}\n`);
     console.log('Wrote .env');
-  } else if (method === 'json') {
-    writeFileSync(join(process.cwd(), 'config.json'), JSON.stringify(env, null, 2));
-    console.log('Wrote config.json');
+  } else if (method === 'yaml') {
+    const scope = await promptConfigScope();
+    const configDir = join(homedir(), '.{{ project_name }}');
+    const configPath =
+      scope === 'global' ? join(configDir, 'config.yml') : join(process.cwd(), '{{ project_name }}.config.yml');
+    if (scope === 'global') {
+      mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    }
+    writeFileSync(configPath, yaml.dump(configFields));
+    console.log(`Wrote ${configPath}`);
   } else {
     const flags = Object.entries(env)
       .map(([key, value]) => `--${key.toLowerCase().replace(/_/g, '-')} ${JSON.stringify(value)}`)
@@ -239,7 +281,14 @@ export async function runSetupWizard(): Promise<void> {
     env[`{{ tool_prefix_env }}_${toEnvKey(key)}`] = value;
   }
 
-  await promptPersistence(env);
+  const configFields: Record<string, string> = {
+    url,
+    auth_method: authMethod,
+    api_version: apiVersion,
+    transport,
+  };
+
+  await promptPersistence(env, configFields);
   printMcpClientConfig(transport, authMethod, env);
 
   const runCommand = transport === 'stdio' ? 'start' : 'http';

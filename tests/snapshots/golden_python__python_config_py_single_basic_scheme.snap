@@ -60,7 +60,11 @@ class Config(BaseSettings):
 
 
 def _home_dir() -> Path:
-    return Path(os.environ.get("HOME", "."))
+    """`HOME` first, then Windows' `USERPROFILE`, then cwd — plain
+    `HOME`-only resolution silently falls back to `.` on Windows, since
+    `HOME` is typically unset there.
+    """
+    return Path(os.environ.get("HOME") or os.environ.get("USERPROFILE") or ".")
 
 
 def _install_dir() -> Path:

@@ -67,6 +67,14 @@ export class AuthManager {
       return await this.normalizeCredentials(this.cachedCredentials);
     }
 
+    const envConfig = this.credentialsFromEnv();
+    if (envConfig) {
+      const credentials = await this.strategy.authenticate(envConfig);
+      const normalized = await this.normalizeCredentials(credentials);
+      this.cachedCredentials = normalized;
+      return normalized;
+    }
+
     const stored = await loadCredential(CREDENTIAL_ACCOUNT);
     if (stored) {
       const parsed = JSON.parse(stored) as Credentials;
@@ -86,6 +94,31 @@ export class AuthManager {
     }
 
     throw new NoActiveCredentialsError(this.authMethod);
+  }
+
+  /**
+   * `.env.example` documents `OUT_TOKEN`/`_API_KEY`/
+   * `_USERNAME`+`_PASSWORD` as valid ways to supply credentials, but until
+   * this override those vars were never actually read into auth — only a
+   * prior `setup` run (keychain/file) produced working credentials. Checked
+   * ahead of the stored-credential lookup so a deployment can be configured
+   * entirely via environment, with no `setup` step required.
+   */
+  private credentialsFromEnv(): AuthConfig | undefined {
+    if (this.authMethod === 'pat') {
+      const token = process.env.OUT_TOKEN;
+      if (token) return { token };
+    }
+    if (this.authMethod === 'apiKey') {
+      const apiKey = process.env.OUT_API_KEY;
+      if (apiKey) return { apiKey };
+    }
+    if (this.authMethod === 'basic') {
+      const username = process.env.OUT_USERNAME;
+      const password = process.env.OUT_PASSWORD;
+      if (username && password) return { username, password };
+    }
+    return undefined;
   }
 
   private async normalizeCredentials(credentials: Credentials): Promise<Credentials> {

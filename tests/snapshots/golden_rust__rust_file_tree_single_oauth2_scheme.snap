@@ -79,4 +79,5 @@ expression: file_tree(&output_dir)
     "src/validation/generated_schemas.json.zst",
     "src/validation/mod.rs",
     "src/validation/validator.rs",
+    "tests/embeddings_populated.rs",
 ]

@@ -5,13 +5,30 @@ from __future__ import annotations
 from ..auth_strategy import AuthConfig, AuthStrategy, Credentials
 from ..errors import MissingCredentialsError
 
+{%- set api_key_header_name = "X-Api-Key" %}
+{%- for method in auth_methods %}
+{%- if method.key == "apiKey" and method.header_name %}
+{%- set_global api_key_header_name = method.header_name %}
+{%- endif %}
+{%- endfor %}
+
+# The scheme's configured header name (falls back to "X-Api-Key" if the
+# OpenAPI spec didn't declare one) — carried in the credentials dict under
+# `api_key_header_name` (deliberately *not* `request_header_name`, which is
+# reserved for the HTTP-transport request-override pair in
+# `request_credentials.RequestCredentials.to_credentials_map()` and always
+# carries a matching `request_header_value`) so
+# `AuthManager.apply_auth_headers` uses the real header instead of a
+# hardcoded default.
+API_KEY_HEADER_NAME = "{{ api_key_header_name }}"
+
 
 class ApiKeyStrategy(AuthStrategy):
     async def authenticate(self, config: AuthConfig) -> Credentials:
         api_key = config.get("api_key")
         if not api_key:
             raise MissingCredentialsError("api_key")
-        return {"api_key": api_key}
+        return {"api_key": api_key, "api_key_header_name": API_KEY_HEADER_NAME}
 
     def validate_credentials(self, credentials: Credentials) -> bool:
         return bool(credentials.get("api_key"))

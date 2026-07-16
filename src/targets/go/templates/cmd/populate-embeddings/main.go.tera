@@ -20,12 +20,14 @@ import (
 // before the test suite runs, the same way v1 sequences
 // populate-embeddings before npm test.
 //
-// Bare invocation targets just mcp_store.db / mcp_store.chromem (the
-// default version); an explicit argument names an api_version to target
-// exactly; --all walks every
-// version this project's ledger knows about (data.VersionStoreFiles) —
-// the one-time local backfill needed after `mcpify add-version` adds a
-// new version, since each version's chromem collection is independent.
+// Bare invocation (and --all, its explicit synonym) walks every version
+// this project's ledger knows about (data.VersionStoreFiles) — a bare run
+// that only filled the default version's store used to leave every other
+// version's store at 0 embedding rows unless --all was passed explicitly,
+// which the Dockerfile always did but local/manual runs easily forgot. An
+// explicit api_version argument still targets exactly that one version,
+// for a single targeted re-run (e.g. right after `mcpify add-version`
+// adds one new version file).
 func main() {
 	// Split into `run` so `defer`s below actually execute before exit —
 	// `os.Exit` in the same scope as a `defer` would skip it (gocritic
@@ -52,19 +54,9 @@ func newTarget(dbPath, chromemPath string) target {
 }
 
 func targets() ([]target, error) {
-	if len(os.Args) > 1 && os.Args[1] == "--all" {
-		result := make([]target, 0, len(data.VersionStoreFiles))
-		for label, dbPath := range data.VersionStoreFiles {
-			chromemPath, err := data.ChromemPathFor(label)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, target{dbPath: dbPath, chromemPath: chromemPath})
-		}
-		return result, nil
-	}
-
-	if len(os.Args) > 1 {
+	// An explicit api_version argument (anything other than --all) targets
+	// exactly that one version's store, for a single targeted re-run.
+	if len(os.Args) > 1 && os.Args[1] != "--all" {
 		label := os.Args[1]
 		dbPath, err := data.ResolveStorePath(label)
 		if err != nil {
@@ -77,7 +69,18 @@ func targets() ([]target, error) {
 		return []target{newTarget(dbPath, chromemPath)}, nil
 	}
 
-	return []target{newTarget("mcp_store.db", "mcp_store.chromem")}, nil
+	// Bare invocation and --all both target every version this project's
+	// ledger knows about — see the package doc comment above for why the
+	// bare form no longer defaults to only the default version.
+	result := make([]target, 0, len(data.VersionStoreFiles))
+	for label, dbPath := range data.VersionStoreFiles {
+		chromemPath, err := data.ChromemPathFor(label)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, target{dbPath: dbPath, chromemPath: chromemPath})
+	}
+	return result, nil
 }
 
 func run() error {

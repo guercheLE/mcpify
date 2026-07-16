@@ -21,7 +21,9 @@ go mod download
 go run . setup
 ```
 
-Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file or a ready-to-run CLI invocation.
+Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a `config.json` file (you'll be asked whether to write it globally or locally), or a ready-to-run CLI invocation.
+
+> **Base URL note:** some APIs define their OpenAPI `servers[].url` with a path prefix (commonly `/rest` or `/api`). If requests 404, check whether your API's base URL needs that suffix appended (see your API's OpenAPI spec `servers` entry).
 
 ## Usage
 
@@ -59,7 +61,7 @@ Stdio is a process transport, not a listening service: the MCP client must start
 ## Testing
 
 ```bash
-go run ./cmd/populate-embeddings   # backfill the local vector store before running tests
+go run ./cmd/populate-embeddings   # backfill the local vector store for every API version before running tests
 go test ./...
 ```
 

@@ -26,22 +26,19 @@ function resolveStorePath(fileName: string): string {
   return new URL(`../${fileName}`, import.meta.url).pathname;
 }
 
-// Which store file(s) to populate: bare invocation targets just
-// mcp_store.db (the default version); an explicit filename targets
-// exactly that file; --all
-// walks every version this project's ledger knows about
-// (VERSION_STORE_FILES) — the one-time local backfill needed after
-// `mcpify add-version` adds a new version file, since each version's
-// .db gets its own independent semantic_endpoints table.
+// Which store file(s) to populate: bare invocation (and the explicit
+// `--all` flag, kept as an alias) walks every version this project's
+// ledger knows about (VERSION_STORE_FILES) — a store left unpopulated
+// silently fails `search` for that version, so "populate everything" is
+// the only safe default; an explicit filename argument still targets
+// exactly that one file/version, for a fast targeted re-run (e.g. right
+// after `mcpify add-version` adds a single new version file).
 function targets(): string[] {
   const args = process.argv.slice(2);
-  if (args[0] === '--all') {
-    return Object.values(VERSION_STORE_FILES);
-  }
-  if (args[0]) {
+  if (args[0] && args[0] !== '--all') {
     return [args[0]];
   }
-  return ['mcp_store.db'];
+  return Object.values(VERSION_STORE_FILES);
 }
 
 async function populateOne(fileName: string): Promise<void> {
@@ -62,12 +59,35 @@ async function populateOne(fileName: string): Promise<void> {
 
   // Sequential, not parallelized: keeps peak memory bounded regardless of
   // how many operations a spec declares, at the cost of total wall time —
-  // an acceptable trade for a one-time setup script.
+  // an acceptable trade for a one-time setup script. Intentionally NOT
+  // wrapped in a try/catch that would swallow a per-row failure: if
+  // `embed()` throws for one operation, the whole run must fail loudly
+  // (propagating to `main().catch`) rather than silently leaving that
+  // operation's row missing from semantic_endpoints.
   for (const row of rows) {
     const text = [row.method, row.path, row.summary, row.description].filter(Boolean).join(' ');
     const vector = await embed(text);
     del.run(row.operation_id);
     insert.run(row.operation_id, JSON.stringify(vector));
+  }
+
+  // Completeness check: every row in `endpoints` must have a matching row
+  // in `semantic_endpoints`, or `search` silently returns incomplete
+  // results for this store with no error ever surfaced. A row count alone
+  // isn't sufficient (matching counts could still hide a swap of two
+  // different operation IDs), so diff the actual operation_id sets.
+  const semanticIds = new Set(
+    (db.prepare('SELECT operation_id FROM semantic_endpoints').all() as { operation_id: string }[]).map(
+      (r) => r.operation_id,
+    ),
+  );
+  const missing = rows.map((r) => r.operation_id).filter((id) => !semanticIds.has(id));
+  if (missing.length > 0) {
+    db.close();
+    throw new Error(
+      `embedding population incomplete for '${fileName}': ${missing.length} of ${rows.length} ` +
+        `operation(s) missing from semantic_endpoints: ${missing.join(', ')}`,
+    );
   }
 
   console.log(`populated embeddings for ${rows.length} operation(s) in '${fileName}'`);

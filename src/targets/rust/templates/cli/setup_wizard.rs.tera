@@ -180,10 +180,42 @@ async fn prompt_credentials(auth_method: AuthMethod) -> anyhow::Result<HashMap<S
     .await?
 }
 
-async fn prompt_persistence(env: &HashMap<String, String>) -> anyhow::Result<()> {
+/// Persists the non-secret config fields (`url`/`auth_method`/`api_version`/
+/// `transport`) as YAML matching exactly what `config_manager::load_config`
+/// reads back — never the credential fields, which stay in the OS
+/// keychain/encrypted-file fallback via `save_credential` (called by the
+/// caller before this runs). Writing anywhere else (a stray `.env`-only
+/// var name, `config.json`, etc.) would leave the persisted config silently
+/// ignored on every subsequent run, since `load_config`'s cascade only ever
+/// reads `./{{ project_name }}.config.yml` (local) or
+/// `~/.{{ project_name }}/config.yml` (global).
+async fn write_config_yaml(global: bool, config_fields: &serde_json::Value) -> anyhow::Result<()> {
+    let yaml = serde_yaml::to_string(config_fields)?;
+    let path = if global {
+        let dir = {{ crate_name }}::core::credential_storage::resolve_home_dir()
+            .join(".{{ project_name }}");
+        std::fs::create_dir_all(&dir)?;
+        dir.join("config.yml")
+    } else {
+        std::path::PathBuf::from("{{ project_name }}.config.yml")
+    };
+    std::fs::write(&path, yaml)?;
+    println!("Wrote {}", path.display());
+    println!(
+        "Credentials are never written to this file — they're stored via the OS \
+         keychain/encrypted-file fallback from the credential prompt above."
+    );
+    Ok(())
+}
+
+async fn prompt_persistence(
+    env: &HashMap<String, String>,
+    config_fields: &serde_json::Value,
+) -> anyhow::Result<()> {
     let choices = vec![
         "Write a .env file",
-        "Write a config.json file",
+        "Write a config.yml file (global — ~/.{{ project_name }}/config.yml, read on every invocation on this machine)",
+        "Write a config.yml file (local — ./{{ project_name }}.config.yml, read only from this directory)",
         "Print a ready-to-run CLI invocation (nothing written to disk)",
     ];
     let selection = tokio::task::spawn_blocking(move || {
@@ -201,9 +233,11 @@ async fn prompt_persistence(env: &HashMap<String, String>) -> anyhow::Result<()>
             std::fs::write(".env", format!("{contents}\n"))?;
             println!("Wrote .env");
         }
-        "Write a config.json file" => {
-            std::fs::write("config.json", serde_json::to_string_pretty(env)?)?;
-            println!("Wrote config.json");
+        s if s.starts_with("Write a config.yml file (global") => {
+            write_config_yaml(true, config_fields).await?;
+        }
+        s if s.starts_with("Write a config.yml file (local") => {
+            write_config_yaml(false, config_fields).await?;
         }
         _ => {
             let flags = env
@@ -320,7 +354,16 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
         env.insert(format!("{{ tool_prefix_env }}_{}", to_env_key(key)), value.clone());
     }
 
-    prompt_persistence(&env).await?;
+    // Non-secret fields only, keyed exactly as `config_manager::load_config`
+    // reads them back from YAML — credentials never go in this file.
+    let config_fields = serde_json::json!({
+        "url": env.get("{{ tool_prefix_env }}_URL"),
+        "auth_method": env.get("{{ tool_prefix_env }}_AUTH_METHOD"),
+        "api_version": env.get("{{ tool_prefix_env }}_API_VERSION"),
+        "transport": env.get("{{ tool_prefix_env }}_TRANSPORT"),
+    });
+
+    prompt_persistence(&env, &config_fields).await?;
     print_mcp_client_config(transport, auth_method, &env);
 
     let run_command = match transport {

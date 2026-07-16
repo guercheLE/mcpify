@@ -47,6 +47,7 @@ expression: file_tree(&output_dir)
     "internal/services/apiclient.go",
     "internal/services/embedding.go",
     "internal/services/embedding_integration_test.go",
+    "internal/services/embeddings_populated_test.go",
     "internal/services/populate.go",
     "internal/services/vectorstore.go",
     "internal/tools/call.go",

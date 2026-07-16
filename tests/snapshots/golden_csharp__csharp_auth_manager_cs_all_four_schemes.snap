@@ -73,6 +73,15 @@ public sealed class AuthManager(
             return await NormalizeCredentialsAsync(_cachedCredentials, cancellationToken);
         }
 
+        var envConfig = ReadEnvCredentialOverrides(options.Value.AuthMethod);
+        if (envConfig is not null)
+        {
+            var authenticated = await Strategy.AuthenticateAsync(envConfig, cancellationToken);
+            var normalizedFromEnv = await NormalizeCredentialsAsync(authenticated, cancellationToken);
+            _cachedCredentials = normalizedFromEnv;
+            return normalizedFromEnv;
+        }
+
         var stored = await credentialStore.GetAsync(CredentialKey, cancellationToken);
         if (stored is not null)
         {
@@ -102,6 +111,40 @@ public sealed class AuthManager(
         }
 
         throw new NoActiveCredentialsException(options.Value.AuthMethod.ToString());
+    }
+
+    /// <summary>
+    /// Reads the raw-auth-config env vars documented in
+    /// <c>.env.example</c> (<c>OUT_TOKEN</c>/<c>_API_KEY</c>
+    /// for <c>pat</c>/<c>apiKey</c>, <c>OUT_USERNAME</c>
+    /// + <c>_PASSWORD</c> for <c>basic</c>) for whichever auth method is
+    /// currently active, keyed to the shape each strategy's
+    /// <c>AuthenticateAsync</c> expects. Returns <c>null</c> when the
+    /// active method has no env-var override support, or when the
+    /// relevant var(s) aren't set — in which case
+    /// <see cref="GetCredentialsAsync"/> falls back to the stored
+    /// credential lookup as before.
+    /// </summary>
+    private static Dictionary<string, string>? ReadEnvCredentialOverrides(AuthMethod authMethod)
+    {
+        switch (authMethod)
+        {
+            case AuthMethod.Basic:
+            {
+                var username = Environment.GetEnvironmentVariable("OUT_USERNAME");
+                var password = Environment.GetEnvironmentVariable("OUT_PASSWORD");
+                return string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password)
+                    ? null
+                    : new Dictionary<string, string> { ["username"] = username, ["password"] = password };
+            }
+            case AuthMethod.Pat:
+            {
+                var token = Environment.GetEnvironmentVariable("OUT_TOKEN");
+                return string.IsNullOrEmpty(token) ? null : new Dictionary<string, string> { ["token"] = token };
+            }
+            default:
+                return null;
+        }
     }
 
     private async Task<Dictionary<string, string>> NormalizeCredentialsAsync(
@@ -141,14 +184,14 @@ public sealed class AuthManager(
     /// unchanged from before HTTP-transport support existed:
     /// <see cref="GetCredentialsAsync"/> (config cascade + keychain).
     ///
-    /// API-key placement (header vs. query, and the header/param name)
-    /// defaults to an <c>X-Api-Key</c> header here; a scheme declaring a
-    /// different location is one of Story C6's api-client
-    /// responsibilities to refine, not this manager's —
-    /// <paramref name="requestOverride"/>'s
-    /// <c>request_header_name</c>/<c>request_header_value</c> pair is
-    /// the one exception, since the HTTP path already knows the scheme's
-    /// declared header name at generation time.
+    /// API-key placement uses the scheme's real configured header name —
+    /// carried on the credentials dictionary as <c>api_key_header_name</c>
+    /// by <see cref="Strategies.ApiKeyAuthStrategy"/> — falling back to an
+    /// <c>X-Api-Key</c> header only when no such header name was
+    /// configured. <paramref name="requestOverride"/>'s
+    /// <c>request_header_name</c>/<c>request_header_value</c> pair is a
+    /// separate, HTTP-transport-only path, since that override already
+    /// knows the scheme's declared header name at generation time.
     /// </summary>
     public async Task<Dictionary<string, string>> ApplyAuthHeadersAsync(
         Dictionary<string, string> headers,
@@ -207,7 +250,8 @@ public sealed class AuthManager(
         }
         else if (credentials.TryGetValue("api_key", out var apiKey))
         {
-            updated["X-Api-Key"] = apiKey;
+            var headerName = credentials.GetValueOrDefault("api_key_header_name", "X-Api-Key");
+            updated[headerName] = apiKey;
         }
         return updated;
     }

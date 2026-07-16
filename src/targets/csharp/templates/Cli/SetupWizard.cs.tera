@@ -36,7 +36,21 @@ public static class SetupWizard
             env[$"{{ tool_prefix_env }}_{key.ToUpperInvariant()}"] = value;
         }
 
-        await PromptPersistenceAsync(env);
+        // Flat, unprefixed property names matching `Core/Config.cs`'s
+        // `EnvKeyMappings` `ConfigKey` column — the shape the JSON config
+        // loader actually binds (`Url`, `AuthMethod`, ...), not the
+        // `{{ tool_prefix_env }}_*`-style keys used for `.env`/CLI-flag
+        // output above. Deliberately excludes credential fields: those
+        // stay in the credential store, never in a config file on disk.
+        var configValues = new Dictionary<string, string>
+        {
+            ["Url"] = url,
+            ["AuthMethod"] = authMethod.ToString(),
+            ["ApiVersion"] = apiVersion,
+            ["Transport"] = transport.ToString(),
+        };
+
+        await PromptPersistenceAsync(env, configValues);
         PrintMcpClientConfig(transport, authMethod, env);
 
         var runCommand = transport == Transport.Stdio ? "start" : "http";
@@ -229,7 +243,17 @@ public static class SetupWizard
         return credentials;
     }
 
-    private static async Task PromptPersistenceAsync(Dictionary<string, string> env)
+    /// <summary>
+    /// Persists settings per the operator's choice. The config.json branch
+    /// writes to exactly one of the two paths <c>Core/Config.cs</c>'s
+    /// loader actually reads — the user home-directory tier
+    /// (<c>~/.{{ project_name }}/config.json</c>) or the local
+    /// working-directory tier (<c>./{{ project_name }}.config.json</c>) —
+    /// using the flat unprefixed property-name shape that tier's
+    /// <c>AddJsonFile</c> binder expects, so the written file is actually
+    /// read back on the next run instead of silently ignored.
+    /// </summary>
+    private static async Task PromptPersistenceAsync(Dictionary<string, string> env, Dictionary<string, string> configValues)
     {
         var choices = new[]
         {
@@ -248,9 +272,27 @@ public static class SetupWizard
         }
         else if (selection == choices[1])
         {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var globalPath = Path.Combine(home, ".{{ project_name }}", "config.json");
+            var localPath = Path.Combine(Directory.GetCurrentDirectory(), "{{ project_name }}.config.json");
+            var locationChoices = new Dictionary<string, string>
+            {
+                [$"Globally ({globalPath} — used on every run regardless of working directory)"] = globalPath,
+                [$"Locally ({localPath} — used only when run from this directory)"] = localPath,
+            };
+            var locationSelection = AnsiConsole.Prompt(
+                new SelectionPrompt<string>().Title("Write it globally or locally?").AddChoices(locationChoices.Keys));
+            var path = locationChoices[locationSelection];
+
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
             await File.WriteAllTextAsync(
-                "config.json", JsonSerializer.Serialize(env, new JsonSerializerOptions { WriteIndented = true }));
-            AnsiConsole.MarkupLine("Wrote config.json");
+                path, JsonSerializer.Serialize(configValues, new JsonSerializerOptions { WriteIndented = true }));
+            AnsiConsole.MarkupLine($"Wrote {path}");
         }
         else
         {

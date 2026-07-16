@@ -16,7 +16,9 @@ uv sync
 uv run {{ project_name }} setup
 ```
 
-Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a `config.json` file, or a ready-to-run CLI invocation.
+Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a local (`./{{ project_name }}.config.yml`) or global (`~/.{{ project_name }}/config.yml`) YAML config file, or a ready-to-run CLI invocation.
+
+Some APIs define their OpenAPI `servers[].url` with a path prefix (commonly `/rest` or `/api`). If requests 404, check whether your API's base URL needs that suffix appended (see your API's OpenAPI spec `servers` entry).
 
 ## Usage
 

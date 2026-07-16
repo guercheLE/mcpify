@@ -13,6 +13,16 @@ const FILES: &[(&str, &str)] = &[
         "scripts/samply_to_text.py.tera",
         "scripts/samply_to_text.py",
     ),
+    // Fix 8b regression test: asserts `semantic_endpoints` row count
+    // equals `endpoints` row count for every version, once
+    // `populate-embeddings --all` has been run. `#[ignore]`d by default
+    // (see the template's own doc comment) — still a normal Cargo
+    // integration test file under `tests/`, so it belongs in this
+    // curated list alongside every other file this step emits.
+    (
+        "tests/embeddings_populated.rs.tera",
+        "tests/embeddings_populated.rs",
+    ),
 ];
 
 /// `generate_setup_wizard_and_tests` (architecture.md §1, step 10): the

@@ -70,6 +70,7 @@ expression: file_tree(&output_dir)
     "tests/conftest.py",
     "tests/e2e/test_mcp_server.py",
     "tests/integration/test_call_pipeline.py",
+    "tests/packaging/test_embeddings_populated.py",
     "tests/unit/auth/test_basic.py",
     "tests/unit/auth/test_stub.py",
     "tests/unit/core/test_cache.py",

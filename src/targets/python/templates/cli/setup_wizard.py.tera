@@ -2,22 +2,26 @@
 
 Interactive setup wizard (REQ-1.6): collects the API URL and the
 credentials the discovered auth scheme(s) need, then persists them per
-the operator's choice: a .env file, a config.json file, or a ready-to-run
-CLI invocation printed to stdout (nothing written to disk). `questionary`
-prompts are `asyncio`-native (`.ask_async()`), unlike v2's `inquire`,
-which needs `spawn_blocking`.
+the operator's choice: a .env file, a global/local YAML config file (the
+same tiers and format `core.config.load_config` actually reads back — see
+`_prompt_persistence`), or a ready-to-run CLI invocation printed to stdout
+(nothing written to disk). `questionary` prompts are `asyncio`-native
+(`.ask_async()`), unlike v2's `inquire`, which needs `spawn_blocking`.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import questionary
+import yaml
 
 from ..auth.auth_manager import header_location_for
-from ..core.config import AuthMethod, Transport
+from ..core.config import CONFIG_DIR_NAME, LOCAL_CONFIG_FILE, AuthMethod, Transport
+from ..core.config import _home_dir as _config_home_dir
 from ..core.credential_storage import save_credential
 
 
@@ -117,10 +121,20 @@ async def _prompt_credentials(auth_method: AuthMethod) -> dict[str, str]:
     return credentials
 
 
-async def _prompt_persistence(env: dict[str, str]) -> None:
+async def _prompt_persistence(config_values: dict[str, Any], env: dict[str, str]) -> None:
+    """Persists settings per the operator's choice. The two YAML options
+    write to exactly the paths/format `core.config.load_config`'s cascade
+    reads back (local cwd file before the global home-dir file — see that
+    module's docstring), so the wizard's output is never silently ignored
+    on the next run. `config_values` deliberately excludes credentials:
+    those already went through `save_credential`'s OS-keychain/encrypted-
+    file path in `run_setup_wizard`, and must never be duplicated into a
+    plaintext config file.
+    """
     choices = [
         "Write a .env file",
-        "Write a config.json file",
+        f"Write a local config file (./{LOCAL_CONFIG_FILE})",
+        f"Write a global config file (~/{CONFIG_DIR_NAME}/config.yml)",
         "Print a ready-to-run CLI invocation (nothing written to disk)",
     ]
     selection = await questionary.select("How should these settings be saved?", choices).ask_async()
@@ -129,9 +143,16 @@ async def _prompt_persistence(env: dict[str, str]) -> None:
         contents = "\n".join(f"{key}={value}" for key, value in env.items())
         Path(".env").write_text(f"{contents}\n")
         print("Wrote .env")
-    elif selection == "Write a config.json file":
-        Path("config.json").write_text(json.dumps(env, indent=2))
-        print("Wrote config.json")
+    elif selection.startswith("Write a local config file"):
+        config_path = Path(LOCAL_CONFIG_FILE)
+        config_path.write_text(yaml.safe_dump(config_values, sort_keys=False))
+        print(f"Wrote {config_path}")
+    elif selection.startswith("Write a global config file"):
+        config_dir = _config_home_dir() / CONFIG_DIR_NAME
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "config.yml"
+        config_path.write_text(yaml.safe_dump(config_values, sort_keys=False))
+        print(f"Wrote {config_path}")
     else:
         flags = " ".join(
             f"--{key.lower().replace('_', '-')} {value!r}" for key, value in env.items()
@@ -214,7 +235,18 @@ async def run_setup_wizard() -> None:
     for key, value in credentials.items():
         env[f"{{ tool_prefix_env }}_{_to_env_key(key)}"] = value
 
-    await _prompt_persistence(env)
+    # Non-secret settings only, keyed by the `Config` model's own field
+    # names (what `load_config`'s YAML layers merge into `Config(**merged)`)
+    # — credentials are deliberately excluded; they already went through
+    # `save_credential` above.
+    config_values: dict[str, Any] = {
+        "url": url,
+        "auth_method": auth_method.value,
+        "api_version": api_version,
+        "transport": transport.value,
+    }
+
+    await _prompt_persistence(config_values, env)
     _print_mcp_client_config(transport, auth_method, env)
 
     run_command = "start" if transport is Transport.STDIO else "http"

@@ -35,6 +35,15 @@ const SHARED_TEST_FILES: &[(&str, &str)] = &[
         "Tests/Data/SqliteVecStoreTests.cs.tera",
         "Tests/Data/SqliteVecStoreTests.cs",
     ),
+    // Fix 8b regression test: asserts `semantic_endpoints` row count
+    // equals `endpoints` row count for every version, once
+    // `populate-embeddings --all` has been run. Skipped unless
+    // RUN_PACKAGING_TESTS=true (see the template's own doc comment), so
+    // it's safe to include in this always-emitted list.
+    (
+        "Tests/Data/EmbeddingsPopulatedTests.cs.tera",
+        "Tests/Data/EmbeddingsPopulatedTests.cs",
+    ),
     (
         "Tests/Validation/ValidatorTests.cs.tera",
         "Tests/Validation/ValidatorTests.cs",

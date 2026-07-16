@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using {{ namespace }}.Data;
 
 namespace {{ namespace }}.Services;
@@ -14,28 +15,26 @@ namespace {{ namespace }}.Services;
 public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingService embeddingService)
 {
     /// <summary>
-    /// Which store file(s) to populate: bare invocation (both <paramref
-    /// name="all"/> and <paramref name="apiVersion"/> unset) targets just
-    /// `mcp_store.db` (the default version); an explicit <paramref
-    /// name="apiVersion"/> targets
-    /// exactly that version's file; <paramref name="all"/> walks every
-    /// version this project's ledger knows about
-    /// (<see cref="SqliteVecStore.AllStoreFiles"/>) — the one-time local
-    /// backfill needed after `mcpify add-version` adds a new version
-    /// file, since each version's `.db` gets its own independent
-    /// `semantic_endpoints` table.
+    /// Which store file(s) to populate: an explicit <paramref
+    /// name="apiVersion"/> targets exactly that version's file, for
+    /// targeted re-runs; otherwise — including the bare invocation with
+    /// neither <paramref name="all"/> nor <paramref name="apiVersion"/>
+    /// set — every version this project's ledger knows about is targeted
+    /// (<see cref="SqliteVecStore.AllStoreFiles"/>). The bare form used to
+    /// default to just `mcp_store.db` (the default version only), silently
+    /// leaving every other version's store at 0 embedding rows unless
+    /// `--all` was passed explicitly; only the generated `Dockerfile`
+    /// happened to always pass `--all`, so every other invocation path
+    /// (local dev, docs) under-populated. `all` is kept as an accepted,
+    /// now-redundant flag for backward-compatible invocations.
     /// </summary>
     public static IEnumerable<string> TargetDbPaths(bool all, string? apiVersion)
     {
-        if (all)
-        {
-            return SqliteVecStore.AllStoreFiles;
-        }
         if (apiVersion is not null)
         {
             return [SqliteVecStore.ResolveStorePath(apiVersion)];
         }
-        return ["mcp_store.db"];
+        return SqliteVecStore.AllStoreFiles;
     }
 
     public async Task<int> PopulateAsync(CancellationToken cancellationToken = default)
@@ -64,6 +63,12 @@ public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingSer
         {
             foreach (var (operationId, text) in rows)
             {
+                // No try/catch around embedding computation or the insert
+                // below: a failure here must abort the whole run with a
+                // non-zero exit rather than silently skipping the row and
+                // reporting success — the completeness check further down
+                // is the second line of defense for anything that fails
+                // to throw on its own, not a substitute for this one.
                 var vector = await embeddingService.EmbedAsync(text, cancellationToken);
 
                 // sqlite-vec's vec0 virtual tables don't implement conflict
@@ -85,8 +90,55 @@ public sealed class PopulateEmbeddingsService(SqliteVecStore store, EmbeddingSer
                 insertCommand.ExecuteNonQuery();
                 count++;
             }
+
+            VerifyCompleteness(connection);
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Closes the loop on 8b: a store can otherwise end up "populated" (a
+    /// non-zero <see cref="PopulateAsync"/> return) while some
+    /// <c>endpoints</c> rows still have no matching <c>semantic_endpoints</c>
+    /// row — e.g. a row whose text produced a vector that failed to insert
+    /// for a reason that didn't itself throw. Row-count parity between the
+    /// two tables (not just "non-empty") is the completeness bar every
+    /// store must clear; a mismatch throws, identifying both the store and
+    /// the specific missing operation ID(s), so the run fails loudly
+    /// instead of exiting 0 on an under-populated store.
+    /// </summary>
+    private void VerifyCompleteness(SqliteConnection connection)
+    {
+        var endpointIds = new HashSet<string>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT operation_id FROM endpoints";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                endpointIds.Add(reader.GetString(0));
+            }
+        }
+
+        var embeddedIds = new HashSet<string>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT operation_id FROM semantic_endpoints";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                embeddedIds.Add(reader.GetString(0));
+            }
+        }
+
+        var missing = endpointIds.Except(embeddedIds).OrderBy(id => id, StringComparer.Ordinal).ToList();
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"embedding population incomplete for '{store.DbPath}': semantic_endpoints has " +
+                $"{embeddedIds.Count} row(s) but endpoints has {endpointIds.Count} — missing operation_id(s): " +
+                string.Join(", ", missing));
+        }
     }
 }

@@ -3,13 +3,29 @@
 import type { AuthConfig, AuthStrategy, Credentials } from '../auth-strategy.js';
 import { MissingCredentialsError } from '../errors.js';
 
+{%- set_global api_key_header_name = "" %}
+{%- for method in auth_method_locations %}
+{%- if method.key == "apiKey" and method.header_location == "header" %}
+{%- set_global api_key_header_name = method.header_name %}
+{%- endif %}
+{%- endfor %}
+
+// The api_key scheme's configured header name (e.g. `X-Octopus-ApiKey`),
+// resolved at generation time from the OpenAPI security scheme — falls back
+// to `X-Api-Key` only when the spec didn't declare a header-based location.
+{%- if api_key_header_name %}
+const REQUEST_HEADER_NAME = '{{ api_key_header_name }}';
+{%- else %}
+const REQUEST_HEADER_NAME = 'X-Api-Key';
+{%- endif %}
+
 export class ApiKeyStrategy implements AuthStrategy {
   async authenticate(config: AuthConfig): Promise<Credentials> {
     const { apiKey } = config;
     if (!apiKey) {
       throw new MissingCredentialsError(['apiKey']);
     }
-    return { apiKey };
+    return { apiKey, requestHeaderName: REQUEST_HEADER_NAME, requestHeaderValue: apiKey };
   }
 
   validateCredentials(credentials: Credentials): boolean {

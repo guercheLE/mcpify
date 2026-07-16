@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 		env["{{ tool_prefix_env }}_"+strings.ToUpper(key)] = value
 	}
 
-	if err := promptPersistence(env); err != nil {
+	if err := promptPersistence(env, url, authMethod, apiVersion, transport); err != nil {
 		return err
 	}
 	printMcpClientConfig(transport, authMethod, env)
@@ -293,7 +294,23 @@ func promptCredentials(authMethod core.AuthMethod) (map[string]string, error) {
 	return credentials, nil
 }
 
-func promptPersistence(env map[string]string) error {
+// configFileOverrides mirrors internal/core/config.go.tera's fileOverrides
+// JSON shape exactly (flat, unprefixed, camelCase keys) — the loader's
+// `applyFile` unmarshals into that same shape at both the local-cwd and
+// global-home tiers, so this is the one JSON key set that actually gets
+// read back. Only the fields the wizard collected are set; the rest stay
+// nil/omitted so the loader's defaults and other cascade tiers are
+// untouched. Credentials are deliberately never included here — they
+// already went through core.NewCredentialStore()/credentialStore.Save
+// above, and must keep going through that path, not this file.
+type configFileOverrides struct {
+	URL        string `json:"url"`
+	AuthMethod string `json:"authMethod"`
+	ApiVersion string `json:"apiVersion"`
+	Transport  string `json:"transport"`
+}
+
+func promptPersistence(env map[string]string, url string, authMethod core.AuthMethod, apiVersion string, transport core.Transport) error {
 	options := []string{
 		"Write a .env file",
 		"Write a config.json file",
@@ -321,14 +338,29 @@ func promptPersistence(env map[string]string) error {
 		}
 		fmt.Println("Wrote .env")
 	case options[1]:
-		encoded, err := json.MarshalIndent(env, "", "  ")
+		configPath, err := promptConfigFilePath()
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile("config.json", encoded, 0o600); err != nil {
+		overrides := configFileOverrides{
+			URL:        url,
+			AuthMethod: string(authMethod),
+			ApiVersion: apiVersion,
+			Transport:  string(transport),
+		}
+		encoded, err := json.MarshalIndent(overrides, "", "  ")
+		if err != nil {
 			return err
 		}
-		fmt.Println("Wrote config.json")
+		if dir := filepath.Dir(configPath); dir != "." {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return err
+			}
+		}
+		if err := os.WriteFile(configPath, encoded, 0o600); err != nil {
+			return err
+		}
+		fmt.Printf("Wrote %s\n", configPath)
 	default:
 		flags := make([]string, 0, len(keys))
 		for _, key := range keys {
@@ -338,4 +370,30 @@ func promptPersistence(env map[string]string) error {
 		fmt.Printf("{{ project_name }} start %s\n", strings.Join(flags, " "))
 	}
 	return nil
+}
+
+// promptConfigFilePath asks whether to persist config.json globally (the
+// home-dir tier internal/core/config.go.tera's Load reads via
+// `filepath.Join(home, ".{{ project_name }}", "config.json")`) or locally
+// (the cwd tier it reads via `filepath.Join(cwd, "{{ project_name }}.config.json")`)
+// — the exact two filenames/paths the loader's cascade actually checks, so
+// whichever the operator picks is read back on the very next run instead of
+// silently ignored.
+func promptConfigFilePath() (string, error) {
+	globalLabel := "Globally (~/.{{ project_name }}/config.json — applies to every project directory)"
+	localLabel := "Locally (./{{ project_name }}.config.json — this directory only)"
+	options := []string{globalLabel, localLabel}
+	var selection string
+	if err := survey.AskOne(&survey.Select{Message: "Write config.json globally or locally?", Options: options}, &selection); err != nil {
+		return "", err
+	}
+
+	if selection == globalLabel {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolving home directory for global config: %w", err)
+		}
+		return filepath.Join(home, ".{{ project_name }}", "config.json"), nil
+	}
+	return "{{ project_name }}.config.json", nil
 }

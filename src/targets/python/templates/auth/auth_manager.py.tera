@@ -8,8 +8,9 @@ resolving multiple simultaneously-required schemes.
 from __future__ import annotations
 
 import json
+import os
 
-from ..core.config import AuthMethod, Transport
+from ..core.config import ENV_PREFIX, AuthMethod, Transport
 from ..core.credential_storage import load_credential, save_credential
 from .auth_strategy import AuthConfig, AuthStrategy, Credentials
 from .errors import NoActiveCredentialsError
@@ -97,6 +98,11 @@ class AuthManager:
         ):
             return await self._normalize_credentials(self._cached_credentials)
 
+        if (env_credentials := await self._credentials_from_env()) is not None:
+            normalized = await self._normalize_credentials(env_credentials)
+            self._cached_credentials = normalized
+            return normalized
+
         stored = load_credential(CREDENTIAL_ACCOUNT)
         if stored is not None:
             parsed: Credentials = json.loads(stored)
@@ -116,6 +122,37 @@ class AuthManager:
                 return normalized
 
         raise NoActiveCredentialsError(self._auth_method.value)
+
+    async def _credentials_from_env(self) -> Credentials | None:
+        """`.env.example` documents `{{ tool_prefix_env }}_TOKEN`/`_API_KEY`
+        (pat/apiKey) and `{{ tool_prefix_env }}_USERNAME`/`_PASSWORD` (basic)
+        as ways to supply credentials without a prior `setup` run — read
+        them here, keyed by the resolved auth method, before falling back to
+        the stored-credential lookup. Never persisted to the credential
+        store: these are meant to be supplied fresh by the environment each
+        run.
+        """
+        method = self._auth_method.value
+        if method == "pat":
+            token = os.environ.get(f"{ENV_PREFIX}_TOKEN") or os.environ.get(
+                f"{ENV_PREFIX}_API_KEY"
+            )
+            if token:
+                return await self._strategy.authenticate({"token": token})
+        elif method == "apiKey":
+            api_key = os.environ.get(f"{ENV_PREFIX}_TOKEN") or os.environ.get(
+                f"{ENV_PREFIX}_API_KEY"
+            )
+            if api_key:
+                return await self._strategy.authenticate({"api_key": api_key})
+        elif method == "basic":
+            username = os.environ.get(f"{ENV_PREFIX}_USERNAME")
+            password = os.environ.get(f"{ENV_PREFIX}_PASSWORD")
+            if username and password:
+                return await self._strategy.authenticate(
+                    {"username": username, "password": password}
+                )
+        return None
 
     async def _normalize_credentials(self, credentials: Credentials) -> Credentials:
         if any(
@@ -198,5 +235,13 @@ class AuthManager:
         elif authorization_header := credentials.get("authorization_header"):
             headers["Authorization"] = authorization_header
         elif api_key := credentials.get("api_key"):
-            headers["X-Api-Key"] = api_key
+            # Prefer the scheme's real configured header name (carried
+            # alongside `api_key` as `api_key_header_name`) over the literal
+            # "X-Api-Key" default — e.g. Octopus Deploy needs
+            # `X-Octopus-ApiKey`. Legacy/directly-set credentials that
+            # predate `api_key_header_name` fall back to `header_location_for`.
+            header_name = credentials.get("api_key_header_name")
+            if not header_name:
+                _, header_name = header_location_for(self._auth_method)
+            headers[header_name or "X-Api-Key"] = api_key
         return headers

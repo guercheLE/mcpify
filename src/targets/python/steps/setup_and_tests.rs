@@ -58,6 +58,16 @@ const SHARED_TEST_FILES: &[(&str, &str)] = &[
         "tests/e2e/test_mcp_server.py.tera",
         "tests/e2e/test_mcp_server.py",
     ),
+    // Fix 8b regression test: asserts `semantic_endpoints` row count
+    // equals `endpoints` row count for every version, once
+    // `populate_embeddings --all` has been run against the real on-disk
+    // store files. Skipped unless RUN_PACKAGING_TESTS=true (see the
+    // template's own doc comment), so it's safe to include in this
+    // always-emitted list alongside the rest of the suite.
+    (
+        "tests/packaging/test_embeddings_populated.py.tera",
+        "tests/packaging/test_embeddings_populated.py",
+    ),
     ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
     ("scripts/profile.sh.tera", "scripts/profile.sh"),
 ];

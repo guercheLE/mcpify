@@ -79,6 +79,8 @@ pub async fn run(request: AddVersionRequest) -> Result<()> {
     }
     ledger::write(&request.project_dir, &ledger).await?;
 
+    print_embedding_reminder(&ledger, &request.version_label);
+
     Ok(())
 }
 
@@ -303,6 +305,57 @@ fn sanitize_label_for_filename(label: &str) -> String {
             }
         })
         .collect()
+}
+
+/// `add-version` only ever assembles the relational `endpoints` table for
+/// the new/promoted store (`db::assemble_store_at`) — the `semantic_endpoints`
+/// vector table is left schema-only, exactly as it is at `generate` time
+/// (see `db::mod`'s doc comment). Populating it requires an embedding model
+/// that only the *generated project's own* `populate-embeddings`
+/// binary/script links in; mcpify's own CLI binary deliberately does not
+/// depend on an embedding model, so there is no in-process function this
+/// step can call. Instead, print an impossible-to-miss reminder telling the
+/// operator to run that command themselves before the new version's
+/// `search` tool will return anything for it.
+fn print_embedding_reminder(ledger: &Ledger, version_label: &str) {
+    let command = embedding_populate_command(&ledger.language, &ledger.project_name);
+    eprintln!();
+    eprintln!("################################################################");
+    eprintln!("# ACTION REQUIRED — embeddings not yet populated for '{version_label}'");
+    eprintln!("#");
+    eprintln!("# add-version only wrote this version's relational 'endpoints'");
+    eprintln!("# rows. Its 'semantic_endpoints' vector index is still EMPTY, so");
+    eprintln!("# the 'search' tool will return no results for this version until");
+    eprintln!("# you run, from the project root:");
+    eprintln!("#");
+    eprintln!("#     {command}");
+    eprintln!("#");
+    eprintln!("################################################################");
+    eprintln!();
+}
+
+/// The per-language command that backfills every version's
+/// `semantic_endpoints` table, matching each target's `Dockerfile.tera`
+/// (which already runs the `--all` form at image-build time) and CLI/script
+/// wiring. Falls back to a generic hint for a `language` value this build
+/// doesn't recognize, rather than panicking — the ledger's `language` field
+/// is operator/project data, not something this function should assume is
+/// always one of the five built-in targets.
+fn embedding_populate_command(language: &str, project_name: &str) -> String {
+    match language {
+        "rust" => format!("cargo run --release --bin {project_name}-populate-embeddings -- --all"),
+        "go" => "go run ./cmd/populate-embeddings --all".to_string(),
+        "python" => {
+            let module_name = crate::targets::python::naming::snake_case(project_name);
+            format!("uv run python -m {module_name}.services.populate_embeddings --all")
+        }
+        "typescript" => "npm run populate-embeddings -- --all".to_string(),
+        "csharp" => "dotnet run -- populate-embeddings --all".to_string(),
+        other => format!(
+            "this project's populate-embeddings command with --all (language '{other}' isn't \
+             one mcpify recognizes a default command for — check the project's README)"
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -567,5 +620,36 @@ mod tests {
                 .unwrap();
         assert!(store_repository.contains("'11.3': 'mcp_store.db'"));
         assert!(!store_repository.contains("11.2"));
+    }
+
+    #[test]
+    fn embedding_populate_command_matches_each_targets_dockerfile_all_invocation() {
+        assert_eq!(
+            embedding_populate_command("rust", "widget-mcp"),
+            "cargo run --release --bin widget-mcp-populate-embeddings -- --all"
+        );
+        assert_eq!(
+            embedding_populate_command("go", "widget-mcp"),
+            "go run ./cmd/populate-embeddings --all"
+        );
+        assert_eq!(
+            embedding_populate_command("python", "widget-mcp"),
+            "uv run python -m widget_mcp.services.populate_embeddings --all"
+        );
+        assert_eq!(
+            embedding_populate_command("typescript", "widget-mcp"),
+            "npm run populate-embeddings -- --all"
+        );
+        assert_eq!(
+            embedding_populate_command("csharp", "widget-mcp"),
+            "dotnet run -- populate-embeddings --all"
+        );
+    }
+
+    #[test]
+    fn embedding_populate_command_falls_back_gracefully_for_an_unknown_language() {
+        let command = embedding_populate_command("cobol", "widget-mcp");
+        assert!(command.contains("cobol"));
+        assert!(command.contains("--all"));
     }
 }

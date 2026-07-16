@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"{{ module_path }}/internal/data"
@@ -23,11 +24,39 @@ func reconstructText(endpoint data.EndpointRecord) string {
 	return strings.Join(parts, " ")
 }
 
+// IncompleteEmbeddingPopulationError is returned when a store's indexed
+// document count doesn't match its endpoints row count after populating —
+// surfaced as a hard failure instead of letting the store silently ship
+// with missing embeddings for some operations.
+type IncompleteEmbeddingPopulationError struct {
+	Expected int
+	Actual   int
+	Missing  []string
+}
+
+func (e *IncompleteEmbeddingPopulationError) Error() string {
+	return fmt.Sprintf(
+		"vector store has %d indexed document(s) but endpoints has %d row(s) — missing operation_id(s): %s",
+		e.Actual, e.Expected, strings.Join(e.Missing, ", "),
+	)
+}
+
 // PopulateEmbeddings backfills the chromem-go vector store from every row
 // in mcp_store.db's endpoints table — the Go equivalent of every other
 // target's populate-embeddings step, invoked by the Dockerfile before the
 // image is considered usable and by run_generated_tests (Story G8) before
 // the test suite runs.
+//
+// Every row is indexed with no try/recover: a failure computing or
+// inserting one operation's embedding aborts the whole run with a hard
+// error immediately, rather than being silently skipped and leaving a
+// partially populated store that looks complete. Once every row has been
+// attempted, checkCompleteness re-verifies the vector store's actual
+// document count against the endpoints table's row count — closing the
+// gap for embedding failures that return a nil error but don't actually
+// persist a document (e.g. a partial write racing a process kill) — and
+// fails loudly, naming the missing operation_id(s), rather than exiting
+// success on an under-populated store.
 func PopulateEmbeddings(ctx context.Context, store *data.Store, vectorStore *VectorStore) (int, error) {
 	endpoints, err := store.ListEndpoints()
 	if err != nil {
@@ -38,9 +67,38 @@ func PopulateEmbeddings(ctx context.Context, store *data.Store, vectorStore *Vec
 	for _, endpoint := range endpoints {
 		text := reconstructText(endpoint)
 		if err := vectorStore.IndexOperation(ctx, endpoint.OperationID, text); err != nil {
-			return count, err
+			return count, fmt.Errorf("embedding operation '%s': %w", endpoint.OperationID, err)
 		}
 		count++
 	}
+
+	if err := checkCompleteness(ctx, vectorStore, endpoints); err != nil {
+		return count, err
+	}
+
 	return count, nil
+}
+
+// checkCompleteness compares the vector store's actual indexed-document
+// count against endpoints (the full row set just populated from) and, on
+// a mismatch, identifies exactly which operation_id(s) have no
+// corresponding indexed document.
+func checkCompleteness(ctx context.Context, vectorStore *VectorStore, endpoints []data.EndpointRecord) error {
+	expected := len(endpoints)
+	actual := vectorStore.Count()
+	if actual == expected {
+		return nil
+	}
+
+	missing := make([]string, 0, expected-actual)
+	for _, endpoint := range endpoints {
+		if !vectorStore.Contains(ctx, endpoint.OperationID) {
+			missing = append(missing, endpoint.OperationID)
+		}
+	}
+	if len(missing) == 0 {
+		missing = []string{"<unknown>"}
+	}
+
+	return &IncompleteEmbeddingPopulationError{Expected: expected, Actual: actual, Missing: missing}
 }

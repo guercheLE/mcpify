@@ -32,7 +32,10 @@ fn vector_to_le_bytes(vector: &[f32]) -> Vec<u8> {
 }
 
 /// Populates one store file's `semantic_endpoints` table in place,
-/// returning how many operations were (re)indexed.
+/// returning how many operations were (re)indexed. Any single row's
+/// embedding computation/insert failing propagates as a hard error via `?`
+/// (never silently skipped) — a partially-embedded store is worse than a
+/// script that stops and reports exactly which operation broke.
 fn populate_one(path: &Path) -> anyhow::Result<usize> {
     let conn = open_store_read_write(path)?;
 
@@ -64,6 +67,7 @@ fn populate_one(path: &Path) -> anyhow::Result<usize> {
     // an acceptable trade for a one-time setup script.
     let count = rows.len();
     for row in rows {
+        let operation_id = row.operation_id.clone();
         let text = [
             Some(row.method),
             Some(row.path),
@@ -74,7 +78,9 @@ fn populate_one(path: &Path) -> anyhow::Result<usize> {
         .flatten()
         .collect::<Vec<_>>()
         .join(" ");
-        let vector = embed(&text)?;
+        let vector = embed(&text).map_err(|err| {
+            anyhow::anyhow!("failed to compute embedding for '{operation_id}' in '{}': {err}", path.display())
+        })?;
         delete.execute(rusqlite::params![row.operation_id])?;
         insert.execute(rusqlite::params![
             row.operation_id,
@@ -85,31 +91,68 @@ fn populate_one(path: &Path) -> anyhow::Result<usize> {
     Ok(count)
 }
 
-/// Which store file(s) to populate: bare invocation targets just
-/// `mcp_store.db` (the default version); an explicit path targets exactly
-/// that file; `--all` walks
-/// every version this project's ledger knows about
-/// (`VERSION_STORE_FILES`) — the one-time local backfill needed after
-/// `mcpify add-version` adds a new version file, since each version's
-/// `.db` gets its own independent `semantic_endpoints` table.
+/// Verifies `semantic_endpoints` row count equals `endpoints` row count for
+/// the store at `path` — a store can end up with `endpoints` rows but no
+/// matching `semantic_endpoints` rows if embedding generation/insertion was
+/// silently skipped or partially failed for some rows, and that must not be
+/// allowed to pass as "populated". Returns the operation IDs present in
+/// `endpoints` but missing from `semantic_endpoints` when counts diverge.
+fn missing_operation_ids(path: &Path) -> anyhow::Result<Vec<String>> {
+    let conn = open_store_read_write(path)?;
+    let mut select = conn.prepare(
+        "SELECT e.operation_id FROM endpoints e \
+         LEFT JOIN semantic_endpoints s ON s.operation_id = e.operation_id \
+         WHERE s.operation_id IS NULL",
+    )?;
+    let missing: Vec<String> = select
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(missing)
+}
+
+/// Which store file(s) to populate: bare invocation (and `--all`) both walk
+/// every version this project's ledger knows about (`VERSION_STORE_FILES`)
+/// — defaulting to just the default version's store left every other
+/// version's `semantic_endpoints` table at 0 rows unless `--all` was passed
+/// explicitly, so the safe default is "populate everything". An explicit
+/// path argument still targets exactly that one file, for a targeted
+/// re-run.
 fn targets() -> Vec<PathBuf> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("--all") => VERSION_STORE_FILES
+        Some("--all") | None => VERSION_STORE_FILES
             .iter()
             .map(|(_, file)| PathBuf::from(file))
             .collect(),
         Some(path) => vec![PathBuf::from(path)],
-        None => vec![PathBuf::from("mcp_store.db")],
     }
 }
 
 fn main() -> anyhow::Result<()> {
+    let mut had_mismatch = false;
     for path in targets() {
         let count = populate_one(&path)?;
         println!(
             "populated embeddings for {count} operation(s) in '{}'",
             path.display()
+        );
+
+        let missing = missing_operation_ids(&path)?;
+        if !missing.is_empty() {
+            had_mismatch = true;
+            eprintln!(
+                "ERROR: '{}' has {} endpoint(s) missing from semantic_endpoints (row-count \
+                 parity check failed): {}",
+                path.display(),
+                missing.len(),
+                missing.join(", ")
+            );
+        }
+    }
+    if had_mismatch {
+        anyhow::bail!(
+            "embedding population incomplete: one or more stores have semantic_endpoints \
+             row counts below their endpoints row counts (see errors above)"
         );
     }
     Ok(())

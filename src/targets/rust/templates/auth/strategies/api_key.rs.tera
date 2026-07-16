@@ -2,8 +2,10 @@
 
 use async_trait::async_trait;
 
+use super::super::auth_manager::header_location_for;
 use super::super::auth_strategy::{AuthConfig, AuthStrategy, Credentials};
 use super::super::errors::AuthError;
+use crate::core::config_schema::AuthMethod;
 
 #[derive(Debug, Default)]
 pub struct ApiKeyStrategy;
@@ -17,6 +19,13 @@ impl AuthStrategy for ApiKeyStrategy {
 
         let mut credentials = Credentials::new();
         credentials.insert("api_key".to_string(), api_key.clone());
+        // Carry the scheme's real configured header name (e.g.
+        // `X-Octopus-ApiKey`) through so `AuthManager::apply_auth_headers`
+        // uses it instead of falling back to the generic `X-Api-Key`
+        // literal — same header name the HTTP-transport extractor already
+        // uses via `header_location_for`.
+        let (_, header_name) = header_location_for(AuthMethod::ApiKey);
+        credentials.insert("request_header_name".to_string(), header_name.to_string());
         Ok(credentials)
     }
 

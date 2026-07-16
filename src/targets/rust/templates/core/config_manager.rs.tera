@@ -5,20 +5,19 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::config_schema::Config;
+use super::credential_storage::resolve_home_dir;
 use super::errors::McpifyError;
 
 const ENV_PREFIX: &str = "{{ tool_prefix_env }}";
 const CONFIG_DIR_NAME: &str = ".{{ project_name }}";
 const LOCAL_CONFIG_FILE: &str = "{{ project_name }}.config.yml";
 
-/// Env vars this crate reads directly (`HOME`) rather than via a `dirs`-style
-/// crate: keeps the dependency list matched to the toolchain table, at the
-/// cost of `~` resolution only working where `$HOME` is set (true for every
-/// deployment target this project's Dockerfile/docker-compose.yml target).
+/// Shares `credential_storage::resolve_home_dir`'s cross-platform lookup
+/// (`HOME`, falling back to `USERPROFILE` on Windows, falling back to `.`)
+/// rather than reading `HOME` directly, so config-file resolution doesn't
+/// silently collapse to the current directory on Windows.
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    resolve_home_dir()
 }
 
 fn read_yaml_if_exists(path: &Path) -> Map<String, Value> {

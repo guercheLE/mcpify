@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 
 	"out/internal/core"
@@ -52,9 +53,11 @@ func NewManager(authMethod core.AuthMethod, strategies map[core.AuthMethod]Strat
 }
 
 // headerLocations maps each discovered auth method to where its
-// credential value travels on the wire — used only by the HTTP-transport
+// credential value travels on the wire. Used by the HTTP-transport
 // auth-gate/extractor (internal/http) to know which incoming header to
-// read; stdio never calls this. Built as individual assignments rather
+// read, and by ApplyAuthHeaders below to pick the api_key strategy's real
+// configured header name on the stdio path (e.g. `X-Octopus-ApiKey`)
+// instead of a generic literal. Built as individual assignments rather
 // than one map literal — gofmt column-aligns every entry in a multi-line
 // map literal by the longest key, which a Tera template can't predict
 // ahead of rendering since the set of discovered schemes varies per
@@ -102,12 +105,42 @@ func (m *Manager) SetCredentials(credentials Credentials) {
 	m.cachedCredentials = credentials
 }
 
+// envCredentials checks the `OUT_*` environment
+// variables documented in `.env.example` for authMethod's required
+// secret(s) — `_TOKEN`/`_API_KEY` for pat/api_key, `_USERNAME`+`_PASSWORD`
+// for basic — so those documented overrides actually take effect without
+// requiring a prior `setup` run that persists to the credential store.
+// Returns raw (pre-strategy) credentials; the caller runs them through
+// normalizeCredentials the same as any stored/refreshed credentials.
+func envCredentials(authMethod core.AuthMethod) (Credentials, bool) {
+	switch authMethod {
+	case core.AuthMethodBasic:
+		username, hasUsername := os.LookupEnv("OUT_USERNAME")
+		password, hasPassword := os.LookupEnv("OUT_PASSWORD")
+		if hasUsername && hasPassword && username != "" && password != "" {
+			return Credentials{"username": username, "password": password}, true
+		}
+	}
+	return nil, false
+}
+
 func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 	m.mu.Lock()
 	cached := m.cachedCredentials
 	m.mu.Unlock()
 	if cached != nil && m.strategy.ValidateCredentials(cached) {
 		return m.normalizeCredentials(ctx, cached)
+	}
+
+	if envCreds, ok := envCredentials(m.authMethod); ok {
+		normalized, err := m.normalizeCredentials(ctx, envCreds)
+		if err != nil {
+			return nil, err
+		}
+		m.mu.Lock()
+		m.cachedCredentials = normalized
+		m.mu.Unlock()
+		return normalized, nil
 	}
 
 	stored, ok, err := m.credentials.Get(credentialKey)
@@ -190,12 +223,14 @@ func copyCredentials(credentials Credentials) Credentials {
 // behavior is unchanged from before HTTP-transport support existed:
 // GetCredentials (config cascade + keychain).
 //
-// API-key placement (header vs. query, and the header/param name)
-// defaults to an `X-Api-Key` header here; a scheme declaring a different
-// location is one of Story G6's API-client responsibilities to refine,
-// not this manager's — requestOverride's request_header_name/
-// request_header_value pair is the one exception, since the HTTP path
-// already knows the scheme's declared header name at generation time.
+// API-key placement (header vs. query) defaults to a header here; a
+// scheme declaring a different location is one of Story G6's API-client
+// responsibilities to refine, not this manager's. The header *name* for
+// the stdio api_key branch below is sourced from headerLocations (the
+// scheme's real configured name, e.g. `X-Octopus-ApiKey`), falling back
+// to `X-Api-Key` only when the method has no discovered header name —
+// requestOverride's request_header_name/request_header_value pair
+// remains the separate HTTP-transport override mechanism.
 func (m *Manager) ApplyAuthHeaders(
 	ctx context.Context,
 	headers map[string]string,
@@ -224,7 +259,11 @@ func (m *Manager) ApplyAuthHeaders(
 	} else if authHeader, ok := credentials["authorization_header"]; ok {
 		updated["Authorization"] = authHeader
 	} else if apiKey, ok := credentials["api_key"]; ok {
-		updated["X-Api-Key"] = apiKey
+		headerName := "X-Api-Key"
+		if _, configuredName := HeaderLocationFor(m.authMethod); configuredName != "" {
+			headerName = configuredName
+		}
+		updated[headerName] = apiKey
 	}
 	return updated, nil
 }

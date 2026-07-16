@@ -59,6 +59,9 @@ public sealed class SqliteVecStore(string dbPath = "mcp_store.db")
     /// independent `semantic_endpoints` table per version.</summary>
     public static IReadOnlyCollection<string> AllStoreFiles => VersionStoreFiles.Values;
 
+    /// <summary>The on-disk path this instance was opened against — surfaced so `PopulateEmbeddingsService`'s completeness check can name the store in its error message.</summary>
+    public string DbPath => dbPath;
+
     private readonly Lazy<string> _vecExtensionPath = new(ResolveExtensionPath);
 
     private SqliteConnection? _cachedConnection;

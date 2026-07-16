@@ -17,7 +17,9 @@ npm run build
 npm run setup
 ```
 
-Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a `config.json` file, or a ready-to-run CLI invocation.
+Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a `config.yml` file (your choice of global — `~/.{{ project_name }}/config.yml` — or local — `./{{ project_name }}.config.yml`, whichever the config loader reads back for you), or a ready-to-run CLI invocation.
+
+> **Base URL:** some APIs define their OpenAPI `servers[].url` with a path prefix (commonly `/rest` or `/api`). If requests 404, check whether your API's base URL needs that suffix appended — see your API's OpenAPI spec `servers` entry.
 
 ## Usage
 
