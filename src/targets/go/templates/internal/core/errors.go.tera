@@ -1,5 +1,7 @@
 package core
 
+import "strings"
+
 // Error is what every error this project raises deliberately looks like,
 // mirroring `targets::csharp::templates::Core::Errors.cs.tera`'s
 // `McpifyException` hierarchy — one `Code` string per error family, kept
@@ -12,7 +14,17 @@ type Error struct {
 	Details any
 }
 
-func (e *Error) Error() string { return e.Message }
+// Error renders Message, plus a ": a; b; c" suffix when Details holds a
+// non-empty []string (as ValidationError's jsonschema violations do), so
+// the error text callers actually see carries the violated constraints
+// instead of just the generic "invalid input for 'X'" / "unexpected
+// response shape for 'X'" message.
+func (e *Error) Error() string {
+	if details, ok := e.Details.([]string); ok && len(details) > 0 {
+		return e.Message + ": " + strings.Join(details, "; ")
+	}
+	return e.Message
+}
 
 func NewConfigurationError(message string) *Error {
 	return &Error{Code: "CONFIGURATION_ERROR", Message: message}

@@ -21,11 +21,35 @@ public sealed class AuthenticationException(string message) : McpifyException(me
     public override string Code => "AUTHENTICATION_ERROR";
 }
 
-public sealed class ValidationException(string message, object? details = null) : McpifyException(message)
+public sealed class ValidationException : McpifyException
 {
-    public object? Details { get; } = details;
+    public object? Details { get; }
+
+    public ValidationException(string message, object? details = null)
+        : base(FormatMessage(message, details))
+    {
+        Details = details;
+    }
 
     public override string Code => "VALIDATION_ERROR";
+
+    /// <summary>
+    /// Appends a ": a; b; c" suffix built from <paramref name="details"/>
+    /// (the jsonschema violation strings <c>Validator</c> collects) onto
+    /// <paramref name="message"/>, so <see cref="Exception.Message"/> —
+    /// what the MCP SDK sends back as the tool's error text — carries the
+    /// actual violated constraints instead of just the generic "invalid
+    /// input for 'X'" / "unexpected response shape for 'X'" text.
+    /// </summary>
+    private static string FormatMessage(string message, object? details)
+    {
+        if (details is IEnumerable<string> items)
+        {
+            var joined = string.Join("; ", items);
+            return joined.Length > 0 ? $"{message}: {joined}" : message;
+        }
+        return message;
+    }
 }
 
 public sealed class McpifyNotFoundException(string message) : McpifyException(message)

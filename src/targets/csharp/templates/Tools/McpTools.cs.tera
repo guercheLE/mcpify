@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using {{ namespace }}.Core;
@@ -53,9 +54,15 @@ public static class McpTools
         ApiClient apiClient,
         IOptions<McpifyOptions> options,
         IRequestCredentialProvider credentialProvider,
+        ILoggerFactory loggerFactory,
         [Description("The operationId to invoke")] string operationId,
         [Description("JSON object of arguments for the operation")] string args)
     {
+        // ILoggerFactory.CreateLogger(string), not ILogger<McpTools>: McpTools
+        // is a static class, and C# doesn't allow a static type as a generic
+        // type argument (CS0718).
+        var logger = loggerFactory.CreateLogger("McpTools");
+
         var endpoint = store.GetEndpoint(operationId)
             ?? throw new McpifyNotFoundException($"unknown operationId '{operationId}'");
 
@@ -69,7 +76,26 @@ public static class McpTools
         // where there's no HttpContext at all.
         var response = await apiClient.ExecuteAsync(endpoint, argsDict, credentialProvider.GetOverride());
 
-        Validator.ValidateOutput(options.Value.ApiVersion, operationId, response);
+        // An output-schema mismatch is only logged, not thrown: real-world
+        // OpenAPI specs (e.g. Atlassian's published Jira Data Center spec)
+        // are frequently wrong about response shape — declaring a single
+        // object where the API actually returns an array, or an overly
+        // narrow additionalProperties for a free-form bag of fields — and
+        // rejecting an otherwise-successful call over a documentation bug
+        // would deny the caller real data it already has in hand. Input
+        // validation still throws: those arguments are under the caller's
+        // control, not the upstream API's.
+        try
+        {
+            Validator.ValidateOutput(options.Value.ApiVersion, operationId, response);
+        }
+        catch (ValidationException ex)
+        {
+            logger.LogWarning(
+                "operationId={OperationId}: response did not match the documented schema; returning it as-is: {Error}",
+                operationId,
+                ex.Message);
+        }
         return response?.ToJsonString() ?? "null";
     }
 }

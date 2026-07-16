@@ -6,6 +6,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.uber.org/zap"
 
 	"{{ module_path }}/internal/auth"
 	"{{ module_path }}/internal/data"
@@ -24,6 +25,7 @@ func Register(
 	apiClient *services.ApiClient,
 	authManager *auth.Manager,
 	apiVersion string,
+	logger *zap.Logger,
 ) {
 	mcpServer.AddTool(
 		mcp.NewTool("search",
@@ -87,7 +89,7 @@ func Register(
 				requestOverride = &credentials
 			}
 
-			result, err := Call(ctx, store, apiClient, authManager, apiVersion, operationID, args, requestOverride)
+			result, err := Call(ctx, store, apiClient, authManager, apiVersion, operationID, args, requestOverride, logger)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

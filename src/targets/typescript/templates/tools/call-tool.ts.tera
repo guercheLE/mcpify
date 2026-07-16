@@ -6,6 +6,7 @@ import type { AuthManager } from '../auth/auth-manager.js';
 import type { RequestCredentials } from '../auth/request-credentials.js';
 import type { Config } from '../core/config-schema.js';
 import { NotFoundError } from '../core/errors.js';
+import { logger } from '../core/logger.js';
 import { getEndpoint, type Store } from '../data/store-repository.js';
 import { ApiClient } from '../services/api-client.js';
 import { validateInput, validateOutput } from '../validation/validator.js';
@@ -17,10 +18,18 @@ export const callInputShape = {
 
 /**
  * Validates arguments against the input schema, injects the active auth
- * strategy's credentials, executes the live HTTP request, and validates
- * the response against the output schema before returning it — PRD §1.5's
- * `call` pipeline (architecture.md's 4-step `call` pipeline), protecting
- * the calling agent from upstream API drift.
+ * strategy's credentials, executes the live HTTP request, and checks the
+ * response against the output schema before returning it — PRD §1.5's
+ * `call` pipeline (architecture.md's 4-step `call` pipeline).
+ *
+ * An output-schema mismatch is only logged, not thrown: real-world OpenAPI
+ * specs (e.g. Atlassian's published Jira Data Center spec) are frequently
+ * wrong about response shape — declaring a single object where the API
+ * actually returns an array, or an overly narrow `additionalProperties`
+ * for a free-form bag of fields — and rejecting an otherwise-successful
+ * call over a documentation bug would deny the caller real data it already
+ * has in hand. Input validation still throws: those arguments are under
+ * the caller's control, not the upstream API's.
  */
 export async function callOperation(
   store: Store,
@@ -40,6 +49,13 @@ export async function callOperation(
   const client = new ApiClient(config, authManager);
   const response = await client.execute(endpoint, args, requestOverride);
 
-  validateOutput(operationId, response.data);
+  try {
+    validateOutput(operationId, response.data);
+  } catch (err) {
+    logger.warn(
+      { operationId, err },
+      'response did not match the documented schema; returning it as-is',
+    );
+  }
   return response.data;
 }

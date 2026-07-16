@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
+	"go.uber.org/zap"
 
 	"{{ module_path }}/internal/auth"
 	"{{ module_path }}/internal/core"
@@ -35,10 +36,16 @@ type Services struct {
 	AuthManager *auth.Manager
 	Health      *core.Registry
 	MCPServer   *server.MCPServer
+	Logger      *zap.Logger
 }
 
 func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, error) {
 	config, err := core.Load(overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	logger, err := core.NewLogger()
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +94,7 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 	apiClient := services.NewApiClient(config)
 	health := core.NewRegistry()
 	mcpServer := core.NewMCPServer()
-	tools.Register(mcpServer, store, vectorStore, apiClient, authManager, config.ApiVersion)
+	tools.Register(mcpServer, store, vectorStore, apiClient, authManager, config.ApiVersion, logger)
 
 	return &Services{
 		Config:      config,
@@ -98,6 +105,7 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 		AuthManager: authManager,
 		Health:      health,
 		MCPServer:   mcpServer,
+		Logger:      logger,
 	}, nil
 }
 
@@ -106,6 +114,11 @@ func (s *Services) Close() {
 	// process-wide connection shared and reused across the process's
 	// lifetime, not one owned by this particular Services instance.
 	_ = s.EmbedSvc.Close()
+	// Error ignored: zap's Sync() is well known to return a spurious
+	// EINVAL/ENOTTY on stderr/stdout for some OS/terminal combinations
+	// (e.g. macOS), even though the preceding writes already succeeded —
+	// the idiomatic zap pattern is a best-effort, error-ignored Sync().
+	_ = s.Logger.Sync()
 }
 
 // RunStdioHarness starts the Harness Server over stdio.
@@ -252,7 +265,7 @@ func RunCall(ctx context.Context, overrides core.CLIOverrides, operationID, args
 		}
 	}
 
-	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, svc.Config.ApiVersion, operationID, args, nil)
+	result, err := tools.Call(ctx, svc.Store, svc.ApiClient, svc.AuthManager, svc.Config.ApiVersion, operationID, args, nil, svc.Logger)
 	if err != nil {
 		return err
 	}

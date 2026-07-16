@@ -24,11 +24,23 @@ class AuthenticationError(McpifyError):
     code = "AUTHENTICATION_ERROR"
 
 
+def _format_validation_details(details: Any | None) -> str:
+    """Renders a list of jsonschema violation strings as a `": a; b; c"`
+    suffix, so `str(exc)` — what `FastMCP` sends back as the MCP tool's
+    error text — carries the actual violated constraints instead of just
+    the generic "invalid input for 'X'" / "unexpected response shape for
+    'X'" message.
+    """
+    if isinstance(details, list) and details:
+        return f": {'; '.join(str(item) for item in details)}"
+    return ""
+
+
 class ValidationError(McpifyError):
     code = "VALIDATION_ERROR"
 
     def __init__(self, message: str, details: Any | None = None) -> None:
-        super().__init__(message)
+        super().__init__(f"{message}{_format_validation_details(details)}")
         self.details = details
 
 

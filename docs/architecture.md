@@ -176,7 +176,7 @@ This mirrors the folder shape already validated by `bitbucket-dc-mcp` and `jira-
 1. **Input guard validation** — incoming arguments checked against `input_schema` from `mcp_store.db`; failures short-circuit before any network call.
 2. **Credential injection** — the active auth strategy (selected via `auth_method` in the resolved config) attaches the required header/query/basic credentials.
 3. **Dispatch** — the request goes out through the circuit-breaker/retry/rate-limit wrapper to the target API, fully async.
-4. **Output guard validation** — the response is checked against `output_schema`; a mismatch is surfaced as a structured error rather than silently returned, protecting the calling agent from API drift.
+4. **Output guard validation** — the response is checked against `output_schema`; a mismatch is logged as a warning (with the violated constraints) but the live data is still returned as-is. Real-world OpenAPI specs are frequently wrong about response shape (e.g. declaring a single object where the API returns an array), so treating every mismatch as fatal would deny the caller real data over a documentation bug rather than an actual failure. Input guard validation (step 1) stays fatal — those arguments are under the caller's control, not the upstream API's.
 
 Every step above emits structured logs and OpenTelemetry spans/metrics by default.
 

@@ -22,11 +22,33 @@ export class AuthenticationError extends McpifyError {
   }
 }
 
+/**
+ * Renders Ajv's `errors` array (or any array of jsonschema-style violation
+ * strings) as a `": a; b; c"` suffix, so `.message` — what `tool-executor.ts`
+ * sends back as the MCP tool's error text — carries the actual violated
+ * constraints instead of just the generic "invalid input for 'X'" /
+ * "unexpected response shape for 'X'" text.
+ */
+function formatValidationDetails(details: unknown): string {
+  if (!Array.isArray(details) || details.length === 0) return '';
+  const parts = details.map((entry) => {
+    if (entry && typeof entry === 'object' && 'message' in entry) {
+      const path =
+        'instancePath' in entry && typeof entry.instancePath === 'string' && entry.instancePath
+          ? entry.instancePath
+          : '<root>';
+      return `${path} ${(entry as { message?: string }).message ?? ''}`.trim();
+    }
+    return String(entry);
+  });
+  return `: ${parts.join('; ')}`;
+}
+
 export class ValidationError extends McpifyError {
   public readonly details?: unknown;
 
   constructor(message: string, details?: unknown) {
-    super(message, 'VALIDATION_ERROR');
+    super(`${message}${formatValidationDetails(details)}`, 'VALIDATION_ERROR');
     this.details = details;
   }
 }

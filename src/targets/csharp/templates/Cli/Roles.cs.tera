@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using {{ namespace }}.Auth;
 using {{ namespace }}.Core;
@@ -168,6 +169,7 @@ public static class Roles
             host.Services.GetRequiredService<ApiClient>(),
             host.Services.GetRequiredService<IOptions<McpifyOptions>>(),
             host.Services.GetRequiredService<IRequestCredentialProvider>(),
+            host.Services.GetRequiredService<ILoggerFactory>(),
             operationId,
             callArgs);
         Console.WriteLine(result);

@@ -51,9 +51,10 @@ describe('callOperation', () => {
   it('dispatches a live request for a known operationId', async () => {
     // Exercises ApiClient directly rather than callOperation's full
     // pipeline: the mock server's generic echo body won't conform to this
-    // operation's real declared output schema, and validateOutput would
-    // reject it — this test is only about the request actually reaching
-    // the target with the right method/path/auth, not response shape.
+    // operation's real declared output schema — fine, since callOperation
+    // no longer rejects an output-schema mismatch (see the test below);
+    // this one is only about the request actually reaching the target
+    // with the right method/path/auth, not response shape.
     const authManager = new AuthManager(config.auth_method);
     authManager.setCredentials(buildDummyCredentials());
     const endpoint = getEndpoint(store, '{{ operations.0.operation_id }}')!;
