@@ -134,6 +134,9 @@ mod tests {
             name: name.to_string(),
             kind,
             location: default_location_for(kind),
+            scopes: Vec::new(),
+            authorization_url: None,
+            token_url: None,
         }
     }
 

@@ -1,6 +1,9 @@
 using System.Text.Json;
 using Spectre.Console;
 using {{ namespace }}.Auth;
+{%- if "oauth2" in auth_method_keys %}
+using {{ namespace }}.Auth.Strategies;
+{%- endif %}
 using {{ namespace }}.Core;
 
 namespace {{ namespace }}.Cli;
@@ -18,7 +21,7 @@ public static class SetupWizard
     {
         var url = await PromptBaseUrlAsync();
         var authMethod = PromptAuthMethod();
-        var credentials = PromptCredentials(authMethod);
+        var credentials = await PromptCredentialsAsync(authMethod);
         var apiVersion = PromptApiVersion();
         var transport = PromptTransport();
 
@@ -33,6 +36,21 @@ public static class SetupWizard
         };
         foreach (var (key, value) in credentials)
         {
+            {%- if "oauth2" in auth_method_keys %}
+            if (authMethod == AuthMethod.OAuth2 &&
+                key is "authorization_code" or "code_verifier" or "redirect_uri" or "token_url")
+            {
+                // Single-use (authorization_code, code_verifier — an
+                // authorization code is spent in minutes and a PKCE
+                // verifier is useless without it) or provider-fixed
+                // (redirect_uri, token_url — already baked into the
+                // keychain blob credentialStore.SaveAsync wrote above)
+                // fields. Persisting these to .env/config.json/CLI args
+                // would either leak a spent code or go stale the moment
+                // the provider rotates an endpoint.
+                continue;
+            }
+            {%- endif %}
             env[$"{{ tool_prefix_env }}_{key.ToUpperInvariant()}"] = value;
         }
 
@@ -190,7 +208,167 @@ public static class SetupWizard
     }
     // mcpify:versions:end
 
-    private static Dictionary<string, string> PromptCredentials(AuthMethod authMethod)
+{%- if "oauth2" in auth_method_keys %}
+{%- for method in auth_methods %}
+{%- if method.key == "oauth2" %}
+
+    private sealed record OAuth2Setup(
+        Dictionary<string, string> Credentials, string AuthUrl, bool UseCallback, int CallbackPort);
+
+    /// <summary>
+    /// Collects client ID/secret, scopes, generates PKCE, and builds the
+    /// authorization URL — everything the browser step needs, before this
+    /// wizard starts (or skips) the local callback server.
+    /// </summary>
+    private static OAuth2Setup BuildOAuth2Setup()
+    {
+        AnsiConsole.MarkupLine(
+            "\n══════════════════════════════════════════════════════════════════════\n" +
+            "{{ display_name }} OAuth2 Setup\n" +
+            "You need an OAuth2 app registered with this API provider.\n" +
+            "══════════════════════════════════════════════════════════════════════");
+
+        var credentials = new Dictionary<string, string>();
+
+        // Client ID and secret aren't per-user secrets — RFC 8252 classifies
+        // CLI/native apps as OAuth "public clients": client_id is a bare
+        // identifier, and even a client_secret (when one exists — PKCE is
+        // the actual protection for this class of client) "should not be
+        // treated as confidential". So, unlike the actual tokens this
+        // wizard goes on to collect, it's fine to default these from env
+        // vars — the same convenience pattern gcloud/aws-style CLIs use for
+        // app-level config, letting an operator re-run setup without
+        // retyping their app's identity every time.
+        var envClientId = Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_CLIENT_ID");
+        var envClientSecret = Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_CLIENT_SECRET");
+
+        var clientIdPrompt = new TextPrompt<string>("OAuth2 client ID:");
+        if (!string.IsNullOrEmpty(envClientId))
+        {
+            clientIdPrompt.DefaultValue(envClientId);
+        }
+        var clientId = AnsiConsole.Prompt(clientIdPrompt);
+        credentials["client_id"] = clientId;
+
+        string clientSecret;
+        if (!string.IsNullOrEmpty(envClientSecret))
+        {
+            AnsiConsole.MarkupLine("Client Secret: using {{ tool_prefix_env }}_CLIENT_SECRET from the environment.");
+            clientSecret = envClientSecret;
+        }
+        else
+        {
+            clientSecret = AnsiConsole.Prompt(
+                new TextPrompt<string>(
+                    "OAuth2 client secret (leave blank to use PKCE-only — recommended, no secret required):")
+                    .Secret().AllowEmpty());
+        }
+        var usePkce = string.IsNullOrEmpty(clientSecret);
+        if (!usePkce)
+        {
+            credentials["client_secret"] = clientSecret;
+        }
+
+        var tokenUrlPrompt = new TextPrompt<string>("OAuth2 token URL:");
+        {%- if method.token_url %}
+        tokenUrlPrompt.DefaultValue("{{ method.token_url }}");
+        {%- endif %}
+        var tokenUrl = AnsiConsole.Prompt(tokenUrlPrompt);
+        credentials["token_url"] = tokenUrl;
+
+        var authBasePrompt = new TextPrompt<string>("OAuth2 authorization URL (where the browser goes to authorize):");
+        {%- if method.authorization_url %}
+        authBasePrompt.DefaultValue("{{ method.authorization_url }}");
+        {%- endif %}
+        var authBase = AnsiConsole.Prompt(authBasePrompt);
+
+        var scopePrompt = new TextPrompt<string>(
+            "OAuth2 scopes (space-separated — accept the default for full access):");
+        {%- if method.scopes %}
+        scopePrompt.DefaultValue("{{ method.scopes }}");
+        {%- endif %}
+        var scope = AnsiConsole.Prompt(scopePrompt);
+
+        // Redirect URI — MUST be registered with the OAuth2 app.
+        const int callbackPort = 8888;
+        var redirectUri = $"http://127.0.0.1:{callbackPort}/callback";
+        credentials["redirect_uri"] = redirectUri;
+
+        // PKCE: generate code_verifier/code_challenge when not using a secret.
+        string? codeChallenge = null;
+        if (usePkce)
+        {
+            var (verifier, challenge) = Pkce.CreatePair();
+            credentials["code_verifier"] = verifier;
+            codeChallenge = challenge;
+        }
+
+        // Build the authorization URL. The user opens this in their
+        // browser to grant permission; the provider then redirects to
+        // redirect_uri?code=<authorization_code>.
+        var queryParams = new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = clientId,
+            ["redirect_uri"] = redirectUri,
+            ["scope"] = scope,
+        };
+        if (codeChallenge is not null)
+        {
+            queryParams["code_challenge_method"] = "S256";
+            queryParams["code_challenge"] = codeChallenge;
+        }
+        var queryString = string.Join(
+            '&', queryParams.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+        var authUrl = $"{authBase}?{queryString}";
+
+        var useCallback = AnsiConsole.Confirm(
+            $"Start a local callback server on {redirectUri} to capture the\n" +
+            "authorization code automatically after you authorize in the browser?",
+            defaultValue: true);
+
+        return new OAuth2Setup(credentials, authUrl, useCallback, callbackPort);
+    }
+
+    /// <summary>
+    /// Temporary local HTTP server that receives the OAuth2 redirect and
+    /// extracts the <c>?code=</c> query parameter, then shuts itself down.
+    /// </summary>
+    private static async Task<string> WaitForOAuthCallbackAsync(int port)
+    {
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        try
+        {
+            var contextTask = listener.GetContextAsync();
+            var completed = await Task.WhenAny(contextTask, Task.Delay(TimeSpan.FromMinutes(5)));
+            if (completed != contextTask)
+            {
+                throw new TimeoutException("timed out waiting for the OAuth2 callback (5 minutes)");
+            }
+
+            var context = await contextTask;
+            var code = context.Request.QueryString["code"] ?? string.Empty;
+            var body = System.Text.Encoding.UTF8.GetBytes(
+                "<!DOCTYPE html><html><body><h1>&#10003; Authorized!</h1>" +
+                "<p>Return to your terminal &mdash; setup continues automatically.</p></body></html>");
+            context.Response.ContentType = "text/html";
+            context.Response.ContentLength64 = body.Length;
+            await context.Response.OutputStream.WriteAsync(body);
+            context.Response.OutputStream.Close();
+            return code;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
+    private static async Task<Dictionary<string, string>> PromptCredentialsAsync(AuthMethod authMethod)
     {
         var credentials = new Dictionary<string, string>();
 {%- if "basic" in auth_method_keys %}
@@ -215,21 +393,34 @@ public static class SetupWizard
 {%- if "oauth2" in auth_method_keys %}
         if (authMethod == AuthMethod.OAuth2)
         {
-            credentials["client_id"] = AnsiConsole.Ask<string>("OAuth2 client ID:");
-            var clientSecret = AnsiConsole.Prompt(
-                new TextPrompt<string>("OAuth2 client secret (leave blank if none):").Secret().AllowEmpty());
-            if (!string.IsNullOrEmpty(clientSecret))
+            var setup = BuildOAuth2Setup();
+
+            var bar = new string('═', 72);
+            AnsiConsole.MarkupLine($"\n{bar}");
+            AnsiConsole.MarkupLine("Open this URL in your browser to authorize:");
+            Console.WriteLine(setup.AuthUrl);
+            AnsiConsole.MarkupLine(bar);
+            AnsiConsole.MarkupLine(
+                $"\nIMPORTANT: Before opening the URL, register this Redirect URI with your OAuth2 app:\n" +
+                $"  http://127.0.0.1:{setup.CallbackPort}/callback\n");
+
+            string authorizationCode;
+            if (setup.UseCallback)
             {
-                credentials["client_secret"] = clientSecret;
+                AnsiConsole.MarkupLine($"Waiting for callback on http://127.0.0.1:{setup.CallbackPort}/callback …");
+                authorizationCode = await WaitForOAuthCallbackAsync(setup.CallbackPort);
             }
-            credentials["token_url"] = AnsiConsole.Ask<string>("OAuth2 token URL:");
-            var authorizationCode = AnsiConsole.Prompt(
-                new TextPrompt<string>("Authorization code, if you already have one (leave blank to skip):")
-                    .AllowEmpty());
-            if (!string.IsNullOrEmpty(authorizationCode))
+            else
             {
-                credentials["authorization_code"] = authorizationCode;
+                authorizationCode = AnsiConsole.Ask<string>(
+                    "Paste the authorization code from the redirect URL (?code=...):");
             }
+
+            foreach (var (key, value) in setup.Credentials)
+            {
+                credentials[key] = value;
+            }
+            credentials["authorization_code"] = authorizationCode;
         }
 {%- endif %}
 {%- if "oauth1" in auth_method_keys %}

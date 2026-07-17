@@ -71,6 +71,11 @@ pub async fn profile_auth_with_overrides(
             name: item.name.clone(),
             kind,
             location,
+            // Operator-supplied overrides have no spec `flows.*.scopes` to
+            // read — same as the interactive fallback prompt.
+            scopes: Vec::new(),
+            authorization_url: None,
+            token_url: None,
         };
         if let Some(existing) = schemes.iter_mut().find(|scheme| scheme.name == item.name) {
             *existing = descriptor;

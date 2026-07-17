@@ -4,7 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	{%- if "oauth2" in auth_method_keys %}
+	"net"
+	{%- endif %}
 	"net/http"
+	{%- if "oauth2" in auth_method_keys %}
+	"net/url"
+	{%- endif %}
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,7 +35,7 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 	}
 
 	authMethod := promptAuthMethod()
-	credentials, err := promptCredentials(authMethod)
+	credentials, err := promptCredentials(ctx, authMethod)
 	if err != nil {
 		return err
 	}
@@ -55,6 +61,22 @@ func RunSetup(ctx context.Context, overrides core.CLIOverrides) error {
 		"{{ tool_prefix_env }}_TRANSPORT":   string(transport),
 	}
 	for key, value := range credentials {
+		{%- if "oauth2" in auth_method_keys %}
+		if authMethod == core.AuthMethodOAuth2 {
+			switch key {
+			case "authorization_code", "code_verifier", "redirect_uri", "token_url":
+				// Single-use (authorization_code, code_verifier — an
+				// authorization code is spent in minutes and a PKCE
+				// verifier is useless without it) or provider-fixed
+				// (redirect_uri, token_url — already baked into the
+				// keychain blob credentialStore.Save wrote above)
+				// fields. Persisting these to .env/config.json/CLI args
+				// would either leak a spent code or go stale the moment
+				// the provider rotates an endpoint.
+				continue
+			}
+		}
+		{%- endif %}
 		env["{{ tool_prefix_env }}_"+strings.ToUpper(key)] = value
 	}
 
@@ -219,7 +241,187 @@ func promptApiVersion() string {
 
 // mcpify:versions:end
 
-func promptCredentials(authMethod core.AuthMethod) (map[string]string, error) {
+{%- if "oauth2" in auth_method_keys %}
+{%- for method in auth_methods %}
+{%- if method.key == "oauth2" %}
+
+type oauth2Setup struct {
+	Credentials  map[string]string
+	AuthURL      string
+	UseCallback  bool
+	CallbackPort int
+}
+
+// buildOAuth2Setup collects client ID/secret, scopes, generates PKCE, and
+// builds the authorization URL — everything the browser step needs, before
+// this wizard starts (or skips) the local callback server.
+func buildOAuth2Setup() (oauth2Setup, error) {
+	fmt.Println()
+	fmt.Println("══════════════════════════════════════════════════════════════════════")
+	fmt.Println("{{ display_name }} OAuth2 Setup")
+	fmt.Println("You need an OAuth2 app registered with this API provider.")
+	fmt.Println("══════════════════════════════════════════════════════════════════════")
+
+	credentials := map[string]string{}
+
+	// Client ID and secret aren't per-user secrets — RFC 8252 classifies
+	// CLI/native apps as OAuth "public clients": client_id is a bare
+	// identifier, and even a client_secret (when one exists — PKCE is the
+	// actual protection for this class of client) "should not be treated
+	// as confidential". So, unlike the actual tokens this wizard goes on
+	// to collect, it's fine to default these from env vars — the same
+	// convenience pattern gcloud/aws-style CLIs use for app-level config,
+	// letting an operator re-run setup without retyping their app's
+	// identity every time.
+	envClientID := os.Getenv("{{ tool_prefix_env }}_CLIENT_ID")
+	envClientSecret := os.Getenv("{{ tool_prefix_env }}_CLIENT_SECRET")
+
+	clientIDPrompt := &survey.Input{Message: "OAuth2 client ID:"}
+	if envClientID != "" {
+		clientIDPrompt.Default = envClientID
+	}
+	var clientID string
+	if err := survey.AskOne(clientIDPrompt, &clientID); err != nil {
+		return oauth2Setup{}, err
+	}
+	credentials["client_id"] = clientID
+
+	var clientSecret string
+	if envClientSecret != "" {
+		fmt.Println("Client Secret: using {{ tool_prefix_env }}_CLIENT_SECRET from the environment.")
+		clientSecret = envClientSecret
+	} else {
+		_ = survey.AskOne(&survey.Password{
+			Message: "OAuth2 client secret (leave blank to use PKCE-only — recommended, no secret required):",
+		}, &clientSecret)
+	}
+	usePKCE := clientSecret == ""
+	if !usePKCE {
+		credentials["client_secret"] = clientSecret
+	}
+
+	tokenURLPrompt := &survey.Input{Message: "OAuth2 token URL:"}
+	{%- if method.token_url %}
+	tokenURLPrompt.Default = "{{ method.token_url }}"
+	{%- endif %}
+	var tokenURL string
+	if err := survey.AskOne(tokenURLPrompt, &tokenURL); err != nil {
+		return oauth2Setup{}, err
+	}
+	credentials["token_url"] = tokenURL
+
+	authBasePrompt := &survey.Input{Message: "OAuth2 authorization URL (where the browser goes to authorize):"}
+	{%- if method.authorization_url %}
+	authBasePrompt.Default = "{{ method.authorization_url }}"
+	{%- endif %}
+	var authBase string
+	if err := survey.AskOne(authBasePrompt, &authBase); err != nil {
+		return oauth2Setup{}, err
+	}
+
+	scopePrompt := &survey.Input{Message: "OAuth2 scopes (space-separated — accept the default for full access):"}
+	{%- if method.scopes %}
+	scopePrompt.Default = "{{ method.scopes }}"
+	{%- endif %}
+	var scope string
+	if err := survey.AskOne(scopePrompt, &scope); err != nil {
+		return oauth2Setup{}, err
+	}
+
+	// Redirect URI — MUST be registered with the OAuth2 app.
+	callbackPort := 8888
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", callbackPort)
+	credentials["redirect_uri"] = redirectURI
+
+	// PKCE: generate code_verifier/code_challenge when not using a secret.
+	var codeChallenge string
+	if usePKCE {
+		verifier, challenge, err := auth.NewPKCEPair()
+		if err != nil {
+			return oauth2Setup{}, err
+		}
+		credentials["code_verifier"] = verifier
+		codeChallenge = challenge
+	}
+
+	// Build the authorization URL. The user opens this in their browser to
+	// grant permission; the provider then redirects to
+	// redirect_uri?code=<authorization_code>.
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURI)
+	params.Set("scope", scope)
+	if codeChallenge != "" {
+		params.Set("code_challenge_method", "S256")
+		params.Set("code_challenge", codeChallenge)
+	}
+	authURL := authBase + "?" + params.Encode()
+
+	useCallback := true
+	_ = survey.AskOne(&survey.Confirm{
+		Message: fmt.Sprintf(
+			"Start a local callback server on %s to capture the\nauthorization code automatically after you authorize in the browser?",
+			redirectURI,
+		),
+		Default: true,
+	}, &useCallback)
+
+	return oauth2Setup{
+		Credentials:  credentials,
+		AuthURL:      authURL,
+		UseCallback:  useCallback,
+		CallbackPort: callbackPort,
+	}, nil
+}
+
+// waitForOAuthCallback starts a temporary local HTTP server that receives
+// the OAuth2 redirect, extracts the `?code=` query parameter, then shuts
+// itself down.
+func waitForOAuthCallback(ctx context.Context, port int) (string, error) {
+	codeCh := make(chan string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(
+			"<!DOCTYPE html><html><body><h1>&#10003; Authorized!</h1>" +
+				"<p>Return to your terminal &mdash; setup continues automatically.</p></body></html>",
+		))
+		select {
+		case codeCh <- code:
+		default:
+		}
+	})
+	server := &http.Server{Addr: fmt.Sprintf("127.0.0.1:%d", port), Handler: mux}
+
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+
+	select {
+	case code := <-codeCh:
+		return code, nil
+	case <-time.After(300 * time.Second):
+		return "", fmt.Errorf("timed out waiting for the OAuth2 callback (5 minutes)")
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
+func promptCredentials(ctx context.Context, authMethod core.AuthMethod) (map[string]string, error) {
 	credentials := map[string]string{}
 {%- if "basic" in auth_method_keys %}
 	if authMethod == core.AuthMethodBasic {
@@ -254,24 +456,40 @@ func promptCredentials(authMethod core.AuthMethod) (map[string]string, error) {
 {%- endif %}
 {%- if "oauth2" in auth_method_keys %}
 	if authMethod == core.AuthMethodOAuth2 {
-		var clientID, clientSecret, tokenURL, authorizationCode string
-		if err := survey.AskOne(&survey.Input{Message: "OAuth2 client ID:"}, &clientID); err != nil {
+		setup, err := buildOAuth2Setup()
+		if err != nil {
 			return nil, err
 		}
-		_ = survey.AskOne(&survey.Password{Message: "OAuth2 client secret (leave blank if none):"}, &clientSecret)
-		if err := survey.AskOne(&survey.Input{Message: "OAuth2 token URL:"}, &tokenURL); err != nil {
-			return nil, err
-		}
-		_ = survey.AskOne(&survey.Input{Message: "Authorization code, if you already have one (leave blank to skip):"}, &authorizationCode)
 
-		credentials["client_id"] = clientID
-		if clientSecret != "" {
-			credentials["client_secret"] = clientSecret
+		bar := strings.Repeat("═", 72)
+		fmt.Printf("\n%s\n", bar)
+		fmt.Println("Open this URL in your browser to authorize:")
+		fmt.Println(setup.AuthURL)
+		fmt.Println(bar)
+		fmt.Printf(
+			"\nIMPORTANT: Before opening the URL, register this Redirect URI with your OAuth2 app:\n  http://127.0.0.1:%d/callback\n\n",
+			setup.CallbackPort,
+		)
+
+		var authorizationCode string
+		if setup.UseCallback {
+			fmt.Printf("Waiting for callback on http://127.0.0.1:%d/callback …\n", setup.CallbackPort)
+			authorizationCode, err = waitForOAuthCallback(ctx, setup.CallbackPort)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if err := survey.AskOne(&survey.Input{
+				Message: "Paste the authorization code from the redirect URL (?code=...):",
+			}, &authorizationCode); err != nil {
+				return nil, err
+			}
 		}
-		credentials["token_url"] = tokenURL
-		if authorizationCode != "" {
-			credentials["authorization_code"] = authorizationCode
+
+		for key, value := range setup.Credentials {
+			credentials[key] = value
 		}
+		credentials["authorization_code"] = authorizationCode
 	}
 {%- endif %}
 {%- if "oauth1" in auth_method_keys %}

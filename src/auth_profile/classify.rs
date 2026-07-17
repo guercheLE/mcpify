@@ -22,13 +22,70 @@ pub fn classify_schemes(doc: &OpenApiDocument) -> Vec<AuthSchemeDescriptor> {
         .iter()
         .filter_map(|(name, scheme)| {
             let scheme = scheme.as_object()?;
-            classify_one(scheme).map(|kind| AuthSchemeDescriptor {
-                name: name.clone(),
-                kind,
-                location: location_for(scheme, kind),
+            classify_one(scheme).map(|kind| {
+                let oauth2 = OAuth2FlowDetails::extract(scheme, kind);
+                AuthSchemeDescriptor {
+                    name: name.clone(),
+                    kind,
+                    location: location_for(scheme, kind),
+                    scopes: oauth2.scopes,
+                    authorization_url: oauth2.authorization_url,
+                    token_url: oauth2.token_url,
+                }
             })
         })
         .collect()
+}
+
+#[derive(Default)]
+struct OAuth2FlowDetails {
+    scopes: Vec<String>,
+    authorization_url: Option<String>,
+    token_url: Option<String>,
+}
+
+impl OAuth2FlowDetails {
+    /// Reads scopes/`authorizationUrl`/`tokenUrl` out of an `oauth2`
+    /// scheme's `flows` object — preferring `authorizationCode` (the only
+    /// flow the setup wizard's PKCE prompt drives) but falling back to
+    /// whichever flow is actually present, since a spec is free to
+    /// declare only `clientCredentials`/`implicit`/`password`. All fields
+    /// default empty/`None` for non-OAuth2 schemes, or an OAuth2 scheme
+    /// with no `flows` at all.
+    fn extract(scheme: &Map<String, Value>, kind: AuthSchemeKind) -> Self {
+        if kind != AuthSchemeKind::OAuth2 {
+            return Self::default();
+        }
+        let Some(flows) = scheme.get("flows").and_then(Value::as_object) else {
+            return Self::default();
+        };
+        let Some(flow) = flows
+            .get("authorizationCode")
+            .or_else(|| flows.values().next())
+            .and_then(Value::as_object)
+        else {
+            return Self::default();
+        };
+
+        let mut scopes: Vec<String> = flow
+            .get("scopes")
+            .and_then(Value::as_object)
+            .map(|scopes| scopes.keys().cloned().collect())
+            .unwrap_or_default();
+        scopes.sort();
+
+        Self {
+            scopes,
+            authorization_url: flow
+                .get("authorizationUrl")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            token_url: flow
+                .get("tokenUrl")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        }
+    }
 }
 
 /// Where this scheme's credential value travels on the wire. `apiKey`
@@ -198,6 +255,53 @@ components:
                 name: "Authorization".to_string()
             })
         );
+    }
+
+    #[test]
+    fn oauth2_scopes_are_extracted_from_the_authorization_code_flow() {
+        let doc = doc_with_scheme(
+            "      type: oauth2\n      flows:\n        authorizationCode:\n          authorizationUrl: https://example.com/authorize\n          tokenUrl: https://example.com/token\n          scopes:\n            user-read-email: Read email\n            playlist-modify-public: Modify public playlists\n",
+        );
+        let schemes = classify_schemes(&doc);
+        assert_eq!(
+            schemes[0].scopes,
+            vec!["playlist-modify-public".to_string(), "user-read-email".to_string()],
+            "scopes must come back sorted regardless of declaration order"
+        );
+    }
+
+    #[test]
+    fn oauth2_scopes_prefer_authorization_code_over_other_declared_flows() {
+        let doc = doc_with_scheme(
+            "      type: oauth2\n      flows:\n        clientCredentials:\n          tokenUrl: https://example.com/token\n          scopes:\n            service-scope: Service-to-service\n        authorizationCode:\n          authorizationUrl: https://example.com/authorize\n          tokenUrl: https://example.com/token\n          scopes:\n            user-scope: User-facing\n",
+        );
+        let schemes = classify_schemes(&doc);
+        assert_eq!(schemes[0].scopes, vec!["user-scope".to_string()]);
+    }
+
+    #[test]
+    fn oauth2_scopes_fall_back_to_whichever_flow_is_present_when_no_authorization_code_flow_exists() {
+        let doc = doc_with_scheme(
+            "      type: oauth2\n      flows:\n        clientCredentials:\n          tokenUrl: https://example.com/token\n          scopes:\n            service-scope: Service-to-service\n",
+        );
+        let schemes = classify_schemes(&doc);
+        assert_eq!(schemes[0].scopes, vec!["service-scope".to_string()]);
+    }
+
+    #[test]
+    fn oauth2_scopes_are_empty_when_the_flow_declares_none() {
+        let doc = doc_with_scheme(
+            "      type: oauth2\n      flows:\n        clientCredentials:\n          tokenUrl: https://example.com/token\n          scopes: {}\n",
+        );
+        let schemes = classify_schemes(&doc);
+        assert!(schemes[0].scopes.is_empty());
+    }
+
+    #[test]
+    fn non_oauth2_schemes_always_have_empty_scopes() {
+        let doc = doc_with_scheme("      type: http\n      scheme: basic\n");
+        let schemes = classify_schemes(&doc);
+        assert!(schemes[0].scopes.is_empty());
     }
 
     #[test]

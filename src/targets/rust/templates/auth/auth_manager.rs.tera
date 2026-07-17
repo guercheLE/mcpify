@@ -25,7 +25,9 @@ use super::strategies::pat::PatAuthStrategy;
 use super::strategies::stub::StubAuthStrategy;
 
 const CREDENTIAL_ACCOUNT: &str = "active-credentials";
+{%- if "pat" in auth_method_keys or "apiKey" in auth_method_keys or "basic" in auth_method_keys %}
 const ENV_PREFIX: &str = "{{ tool_prefix_env }}";
+{%- endif %}
 
 /// Builds an `AuthConfig` straight from the `<PREFIX>_TOKEN`/`_API_KEY`/
 /// `_USERNAME`/`_PASSWORD` env vars documented in `.env.example`, if the
@@ -35,6 +37,7 @@ const ENV_PREFIX: &str = "{{ tool_prefix_env }}";
 /// authenticate. Returns `None` when the required var(s) for this
 /// deployment's `auth_method` aren't present, so callers fall back to the
 /// stored-credential lookup unchanged.
+{%- if "pat" in auth_method_keys or "apiKey" in auth_method_keys or "basic" in auth_method_keys %}
 fn credentials_from_env(auth_method: AuthMethod) -> Option<AuthConfig> {
     let mut config = AuthConfig::new();
     match auth_method {
@@ -67,6 +70,19 @@ fn credentials_from_env(auth_method: AuthMethod) -> Option<AuthConfig> {
     }
     Some(config)
 }
+{%- else %}
+// None of this deployment's discovered auth methods (oauth2/oauth1) read
+// credentials from env vars this way — oauth2 has its own env-var
+// override for client_id/client_secret only (see AuthManager's
+// `client_identity_override`), and oauth1's signing key is deliberately
+// never sourced from an env var at all (see `prompt_credentials`'s OAuth1
+// arm). A real function body here (rather than inlining `None` at the one
+// call site) keeps `credentials()` identical across every scheme
+// combination this generator can produce.
+fn credentials_from_env(_auth_method: AuthMethod) -> Option<AuthConfig> {
+    None
+}
+{%- endif %}
 
 fn strategy_for(auth_method: AuthMethod) -> Box<dyn AuthStrategy> {
     match auth_method {

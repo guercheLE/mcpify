@@ -36,5 +36,10 @@ pub fn prompt_for_scheme() -> Result<AuthSchemeDescriptor> {
         name: "prompted".to_string(),
         kind,
         location: default_location_for(kind),
+        // No spec was found to read `flows.*.scopes` from at all — that's
+        // the whole reason this fallback prompt exists.
+        scopes: Vec::new(),
+        authorization_url: None,
+        token_url: None,
     })
 }

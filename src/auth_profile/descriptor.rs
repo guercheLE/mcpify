@@ -63,6 +63,24 @@ pub struct AuthSchemeDescriptor {
     pub name: String,
     pub kind: AuthSchemeKind,
     pub location: Option<AuthSchemeLocation>,
+    /// The scope identifiers declared under this scheme's OAuth2 `flows`
+    /// (any flow — `authorizationCode` preferred when more than one is
+    /// present, since that's the only flow the setup wizard's PKCE prompt
+    /// actually drives), sorted for a deterministic default prompt value.
+    /// Always empty for non-`OAuth2` kinds.
+    pub scopes: Vec<String>,
+    /// The declared `authorizationUrl` for this scheme's `authorizationCode`
+    /// flow (or whichever flow is present, if not) — pre-fills the setup
+    /// wizard's authorization-URL prompt so the operator doesn't have to
+    /// look it up manually. `None` for non-OAuth2 kinds or a flow that
+    /// doesn't declare one (`clientCredentials`/`password` have no
+    /// browser-facing authorization step at all).
+    pub authorization_url: Option<String>,
+    /// The declared `tokenUrl` for the same flow `scopes`/`authorization_url`
+    /// were read from. `None` for non-OAuth2 kinds or a flow with no
+    /// `tokenUrl` (rare, but the OpenAPI schema doesn't require one on
+    /// `implicit`).
+    pub token_url: Option<String>,
 }
 
 /// The location a scheme uses when the spec doesn't say (or wasn't

@@ -138,11 +138,17 @@ mod tests {
             dir.path().to_path_buf(),
             vec![
                 AuthSchemeDescriptor {
+                    scopes: Vec::new(),
+                    authorization_url: None,
+                    token_url: None,
                     name: "basicAuth".to_string(),
                     kind: AuthSchemeKind::Basic,
                     location: None,
                 },
                 AuthSchemeDescriptor {
+                    scopes: Vec::new(),
+                    authorization_url: None,
+                    token_url: None,
                     name: "oauth2".to_string(),
                     kind: AuthSchemeKind::OAuth2,
                     location: None,
@@ -169,21 +175,33 @@ mod tests {
             dir.path().to_path_buf(),
             vec![
                 AuthSchemeDescriptor {
+                    scopes: Vec::new(),
+                    authorization_url: None,
+                    token_url: None,
                     name: "basicAuth".to_string(),
                     kind: AuthSchemeKind::Basic,
                     location: None,
                 },
                 AuthSchemeDescriptor {
+                    scopes: Vec::new(),
+                    authorization_url: None,
+                    token_url: None,
                     name: "pat".to_string(),
                     kind: AuthSchemeKind::BearerPat,
                     location: None,
                 },
                 AuthSchemeDescriptor {
+                    scopes: Vec::new(),
+                    authorization_url: None,
+                    token_url: None,
                     name: "oauth1".to_string(),
                     kind: AuthSchemeKind::OAuth1,
                     location: None,
                 },
                 AuthSchemeDescriptor {
+                    scopes: Vec::new(),
+                    authorization_url: None,
+                    token_url: None,
                     name: "oauth2".to_string(),
                     kind: AuthSchemeKind::OAuth2,
                     location: None,

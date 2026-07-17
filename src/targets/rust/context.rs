@@ -20,6 +20,17 @@ pub struct RsAuthSchemeView {
     pub method_key: &'static str,
     pub header_location: &'static str,
     pub header_name: String,
+    /// Space-joined OAuth2 scope identifiers declared under this scheme's
+    /// `flows` in the spec — empty for non-OAuth2 schemes, or an OAuth2
+    /// scheme that declares none. Feeds the setup wizard's scope prompt
+    /// default (REQ: "a full set is pre-selected; accept with Enter or
+    /// trim as needed" — see spotify-mcp-rs's proven UX).
+    pub scopes: String,
+    /// The declared `authorizationUrl`/`tokenUrl` for this scheme's OAuth2
+    /// flow — `None` for non-OAuth2 schemes or a flow that doesn't declare
+    /// one. Pre-fills the setup wizard's URL prompts.
+    pub authorization_url: Option<String>,
+    pub token_url: Option<String>,
 }
 
 /// One entry in the deduplicated `AuthMethod` enum the config-schema
@@ -37,6 +48,15 @@ pub struct RsAuthMethodView {
     pub variant_name: &'static str,
     pub header_location: &'static str,
     pub header_name: String,
+    /// Union of every same-`key` scheme's declared scopes (see
+    /// `RsAuthSchemeView::scopes`), deduplicated and space-joined —
+    /// empty for anything but `oauth2`.
+    pub scopes: String,
+    /// The first same-`key` scheme's declared `authorizationUrl`/`tokenUrl`
+    /// — `None` for anything but `oauth2`, or an `oauth2` scheme with no
+    /// declared flow URLs.
+    pub authorization_url: Option<String>,
+    pub token_url: Option<String>,
 }
 
 /// One operation, in the shape templates need to render tool/schema files.
@@ -133,6 +153,9 @@ impl RsTemplateContext {
                     method_key: auth_method_key(scheme.kind),
                     header_location,
                     header_name,
+                    scopes: scheme.scopes.join(" "),
+                    authorization_url: scheme.authorization_url.clone(),
+                    token_url: scheme.token_url.clone(),
                 }
             })
             .collect();
@@ -164,11 +187,21 @@ impl RsTemplateContext {
                     .iter()
                     .find(|scheme| scheme.method_key == key)
                     .expect("every auth_method_keys entry comes from an auth_schemes entry");
+                let mut scopes: Vec<&str> = auth_schemes
+                    .iter()
+                    .filter(|scheme| scheme.method_key == key)
+                    .flat_map(|scheme| scheme.scopes.split_whitespace())
+                    .collect();
+                scopes.sort_unstable();
+                scopes.dedup();
                 RsAuthMethodView {
                     key,
                     variant_name: auth_method_variant_name(key),
                     header_location: first_of_kind.header_location,
                     header_name: first_of_kind.header_name.clone(),
+                    scopes: scopes.join(" "),
+                    authorization_url: first_of_kind.authorization_url.clone(),
+                    token_url: first_of_kind.token_url.clone(),
                 }
             })
             .collect();
@@ -251,6 +284,9 @@ mod tests {
             force: false,
             output_dir_preexisted: false,
             auth_schemes: vec![AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "basicAuth".to_string(),
                 kind: AuthSchemeKind::Basic,
                 location: default_location_for(AuthSchemeKind::Basic),
@@ -314,6 +350,9 @@ mod tests {
         let mut ctx = sample_context();
         ctx.auth_schemes = vec![
             AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "queryKey".to_string(),
                 kind: AuthSchemeKind::ApiKey,
                 location: Some(AuthSchemeLocation::Query {
@@ -321,6 +360,9 @@ mod tests {
                 }),
             },
             AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "cookieKey".to_string(),
                 kind: AuthSchemeKind::ApiKey,
                 location: Some(AuthSchemeLocation::Cookie {
@@ -339,6 +381,9 @@ mod tests {
     fn oauth1_scheme_has_no_relayable_location() {
         let mut ctx = sample_context();
         ctx.auth_schemes = vec![AuthSchemeDescriptor {
+            scopes: Vec::new(),
+            authorization_url: None,
+            token_url: None,
             name: "oauth1".to_string(),
             kind: AuthSchemeKind::OAuth1,
             location: default_location_for(AuthSchemeKind::OAuth1),
@@ -360,16 +405,25 @@ mod tests {
         let mut ctx = sample_context();
         ctx.auth_schemes = vec![
             AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "oauth2Primary".to_string(),
                 kind: AuthSchemeKind::OAuth2,
                 location: None,
             },
             AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "basicAuth".to_string(),
                 kind: AuthSchemeKind::Basic,
                 location: None,
             },
             AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "oauth2Secondary".to_string(),
                 kind: AuthSchemeKind::OAuth2,
                 location: None,
@@ -383,6 +437,9 @@ mod tests {
     fn derives_pascal_case_variant_names_for_auth_methods() {
         let mut ctx = sample_context();
         ctx.auth_schemes = vec![AuthSchemeDescriptor {
+            scopes: Vec::new(),
+            authorization_url: None,
+            token_url: None,
             name: "apiKeyAuth".to_string(),
             kind: AuthSchemeKind::ApiKey,
             location: None,

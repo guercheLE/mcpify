@@ -11,15 +11,27 @@ same tiers and format `core.config.load_config` actually reads back — see
 
 from __future__ import annotations
 
+{%- if "oauth2" in auth_method_keys %}
+import asyncio
+{%- endif %}
 import json
+{%- if "oauth2" in auth_method_keys %}
+import os
+{%- endif %}
 from pathlib import Path
 from typing import Any
+{%- if "oauth2" in auth_method_keys %}
+from urllib.parse import parse_qs, urlencode, urlsplit
+{%- endif %}
 
 import httpx
 import questionary
 import yaml
 
 from ..auth.auth_manager import header_location_for
+{%- if "oauth2" in auth_method_keys %}
+from ..auth.strategies.oauth2 import create_pkce_pair
+{%- endif %}
 from ..core.config import CONFIG_DIR_NAME, LOCAL_CONFIG_FILE, AuthMethod, Transport
 from ..core.config import _home_dir as _config_home_dir
 from ..core.credential_storage import save_credential
@@ -82,6 +94,148 @@ async def _prompt_api_version() -> str:
 # mcpify:versions:end
 
 
+{%- if "oauth2" in auth_method_keys %}
+{%- for method in auth_methods %}
+{%- if method.key == "oauth2" %}
+async def _build_oauth2_setup() -> tuple[dict[str, str], str, bool, int]:
+    """Collects client ID/secret, scopes, generates PKCE, and builds the
+    authorization URL — everything the browser step needs, before this
+    wizard starts (or skips) the local callback server. Returns
+    ``(credentials, auth_url, use_callback, callback_port)``.
+    """
+    print(
+        "\n"
+        "══════════════════════════════════════════════════════════════════════\n"
+        "{{ display_name }} OAuth2 Setup\n"
+        "You need an OAuth2 app registered with this API provider.\n"
+        "══════════════════════════════════════════════════════════════════════"
+    )
+
+    credentials: dict[str, str] = {}
+
+    # Client ID and secret aren't per-user secrets — RFC 8252 classifies
+    # CLI/native apps as OAuth "public clients": client_id is a bare
+    # identifier, and even a client_secret (when one exists — PKCE is the
+    # actual protection for this class of client) "should not be treated
+    # as confidential". So, unlike the actual tokens this wizard goes on
+    # to collect, it's fine to default these from env vars — the same
+    # convenience pattern gcloud/aws-style CLIs use for app-level config,
+    # letting an operator re-run setup without retyping their app's
+    # identity every time.
+    env_client_id = os.environ.get("{{ tool_prefix_env }}_CLIENT_ID")
+    env_client_secret = os.environ.get("{{ tool_prefix_env }}_CLIENT_SECRET")
+
+    client_id = await questionary.text("OAuth2 client ID:", default=env_client_id or "").ask_async()
+    credentials["client_id"] = client_id
+
+    if env_client_secret:
+        print("Client Secret: using {{ tool_prefix_env }}_CLIENT_SECRET from the environment.")
+        client_secret = env_client_secret
+    else:
+        client_secret = await questionary.password(
+            "OAuth2 client secret (leave blank to use PKCE-only — recommended, no secret required):"
+        ).ask_async()
+    use_pkce = not client_secret
+    if not use_pkce:
+        credentials["client_secret"] = client_secret
+
+    token_url = await questionary.text(
+        "OAuth2 token URL:"{% if method.token_url %}, default="{{ method.token_url }}"{% endif %}
+    ).ask_async()
+    credentials["token_url"] = token_url
+
+    auth_base = await questionary.text(
+        "OAuth2 authorization URL (where the browser goes to authorize):"{% if method.authorization_url %}, default="{{ method.authorization_url }}"{% endif %}
+    ).ask_async()
+
+    scope = await questionary.text(
+        "OAuth2 scopes (space-separated — accept the default for full access):"{% if method.scopes %}, default="{{ method.scopes }}"{% endif %}
+    ).ask_async()
+
+    # Redirect URI — MUST be registered with the OAuth2 app.
+    callback_port = 8888
+    redirect_uri = f"http://127.0.0.1:{callback_port}/callback"
+    credentials["redirect_uri"] = redirect_uri
+
+    # PKCE: generate code_verifier/code_challenge when not using a secret.
+    code_challenge: str | None = None
+    if use_pkce:
+        verifier, code_challenge = create_pkce_pair()
+        credentials["code_verifier"] = verifier
+
+    # Build the authorization URL. The user opens this in their browser to
+    # grant permission; the provider then redirects to
+    # redirect_uri?code=<authorization_code>.
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+    }
+    if code_challenge:
+        params["code_challenge_method"] = "S256"
+        params["code_challenge"] = code_challenge
+    auth_url = f"{auth_base}?{urlencode(params)}"
+
+    use_callback = await questionary.confirm(
+        f"Start a local callback server on {redirect_uri} to capture the\n"
+        "authorization code automatically after you authorize in the browser?",
+        default=True,
+    ).ask_async()
+
+    return credentials, auth_url, use_callback, callback_port
+
+
+async def _wait_for_oauth_callback(port: int) -> str:
+    """Temporary local HTTP server that receives the OAuth2 redirect and
+    extracts the `?code=` query parameter, then shuts itself down. A
+    hand-rolled `asyncio.start_server` rather than the FastAPI/uvicorn
+    stack the `http` transport uses — that stack owns the process's
+    signal handling, which doesn't compose well with a server meant to
+    live for one request in the middle of an interactive wizard.
+    """
+    code_future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request_line = await reader.readline()
+        while True:
+            line = await reader.readline()
+            if not line or line in (b"\r\n", b"\n"):
+                break
+        try:
+            _, path, _ = request_line.decode("latin-1").split(" ", 2)
+        except ValueError:
+            path = "/"
+        query = parse_qs(urlsplit(path).query)
+        code = query.get("code", [""])[0]
+        body = (
+            b"<!DOCTYPE html><html><body><h1>&#10003; Authorized!</h1>"
+            b"<p>Return to your terminal &mdash; setup continues automatically.</p>"
+            b"</body></html>"
+        )
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/html\r\n"
+            b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+            b"Connection: close\r\n\r\n" + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+        if not code_future.done():
+            code_future.set_result(code)
+
+    server = await asyncio.start_server(handle, "127.0.0.1", port)
+    async with server:
+        try:
+            return await asyncio.wait_for(code_future, timeout=300)
+        except TimeoutError as err:
+            raise RuntimeError("timed out waiting for the OAuth2 callback (5 minutes)") from err
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
+
 async def _prompt_credentials(auth_method: AuthMethod) -> dict[str, str]:
     credentials: dict[str, str] = {}
 {%- if "basic" in auth_method_keys %}
@@ -99,18 +253,28 @@ async def _prompt_credentials(auth_method: AuthMethod) -> dict[str, str]:
 {%- endif %}
 {%- if "oauth2" in auth_method_keys %}
     if auth_method is AuthMethod.OAUTH2:
-        credentials["client_id"] = await questionary.text("OAuth2 client ID:").ask_async()
-        client_secret = await questionary.password(
-            "OAuth2 client secret (leave blank if none):"
-        ).ask_async()
-        if client_secret:
-            credentials["client_secret"] = client_secret
-        credentials["token_url"] = await questionary.text("OAuth2 token URL:").ask_async()
-        authorization_code = await questionary.text(
-            "Authorization code, if you already have one (leave blank to skip):"
-        ).ask_async()
-        if authorization_code:
-            credentials["authorization_code"] = authorization_code
+        oauth2_credentials, auth_url, use_callback, callback_port = await _build_oauth2_setup()
+
+        bar = "═" * 72
+        print(f"\n{bar}")
+        print("Open this URL in your browser to authorize:")
+        print(auth_url)
+        print(bar)
+        print(
+            "\nIMPORTANT: Before opening the URL, register this Redirect URI with your "
+            f"OAuth2 app:\n  http://127.0.0.1:{callback_port}/callback\n"
+        )
+
+        if use_callback:
+            print(f"Waiting for callback on http://127.0.0.1:{callback_port}/callback …")
+            authorization_code = await _wait_for_oauth_callback(callback_port)
+        else:
+            authorization_code = await questionary.text(
+                "Paste the authorization code from the redirect URL (?code=...):"
+            ).ask_async()
+
+        credentials.update(oauth2_credentials)
+        credentials["authorization_code"] = authorization_code
 {%- endif %}
 {%- if "oauth1" in auth_method_keys %}
     if auth_method is AuthMethod.OAUTH1:
@@ -233,6 +397,22 @@ async def run_setup_wizard() -> None:
         "{{ tool_prefix_env }}_TRANSPORT": transport.value,
     }
     for key, value in credentials.items():
+        {%- if "oauth2" in auth_method_keys %}
+        if auth_method is AuthMethod.OAUTH2 and key in (
+            "authorization_code",
+            "code_verifier",
+            "redirect_uri",
+            "token_url",
+        ):
+            # Single-use (authorization_code, code_verifier — an
+            # authorization code is spent in minutes and a PKCE verifier
+            # is useless without it) or provider-fixed (redirect_uri,
+            # token_url — already baked into the keychain blob
+            # save_credential wrote above) fields. Persisting these to
+            # .env/config.yml/CLI args would either leak a spent code or
+            # go stale the moment the provider rotates an endpoint.
+            continue
+        {%- endif %}
         env[f"{{ tool_prefix_env }}_{_to_env_key(key)}"] = value
 
     # Non-secret settings only, keyed by the `Config` model's own field

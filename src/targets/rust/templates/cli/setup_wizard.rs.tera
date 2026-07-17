@@ -13,6 +13,9 @@ use std::time::Duration;
 
 use {{ crate_name }}::core::config_schema::{AuthMethod, Transport};
 use {{ crate_name }}::core::credential_storage::save_credential;
+{%- if "oauth2" in auth_method_keys %}
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+{%- endif %}
 
 fn to_env_key(key: &str) -> String {
     key.to_uppercase()
@@ -97,12 +100,204 @@ async fn prompt_transport() -> anyhow::Result<Transport> {
     })
 }
 
+{%- if "oauth2" in auth_method_keys %}
+{%- for method in auth_methods %}
+{%- if method.key == "oauth2" %}
+
+/// Returned from the blocking prompt phase so the async caller can start
+/// the callback server only after all user prompts have finished.
+struct OAuth2Setup {
+    credentials: HashMap<String, String>,
+    auth_url: String,
+    use_callback: bool,
+    callback_port: u16,
+}
+
+/// Blocking phase: collects client_id/secret, scopes, generates PKCE,
+/// builds the authorization URL, and asks whether to use the local
+/// callback server or paste the code manually. Must be called via
+/// `spawn_blocking` — drives blocking `inquire` prompts.
+fn build_oauth2_setup_blocking() -> anyhow::Result<OAuth2Setup> {
+    println!(
+        "\n\
+         ══════════════════════════════════════════════════════════════════════\n\
+         {{ display_name }} OAuth2 Setup\n\
+         You need an OAuth2 app registered with this API provider.\n\
+         ══════════════════════════════════════════════════════════════════════"
+    );
+
+    let mut credentials = HashMap::new();
+
+    // Client ID and secret aren't per-user secrets — RFC 8252 classifies
+    // CLI/native apps as OAuth "public clients": client_id is a bare
+    // identifier, and even a client_secret (when one exists — PKCE is the
+    // actual protection for this class of client) "should not be treated
+    // as confidential". So, unlike the actual tokens this wizard goes on
+    // to collect, it's fine to default these from env vars — the same
+    // convenience pattern `gcloud`/`aws`-style CLIs use for app-level
+    // config, letting an operator re-run setup without retyping their
+    // app's identity every time.
+    let env_client_id = std::env::var("{{ tool_prefix_env }}_CLIENT_ID").ok();
+    let env_client_secret = std::env::var("{{ tool_prefix_env }}_CLIENT_SECRET").ok();
+
+    let mut client_id_prompt = inquire::Text::new("OAuth2 client ID:");
+    if let Some(default_id) = &env_client_id {
+        client_id_prompt = client_id_prompt.with_default(default_id);
+    }
+    credentials.insert("client_id".to_string(), client_id_prompt.prompt()?);
+
+    // Client Secret — leave blank to use the PKCE-only flow (recommended).
+    // `inquire::Password` has no `with_default` (sensibly — a visible
+    // default would defeat the point of a masked prompt), so if
+    // {{ tool_prefix_env }}_CLIENT_SECRET is already set, use it directly
+    // and skip the prompt instead of faking a default.
+    let client_secret = match &env_client_secret {
+        Some(secret) => {
+            println!(
+                "Client Secret: using {{ tool_prefix_env }}_CLIENT_SECRET from the environment."
+            );
+            secret.clone()
+        }
+        None => inquire::Password::new(
+            "OAuth2 client secret (leave blank to use PKCE-only — recommended, no secret required):",
+        )
+        .without_confirmation()
+        .prompt()?,
+    };
+    let use_pkce = client_secret.is_empty();
+    if !use_pkce {
+        credentials.insert("client_secret".to_string(), client_secret);
+    }
+
+    let token_url = inquire::Text::new("OAuth2 token URL:")
+        {%- if method.token_url %}
+        .with_default("{{ method.token_url }}")
+        {%- endif %}
+        .prompt()?;
+    credentials.insert("token_url".to_string(), token_url);
+
+    let auth_base = inquire::Text::new("OAuth2 authorization URL (where the browser goes to authorize):")
+        {%- if method.authorization_url %}
+        .with_default("{{ method.authorization_url }}")
+        {%- endif %}
+        .prompt()?;
+    credentials.insert("auth_url".to_string(), auth_base.clone());
+
+    let scope = inquire::Text::new(
+        "OAuth2 scopes (space-separated — accept the default for full access):",
+    )
+    {%- if method.scopes %}
+    .with_default("{{ method.scopes }}")
+    {%- endif %}
+    .prompt()?;
+
+    // Redirect URI — MUST be registered with the OAuth2 app.
+    let callback_port: u16 = 8888;
+    let redirect_uri = format!("http://127.0.0.1:{callback_port}/callback");
+    credentials.insert("redirect_uri".to_string(), redirect_uri.clone());
+
+    // PKCE: generate code_verifier/code_challenge when not using a secret.
+    let code_challenge_opt = if use_pkce {
+        let (verifier, challenge) =
+            {{ crate_name }}::auth::strategies::oauth2::create_pkce_pair();
+        credentials.insert("code_verifier".to_string(), verifier);
+        Some(challenge)
+    } else {
+        None
+    };
+
+    // Build the authorization URL. The user opens this in their browser to
+    // grant permission; the provider then redirects to
+    // redirect_uri?code=<authorization_code>.
+    let client_id = credentials.get("client_id").unwrap().clone();
+    let mut auth_url = format!(
+        "{}?response_type=code\
+         &client_id={}\
+         &redirect_uri={}\
+         &scope={}",
+        auth_base,
+        utf8_percent_encode(&client_id, NON_ALPHANUMERIC),
+        utf8_percent_encode(&redirect_uri, NON_ALPHANUMERIC),
+        utf8_percent_encode(&scope, NON_ALPHANUMERIC),
+    );
+    if let Some(challenge) = &code_challenge_opt {
+        auth_url.push_str(&format!(
+            "&code_challenge_method=S256&code_challenge={}",
+            utf8_percent_encode(challenge, NON_ALPHANUMERIC),
+        ));
+    }
+
+    let use_callback = inquire::Confirm::new(&format!(
+        "Start a local callback server on {redirect_uri} to capture the\n\
+         authorization code automatically after you authorize in the browser?",
+    ))
+    .with_default(true)
+    .prompt()?;
+
+    Ok(OAuth2Setup {
+        credentials,
+        auth_url,
+        use_callback,
+        callback_port,
+    })
+}
+
+/// Temporary local HTTP server that receives the OAuth2 redirect and
+/// extracts the `?code=` query parameter, then shuts itself down.
+async fn wait_for_oauth_callback(port: u16) -> anyhow::Result<String> {
+    use axum::{Router, extract::Query, routing::get};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::oneshot;
+
+    let (tx, rx) = oneshot::channel::<String>();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+    let tx_clone = tx.clone();
+
+    let app = Router::new().route(
+        "/callback",
+        get(move |Query(params): Query<HashMap<String, String>>| {
+            let tx = tx_clone.clone();
+            async move {
+                let code = params.get("code").cloned().unwrap_or_default();
+                if let Ok(mut guard) = tx.lock()
+                    && let Some(sender) = guard.take()
+                {
+                    let _ = sender.send(code);
+                }
+                axum::response::Html(
+                    "<!DOCTYPE html><html><body>\
+                     <h1>&#10003; Authorized!</h1>\
+                     <p>Return to your terminal &mdash; setup continues automatically.</p>\
+                     </body></html>",
+                )
+            }
+        }),
+    );
+
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse()?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let code = tokio::time::timeout(Duration::from_secs(300), rx)
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out waiting for the OAuth2 callback (5 minutes)"))?
+        .map_err(|_| anyhow::anyhow!("OAuth2 callback channel closed unexpectedly"))?;
+
+    server.abort();
+    Ok(code)
+}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
 async fn prompt_credentials(auth_method: AuthMethod) -> anyhow::Result<HashMap<String, String>> {
-    tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
-        let mut credentials = HashMap::new();
-        match auth_method {
-            {%- if "basic" in auth_method_keys %}
-            AuthMethod::Basic => {
+    match auth_method {
+        {%- if "basic" in auth_method_keys %}
+        AuthMethod::Basic => {
+            tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
+                let mut credentials = HashMap::new();
                 credentials.insert(
                     "username".to_string(),
                     inquire::Text::new("Username:").prompt()?,
@@ -113,56 +308,81 @@ async fn prompt_credentials(auth_method: AuthMethod) -> anyhow::Result<HashMap<S
                         .without_confirmation()
                         .prompt()?,
                 );
-            }
-            {%- endif %}
-            {%- if "pat" in auth_method_keys %}
-            AuthMethod::Pat => {
+                Ok(credentials)
+            })
+            .await?
+        }
+        {%- endif %}
+        {%- if "pat" in auth_method_keys %}
+        AuthMethod::Pat => {
+            tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
+                let mut credentials = HashMap::new();
                 credentials.insert(
                     "token".to_string(),
                     inquire::Password::new("Personal access token:")
                         .without_confirmation()
                         .prompt()?,
                 );
-            }
-            {%- endif %}
-            {%- if "apiKey" in auth_method_keys %}
-            AuthMethod::ApiKey => {
+                Ok(credentials)
+            })
+            .await?
+        }
+        {%- endif %}
+        {%- if "apiKey" in auth_method_keys %}
+        AuthMethod::ApiKey => {
+            tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
+                let mut credentials = HashMap::new();
                 credentials.insert(
                     "api_key".to_string(),
                     inquire::Password::new("API key:")
                         .without_confirmation()
                         .prompt()?,
                 );
-            }
-            {%- endif %}
-            {%- if "oauth2" in auth_method_keys %}
-            AuthMethod::OAuth2 => {
-                credentials.insert(
-                    "client_id".to_string(),
-                    inquire::Text::new("OAuth2 client ID:").prompt()?,
+                Ok(credentials)
+            })
+            .await?
+        }
+        {%- endif %}
+        {%- if "oauth2" in auth_method_keys %}
+        AuthMethod::OAuth2 => {
+            let setup = tokio::task::spawn_blocking(build_oauth2_setup_blocking).await??;
+
+            let bar = "═".repeat(72);
+            println!("\n{bar}");
+            println!("Open this URL in your browser to authorize:");
+            println!("{}", setup.auth_url);
+            println!("{bar}");
+            println!(
+                "\nIMPORTANT: Before opening the URL, register this Redirect URI with your \
+                 OAuth2 app:\n  http://127.0.0.1:{}/callback\n",
+                setup.callback_port
+            );
+
+            let authorization_code = if setup.use_callback {
+                println!(
+                    "Waiting for callback on http://127.0.0.1:{}/callback …",
+                    setup.callback_port
                 );
-                let client_secret =
-                    inquire::Password::new("OAuth2 client secret (leave blank if none):")
-                        .without_confirmation()
-                        .prompt()?;
-                if !client_secret.is_empty() {
-                    credentials.insert("client_secret".to_string(), client_secret);
-                }
-                credentials.insert(
-                    "token_url".to_string(),
-                    inquire::Text::new("OAuth2 token URL:").prompt()?,
-                );
-                let authorization_code = inquire::Text::new(
-                    "Authorization code, if you already have one (leave blank to skip):",
-                )
-                .prompt()?;
-                if !authorization_code.is_empty() {
-                    credentials.insert("authorization_code".to_string(), authorization_code);
-                }
-            }
-            {%- endif %}
-            {%- if "oauth1" in auth_method_keys %}
-            AuthMethod::OAuth1 => {
+                wait_for_oauth_callback(setup.callback_port).await?
+            } else {
+                tokio::task::spawn_blocking(|| {
+                    inquire::Text::new(
+                        "Paste the authorization code from the redirect URL (?code=...):",
+                    )
+                    .prompt()
+                })
+                .await??
+            };
+
+            let mut credentials = setup.credentials;
+            credentials.insert("authorization_code".to_string(), authorization_code);
+            Ok(credentials)
+        }
+        {%- endif %}
+        {%- if "oauth1" in auth_method_keys %}
+        AuthMethod::OAuth1 => {
+            tokio::task::spawn_blocking(move || -> anyhow::Result<HashMap<String, String>> {
+                let mut credentials = HashMap::new();
                 credentials.insert(
                     "consumer_key".to_string(),
                     inquire::Text::new("OAuth1 consumer key:").prompt()?,
@@ -172,12 +392,12 @@ async fn prompt_credentials(auth_method: AuthMethod) -> anyhow::Result<HashMap<S
                 let private_key = std::fs::read_to_string(&private_key_path)
                     .map_err(|err| anyhow::anyhow!("failed to read '{private_key_path}': {err}"))?;
                 credentials.insert("private_key".to_string(), private_key);
-            }
-            {%- endif %}
+                Ok(credentials)
+            })
+            .await?
         }
-        Ok(credentials)
-    })
-    .await?
+        {%- endif %}
+    }
 }
 
 /// Persists the non-secret config fields (`url`/`auth_method`/`api_version`/
@@ -351,6 +571,23 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
             .to_string(),
     );
     for (key, value) in &credentials {
+        {%- if "oauth2" in auth_method_keys %}
+        if auth_method == AuthMethod::OAuth2
+            && matches!(
+                key.as_str(),
+                "authorization_code" | "code_verifier" | "redirect_uri" | "token_url" | "auth_url"
+            )
+        {
+            // Single-use (authorization_code, code_verifier — an
+            // authorization code is spent in minutes and a PKCE verifier
+            // is useless without it) or provider-fixed (redirect_uri,
+            // token_url, auth_url — already baked into the keychain blob
+            // `save_credential` wrote above) fields. Persisting these to
+            // `.env`/config.yml/CLI args would either leak a spent code or
+            // go stale the moment the provider rotates an endpoint.
+            continue;
+        }
+        {%- endif %}
         env.insert(format!("{{ tool_prefix_env }}_{}", to_env_key(key)), value.clone());
     }
 

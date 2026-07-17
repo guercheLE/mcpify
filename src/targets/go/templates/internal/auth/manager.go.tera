@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	{%- if "pat" in auth_method_keys or "apiKey" in auth_method_keys or "basic" in auth_method_keys %}
 	"os"
+	{%- endif %}
 	"sync"
 
 	"{{ module_path }}/internal/core"

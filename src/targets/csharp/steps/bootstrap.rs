@@ -190,6 +190,9 @@ mod tests {
         let ctx = ctx_with_schemes(
             dir.clone(),
             vec![AuthSchemeDescriptor {
+                scopes: Vec::new(),
+                authorization_url: None,
+                token_url: None,
                 name: "oauth2".to_string(),
                 kind: AuthSchemeKind::OAuth2,
                 location: None,

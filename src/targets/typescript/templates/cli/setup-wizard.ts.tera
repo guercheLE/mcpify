@@ -8,6 +8,9 @@
 // written to disk).
 
 import { mkdirSync, writeFileSync } from 'node:fs';
+{%- if "oauth2" in auth_method_keys %}
+import { createServer } from 'node:http';
+{%- endif %}
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +19,9 @@ import inquirer from 'inquirer';
 import yaml from 'js-yaml';
 
 import { headerLocationFor } from '../auth/auth-manager.js';
+{%- if "oauth2" in auth_method_keys %}
+import { createPkcePair } from '../auth/strategies/oauth2.js';
+{%- endif %}
 import type { ApiVersion, AuthMethod, Config } from '../core/config-schema.js';
 import { saveCredential } from '../core/credential-storage.js';
 
@@ -94,6 +100,170 @@ async function promptApiVersion(): Promise<ApiVersion> {
 }
 // mcpify:versions:end
 
+{%- if "oauth2" in auth_method_keys %}
+{%- for method in auth_method_locations %}
+{%- if method.key == "oauth2" %}
+
+interface OAuth2Setup {
+  credentials: Record<string, string>;
+  authUrl: string;
+  useCallback: boolean;
+  callbackPort: number;
+}
+
+/** Collects client ID/secret, scopes, generates PKCE, and builds the
+ * authorization URL — everything the browser step needs, before this
+ * wizard starts (or skips) the local callback server. */
+async function buildOAuth2Setup(): Promise<OAuth2Setup> {
+  console.log(
+    '\n' +
+      '══════════════════════════════════════════════════════════════════════\n' +
+      '{{ display_name }} OAuth2 Setup\n' +
+      'You need an OAuth2 app registered with this API provider.\n' +
+      '══════════════════════════════════════════════════════════════════════',
+  );
+
+  const credentials: Record<string, string> = {};
+
+  // Client ID and secret aren't per-user secrets — RFC 8252 classifies
+  // CLI/native apps as OAuth "public clients": client_id is a bare
+  // identifier, and even a client_secret (when one exists — PKCE is the
+  // actual protection for this class of client) "should not be treated
+  // as confidential". So, unlike the actual tokens this wizard goes on
+  // to collect, it's fine to default these from env vars — the same
+  // convenience pattern gcloud/aws-style CLIs use for app-level config,
+  // letting an operator re-run setup without retyping their app's
+  // identity every time.
+  const envClientId = process.env['{{ tool_prefix_env }}_CLIENT_ID'];
+  const envClientSecret = process.env['{{ tool_prefix_env }}_CLIENT_SECRET'];
+
+  const { clientId } = await inquirer.prompt<{ clientId: string }>([
+    { type: 'input', name: 'clientId', message: 'OAuth2 client ID:', default: envClientId },
+  ]);
+  credentials.clientId = clientId;
+
+  let clientSecret: string;
+  if (envClientSecret) {
+    console.log('Client Secret: using {{ tool_prefix_env }}_CLIENT_SECRET from the environment.');
+    clientSecret = envClientSecret;
+  } else {
+    ({ clientSecret } = await inquirer.prompt<{ clientSecret: string }>([
+      {
+        type: 'password',
+        name: 'clientSecret',
+        message: 'OAuth2 client secret (leave blank to use PKCE-only — recommended, no secret required):',
+      },
+    ]));
+  }
+  const usePkce = clientSecret.length === 0;
+  if (!usePkce) {
+    credentials.clientSecret = clientSecret;
+  }
+
+  const { tokenUrl } = await inquirer.prompt<{ tokenUrl: string }>([
+    {
+      type: 'input',
+      name: 'tokenUrl',
+      message: 'OAuth2 token URL:',
+      {%- if method.token_url %}
+      default: '{{ method.token_url }}',
+      {%- endif %}
+    },
+  ]);
+  credentials.tokenUrl = tokenUrl;
+
+  const { authBase } = await inquirer.prompt<{ authBase: string }>([
+    {
+      type: 'input',
+      name: 'authBase',
+      message: 'OAuth2 authorization URL (where the browser goes to authorize):',
+      {%- if method.authorization_url %}
+      default: '{{ method.authorization_url }}',
+      {%- endif %}
+    },
+  ]);
+
+  const { scope } = await inquirer.prompt<{ scope: string }>([
+    {
+      type: 'input',
+      name: 'scope',
+      message: 'OAuth2 scopes (space-separated — accept the default for full access):',
+      {%- if method.scopes %}
+      default: '{{ method.scopes }}',
+      {%- endif %}
+    },
+  ]);
+
+  // Redirect URI — MUST be registered with the OAuth2 app.
+  const callbackPort = 8888;
+  const redirectUri = `http://127.0.0.1:${callbackPort}/callback`;
+  credentials.redirectUri = redirectUri;
+
+  // PKCE: generate codeVerifier/codeChallenge when not using a secret.
+  let codeChallenge: string | undefined;
+  if (usePkce) {
+    const { verifier, challenge } = createPkcePair();
+    credentials.codeVerifier = verifier;
+    codeChallenge = challenge;
+  }
+
+  // Build the authorization URL. The user opens this in their browser to
+  // grant permission; the provider then redirects to
+  // redirectUri?code=<authorizationCode>.
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope,
+  });
+  if (codeChallenge) {
+    params.set('code_challenge_method', 'S256');
+    params.set('code_challenge', codeChallenge);
+  }
+  const authUrl = `${authBase}?${params.toString()}`;
+
+  const { useCallback } = await inquirer.prompt<{ useCallback: boolean }>([
+    {
+      type: 'confirm',
+      name: 'useCallback',
+      message: `Start a local callback server on ${redirectUri} to capture the\nauthorization code automatically after you authorize in the browser?`,
+      default: true,
+    },
+  ]);
+
+  return { credentials, authUrl, useCallback, callbackPort };
+}
+
+/** Temporary local HTTP server that receives the OAuth2 redirect and
+ * extracts the `?code=` query parameter, then shuts itself down. */
+async function waitForOAuthCallback(port: number): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
+      if (url.pathname !== '/callback') {
+        res.writeHead(404).end();
+        return;
+      }
+      const code = url.searchParams.get('code') ?? '';
+      res.writeHead(200, { 'Content-Type': 'text/html' }).end(
+        '<!DOCTYPE html><html><body><h1>&#10003; Authorized!</h1>' +
+          '<p>Return to your terminal &mdash; setup continues automatically.</p></body></html>',
+      );
+      clearTimeout(timeout);
+      server.close();
+      resolve(code);
+    });
+    const timeout = setTimeout(() => {
+      server.close();
+      reject(new Error('timed out waiting for the OAuth2 callback (5 minutes)'));
+    }, 300_000);
+    server.listen(port, '127.0.0.1');
+  });
+}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
 async function promptCredentials(authMethod: AuthMethod): Promise<Record<string, string>> {
   switch (authMethod) {
 {%- if "basic" in auth_method_keys %}
@@ -112,17 +282,34 @@ async function promptCredentials(authMethod: AuthMethod): Promise<Record<string,
       return inquirer.prompt([{ type: 'password', name: 'apiKey', message: 'API key:' }]);
 {%- endif %}
 {%- if "oauth2" in auth_method_keys %}
-    case 'oauth2':
-      return inquirer.prompt([
-        { type: 'input', name: 'clientId', message: 'OAuth2 client ID:' },
-        { type: 'password', name: 'clientSecret', message: 'OAuth2 client secret (leave blank if none):' },
-        { type: 'input', name: 'tokenUrl', message: 'OAuth2 token URL:' },
-        {
-          type: 'password',
-          name: 'accessToken',
-          message: 'Existing access token, if you already have one (leave blank to skip):',
-        },
-      ]);
+    case 'oauth2': {
+      const setup = await buildOAuth2Setup();
+
+      const bar = '═'.repeat(72);
+      console.log(`\n${bar}`);
+      console.log('Open this URL in your browser to authorize:');
+      console.log(setup.authUrl);
+      console.log(bar);
+      console.log(
+        `\nIMPORTANT: Before opening the URL, register this Redirect URI with your OAuth2 app:\n  http://127.0.0.1:${setup.callbackPort}/callback\n`,
+      );
+
+      let authorizationCode: string;
+      if (setup.useCallback) {
+        console.log(`Waiting for callback on http://127.0.0.1:${setup.callbackPort}/callback …`);
+        authorizationCode = await waitForOAuthCallback(setup.callbackPort);
+      } else {
+        ({ authorizationCode } = await inquirer.prompt<{ authorizationCode: string }>([
+          {
+            type: 'input',
+            name: 'authorizationCode',
+            message: 'Paste the authorization code from the redirect URL (?code=...):',
+          },
+        ]));
+      }
+
+      return { ...setup.credentials, authorizationCode };
+    }
 {%- endif %}
 {%- if "oauth1" in auth_method_keys %}
     case 'oauth1':
@@ -278,6 +465,20 @@ export async function runSetupWizard(): Promise<void> {
     ['{{ tool_prefix_env }}_TRANSPORT']: transport,
   };
   for (const [key, value] of Object.entries(credentials)) {
+    {%- if "oauth2" in auth_method_keys %}
+    if (
+      authMethod === 'oauth2' &&
+      ['authorizationCode', 'codeVerifier', 'redirectUri', 'tokenUrl'].includes(key)
+    ) {
+      // Single-use (authorizationCode, codeVerifier — an authorization
+      // code is spent in minutes and a PKCE verifier is useless without
+      // it) or provider-fixed (redirectUri, tokenUrl — already baked into
+      // the keychain blob saveCredential wrote above) fields. Persisting
+      // these to .env/config.yml/CLI args would either leak a spent code
+      // or go stale the moment the provider rotates an endpoint.
+      continue;
+    }
+    {%- endif %}
     env[`{{ tool_prefix_env }}_${toEnvKey(key)}`] = value;
   }
 
