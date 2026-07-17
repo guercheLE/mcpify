@@ -132,6 +132,15 @@ public sealed class ApiClient(
         {
             request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         }
+        else if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
+        {
+            // Some APIs (e.g. Spotify's) 411 on a body-less PUT/POST/DELETE
+            // with no Content-Length header — HttpClient only sets one when
+            // Content is non-null, so an empty-but-present body is needed
+            // here.
+            request.Content = new ByteArrayContent([]);
+        }
 
         using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();

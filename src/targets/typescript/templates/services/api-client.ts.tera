@@ -94,7 +94,21 @@ export class ApiClient {
     data: unknown,
     headers: Record<string, string>,
   ): Promise<AxiosResponse> {
-    const requestConfig: AxiosRequestConfig = { method, url, data, headers, timeout: this.config.timeout_ms };
+    const requestHeaders = { ...headers };
+    const upperMethod = method.toUpperCase();
+    if (data === undefined && upperMethod !== 'GET' && upperMethod !== 'HEAD') {
+      // Some APIs (e.g. Spotify's) 411 on a body-less PUT/POST/DELETE with
+      // no Content-Length header — axios doesn't send one for `undefined`
+      // data, so it has to be set explicitly here.
+      requestHeaders['Content-Length'] = '0';
+    }
+    const requestConfig: AxiosRequestConfig = {
+      method,
+      url,
+      data,
+      headers: requestHeaders,
+      timeout: this.config.timeout_ms,
+    };
 
     let attempt = 0;
     for (;;) {

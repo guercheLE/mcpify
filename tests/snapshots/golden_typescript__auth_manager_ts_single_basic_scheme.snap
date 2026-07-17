@@ -84,9 +84,29 @@ export class AuthManager {
         await saveCredential(CREDENTIAL_ACCOUNT, JSON.stringify(normalized));
         return normalized;
       }
+      // A blob with a refresh token has completed the initial exchange at
+      // some point (it just expired) — use the cheap refresh path. A blob
+      // with neither a valid access token nor a refresh token is straight
+      // out of the setup wizard (a raw authorization_code, never
+      // exchanged yet), so fall through to the full exchange instead of
+      // giving up.
+      let exchanged: Credentials | undefined;
       if (this.strategy.refreshToken) {
-        const refreshed = await this.strategy.refreshToken(parsed);
-        const normalized = await this.normalizeCredentials(refreshed);
+        try {
+          exchanged = await this.strategy.refreshToken(parsed);
+        } catch {
+          exchanged = undefined;
+        }
+      }
+      if (!exchanged) {
+        try {
+          exchanged = await this.strategy.authenticate(parsed);
+        } catch {
+          exchanged = undefined;
+        }
+      }
+      if (exchanged) {
+        const normalized = await this.normalizeCredentials(exchanged);
         this.cachedCredentials = normalized;
         await saveCredential(CREDENTIAL_ACCOUNT, JSON.stringify(normalized));
         return normalized;

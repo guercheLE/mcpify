@@ -125,10 +125,16 @@ class ApiClient:
     async def _dispatch(self, method: str, url: str, body: Any, headers: dict[str, str]) -> Any:
         timeout = self._config.timeout_ms / 1000
         attempt = 0
+        request_headers = headers
+        if body is None and method.upper() not in ("GET", "HEAD"):
+            # Some APIs (e.g. Spotify's) 411 on a body-less PUT/POST/DELETE
+            # with no Content-Length header — httpx doesn't send one when
+            # `json=None`, so it has to be set explicitly here.
+            request_headers = {**headers, "Content-Length": "0"}
         async with httpx.AsyncClient(timeout=timeout) as client:
             while True:
                 try:
-                    response = await client.request(method, url, json=body, headers=headers)
+                    response = await client.request(method, url, json=body, headers=request_headers)
                     response.raise_for_status()
                     try:
                         return response.json()

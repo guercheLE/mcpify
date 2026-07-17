@@ -111,12 +111,24 @@ class AuthManager:
                 self._cached_credentials = normalized
                 save_credential(CREDENTIAL_ACCOUNT, json.dumps(normalized))
                 return normalized
+            # A blob with a refresh token has completed the initial
+            # exchange at some point (it just expired) — use the cheap
+            # refresh path. A blob with neither a valid access token nor a
+            # refresh token is straight out of the setup wizard (a raw
+            # authorization_code, never exchanged yet), so fall through to
+            # the full exchange instead of giving up.
+            exchanged: Credentials | None = None
             try:
-                refreshed = await self._strategy.refresh_token(parsed)
+                exchanged = await self._strategy.refresh_token(parsed)
             except Exception:
-                pass
-            else:
-                normalized = await self._normalize_credentials(refreshed)
+                exchanged = None
+            if exchanged is None:
+                try:
+                    exchanged = await self._strategy.authenticate(parsed)
+                except Exception:
+                    exchanged = None
+            if exchanged is not None:
+                normalized = await self._normalize_credentials(exchanged)
                 self._cached_credentials = normalized
                 save_credential(CREDENTIAL_ACCOUNT, json.dumps(normalized))
                 return normalized

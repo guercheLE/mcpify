@@ -166,9 +166,18 @@ func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 				return normalized, nil
 			}
 
-			refreshed, err := m.strategy.RefreshToken(ctx, parsed)
+			// A blob with a refresh token has completed the initial
+			// exchange at some point (it just expired) — use the cheap
+			// refresh path. A blob with neither a valid access token nor
+			// a refresh token is straight out of the setup wizard (a raw
+			// authorization_code, never exchanged yet), so fall through
+			// to the full exchange instead of giving up.
+			exchanged, err := m.strategy.RefreshToken(ctx, parsed)
+			if err != nil {
+				exchanged, err = m.strategy.Authenticate(ctx, parsed)
+			}
 			if err == nil {
-				normalized, err := m.normalizeCredentials(ctx, refreshed)
+				normalized, err := m.normalizeCredentials(ctx, exchanged)
 				if err != nil {
 					return nil, err
 				}
@@ -180,9 +189,9 @@ func (m *Manager) GetCredentials(ctx context.Context) (Credentials, error) {
 				}
 				return normalized, nil
 			}
-			// Fall through to NewNoActiveCredentialsError below — a
-			// failed refresh means "no valid credentials", not a fatal
-			// error, mirroring `targets::python`'s auth_manager.py.
+			// Fall through to NewNoActiveCredentialsError below — both
+			// refresh and the full exchange failed, mirroring
+			// `targets::python`'s auth_manager.py.
 		}
 	}
 
