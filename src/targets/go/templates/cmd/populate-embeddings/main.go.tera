@@ -97,7 +97,11 @@ func run() error {
 	}
 	cacheDir := filepath.Join(home, ".{{ project_name }}", "models")
 
-	embedSvc, err := services.NewEmbeddingService(ctx, cacheDir, services.ResolveSharedLibraryPath())
+	sharedLibraryPath, err := services.ResolveSharedLibraryPath(ctx, cacheDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve the ONNX Runtime shared library: %w", err)
+	}
+	embedSvc, err := services.NewEmbeddingService(ctx, cacheDir, sharedLibraryPath)
 	if err != nil {
 		return fmt.Errorf("failed to initialize embedding service: %w", err)
 	}

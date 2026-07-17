@@ -16,7 +16,12 @@ import (
 // the default `go test ./...` run.
 func TestEmbeddingServiceProducesCorrectlyOrderedSimilarities(t *testing.T) {
 	ctx := context.Background()
-	svc, err := NewEmbeddingService(ctx, t.TempDir(), ResolveSharedLibraryPath())
+	cacheDir := t.TempDir()
+	sharedLibraryPath, err := ResolveSharedLibraryPath(ctx, cacheDir)
+	if err != nil {
+		t.Fatalf("ResolveSharedLibraryPath: %v", err)
+	}
+	svc, err := NewEmbeddingService(ctx, cacheDir, sharedLibraryPath)
 	if err != nil {
 		t.Fatalf("NewEmbeddingService: %v", err)
 	}

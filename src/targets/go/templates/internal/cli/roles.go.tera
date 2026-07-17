@@ -64,11 +64,12 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 	if err != nil {
 		return nil, err
 	}
-	embedSvc, err := services.NewEmbeddingService(
-		ctx,
-		filepath.Join(home, ".{{ project_name }}", "models"),
-		services.ResolveSharedLibraryPath(),
-	)
+	cacheDir := filepath.Join(home, ".{{ project_name }}", "models")
+	sharedLibraryPath, err := services.ResolveSharedLibraryPath(ctx, cacheDir)
+	if err != nil {
+		return nil, err
+	}
+	embedSvc, err := services.NewEmbeddingService(ctx, cacheDir, sharedLibraryPath)
 	if err != nil {
 		return nil, err
 	}

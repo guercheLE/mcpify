@@ -1,7 +1,12 @@
 package services
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -9,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/sugarme/tokenizer"
 	"github.com/sugarme/tokenizer/pretrained"
@@ -26,10 +32,45 @@ type EmbeddingService struct {
 	tokenizer *tokenizer.Tokenizer
 }
 
-func ResolveSharedLibraryPath() string {
+// onnxRuntimeVersion pins the microsoft/onnxruntime release ResolveSharedLibraryPath
+// downloads — must stay a release that github.com/yalue/onnxruntime_go's
+// pinned go.mod version is actually ABI-compatible with; bump both together.
+const onnxRuntimeVersion = "1.27.1"
+
+// ResolveSharedLibraryPath resolves the ONNX Runtime shared library this
+// process should load: an explicit ONNXRUNTIME_SHARED_LIBRARY_PATH
+// override always wins; otherwise it downloads and caches the official
+// prebuilt release for the current OS/arch under cacheDir, mirroring how
+// the embedding model/tokenizer are cached below. Unlike Rust's `ort`
+// crate (`ort-download-binaries-*` feature) or Python's `onnxruntime`
+// wheel, `onnxruntime_go` doesn't bundle or fetch this native library
+// itself — without this, every generated Go project would fail at
+// `populate-embeddings`/first `search` call unless the operator manually
+// installed the shared library system-wide first.
+func ResolveSharedLibraryPath(ctx context.Context, cacheDir string) (string, error) {
 	if path := os.Getenv("ONNXRUNTIME_SHARED_LIBRARY_PATH"); path != "" {
-		return path
+		return path, nil
 	}
+
+	libPath := filepath.Join(cacheDir, "onnxruntime", onnxRuntimeVersion, onnxRuntimeLibraryFileName())
+	if _, err := os.Stat(libPath); err == nil {
+		return libPath, nil
+	}
+
+	archiveURL, entryName, err := onnxRuntimeArchiveURL()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(libPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := downloadAndExtractSharedLibrary(ctx, archiveURL, entryName, libPath); err != nil {
+		return "", fmt.Errorf("downloading ONNX Runtime %s shared library: %w", onnxRuntimeVersion, err)
+	}
+	return libPath, nil
+}
+
+func onnxRuntimeLibraryFileName() string {
 	switch runtime.GOOS {
 	case "darwin":
 		return "libonnxruntime.dylib"
@@ -38,6 +79,138 @@ func ResolveSharedLibraryPath() string {
 	default:
 		return "libonnxruntime.so"
 	}
+}
+
+// onnxRuntimeArchiveURL returns the official microsoft/onnxruntime release
+// archive URL for the current OS/arch, and the archive-internal file name
+// (always under a top-level "lib/" directory in every release layout) the
+// shared library is packaged as. Both Linux and macOS releases ship a
+// versioned real file alongside a symlink under the bare name — this
+// deliberately extracts the versioned file in both cases (a naive tar
+// extraction of a symlink entry would just recreate a dangling link, not
+// the real library bytes), but where the version number goes differs:
+// Linux appends it after the extension (libonnxruntime.so.1.20.1), macOS
+// embeds it before (libonnxruntime.1.20.1.dylib). Windows ships an
+// unversioned onnxruntime.dll with no symlink to worry about.
+func onnxRuntimeArchiveURL() (archiveURL, entryName string, err error) {
+	base := fmt.Sprintf(
+		"https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime",
+		onnxRuntimeVersion,
+	)
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "darwin/arm64":
+		// Intel Mac (darwin/amd64) deliberately has no case here: upstream
+		// microsoft/onnxruntime stopped publishing osx-x86_64 release
+		// archives as of this pinned version (Apple Silicon only), the
+		// same constraint the Rust target's `ort` crate download-binaries
+		// feature already accepts — falls through to the "no known
+		// release" error below, same as any other unsupported OS/arch.
+		return fmt.Sprintf("%s-osx-arm64-%s.tgz", base, onnxRuntimeVersion),
+			fmt.Sprintf("libonnxruntime.%s.dylib", onnxRuntimeVersion), nil
+	case "linux/amd64":
+		return fmt.Sprintf("%s-linux-x64-%s.tgz", base, onnxRuntimeVersion),
+			fmt.Sprintf("libonnxruntime.so.%s", onnxRuntimeVersion), nil
+	case "linux/arm64":
+		return fmt.Sprintf("%s-linux-aarch64-%s.tgz", base, onnxRuntimeVersion),
+			fmt.Sprintf("libonnxruntime.so.%s", onnxRuntimeVersion), nil
+	case "windows/amd64":
+		return fmt.Sprintf("%s-win-x64-%s.zip", base, onnxRuntimeVersion), "onnxruntime.dll", nil
+	case "windows/arm64":
+		return fmt.Sprintf("%s-win-arm64-%s.zip", base, onnxRuntimeVersion), "onnxruntime.dll", nil
+	default:
+		return "", "", fmt.Errorf(
+			"no known ONNX Runtime release for %s/%s — set ONNXRUNTIME_SHARED_LIBRARY_PATH to a "+
+				"manually-installed shared library instead", runtime.GOOS, runtime.GOARCH,
+		)
+	}
+}
+
+// downloadAndExtractSharedLibrary downloads archiveURL (a .tgz or .zip,
+// switched on by extension) into memory, pulls out the single file named
+// entryName under its "lib/" directory, and writes it to destPath —
+// atomically, via a temp-file rename, so a killed/interrupted download
+// never leaves a corrupt file at destPath for the next run's os.Stat
+// cache check to wrongly trust.
+func downloadAndExtractSharedLibrary(ctx context.Context, archiveURL, entryName, destPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, http.NoBody)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d downloading %s", resp.StatusCode, archiveURL)
+	}
+
+	archiveBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	var extracted []byte
+	if strings.HasSuffix(archiveURL, ".zip") {
+		extracted, err = extractLibFromZip(archiveBytes, entryName)
+	} else {
+		extracted, err = extractLibFromTarGz(archiveBytes, entryName)
+	}
+	if err != nil {
+		return err
+	}
+
+	tmpPath := destPath + ".tmp"
+	if err := os.WriteFile(tmpPath, extracted, 0o755); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, destPath)
+}
+
+func extractLibFromTarGz(archiveBytes []byte, entryName string) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archiveBytes))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = gz.Close() }()
+
+	suffix := "/lib/" + entryName
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if header.Typeflag == tar.TypeReg && strings.HasSuffix(header.Name, suffix) {
+			return io.ReadAll(tr)
+		}
+	}
+	return nil, fmt.Errorf("archive did not contain a lib/%s entry", entryName)
+}
+
+func extractLibFromZip(archiveBytes []byte, entryName string) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(archiveBytes), int64(len(archiveBytes)))
+	if err != nil {
+		return nil, err
+	}
+
+	suffix := "/lib/" + entryName
+	for _, file := range zr.File {
+		if !strings.HasSuffix(file.Name, suffix) {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		return data, err
+	}
+	return nil, fmt.Errorf("archive did not contain a lib/%s entry", entryName)
 }
 
 func NewEmbeddingService(ctx context.Context, cacheDir, onnxRuntimeLibPath string) (*EmbeddingService, error) {
