@@ -233,6 +233,8 @@ fn http_command_serves_health_and_shuts_down_cleanly() {
 {% if auth_methods | length > 0 %}
         .env("{{ tool_prefix_env }}_AUTH_METHOD", "{{ auth_methods.0.key }}")
 {% endif %}
+        // See generated_server()'s identical HOME override above.
+        .env("HOME", env!("CARGO_TARGET_TMPDIR"))
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
