@@ -9,7 +9,7 @@ import (
 	{%- endif %}
 	"net/http"
 	{%- if "oauth2" in auth_method_keys %}
-	"net/url"
+	neturl "net/url"
 	{%- endif %}
 	"os"
 	"path/filepath"
@@ -347,7 +347,7 @@ func buildOAuth2Setup() (oauth2Setup, error) {
 	// Build the authorization URL. The user opens this in their browser to
 	// grant permission; the provider then redirects to
 	// redirect_uri?code=<authorization_code>.
-	params := url.Values{}
+	params := neturl.Values{}
 	params.Set("response_type", "code")
 	params.Set("client_id", clientID)
 	params.Set("redirect_uri", redirectURI)
