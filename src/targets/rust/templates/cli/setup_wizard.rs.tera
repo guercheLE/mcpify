@@ -2,8 +2,9 @@
 //
 // Interactive setup wizard (REQ-1.6): collects the API URL and the
 // credentials the discovered auth scheme(s) need, then persists them per
-// the operator's choice: a .env file, a config.json file, or a
-// ready-to-run CLI invocation printed to stdout (nothing written to disk).
+// the operator's choice: a .env file, a local or global config.yml file,
+// or a ready-to-run CLI invocation printed to stdout (nothing written to
+// disk).
 // `inquire`'s prompts are blocking — run through `spawn_blocking`, the
 // same pattern mcpify's own `auth_profile::prompt` documents for calling
 // it from an async runtime.

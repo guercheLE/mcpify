@@ -10,13 +10,29 @@ Exposes exactly 3 tools — `search`, `get`, `call` — backed by an embedded se
 cargo build --release
 ```
 
+This builds three binaries into `target/release/`: `{{ project_name }}` (the CLI/server below), `{{ project_name }}-populate-embeddings`, and `{{ project_name }}-healthcheck`. Run `cargo install --path .` instead if you want `{{ project_name }}` on your `PATH` so the commands below work without a `target/release/` prefix.
+{%- if publication.repository %}
+
+Prebuilt binaries for macOS, Linux, and Windows are attached to each [GitHub Release]({{ publication.repository }}/releases), along with a shell/PowerShell installer script.
+{%- endif %}
+{%- if publish_registry %}
+
+Or install the published crate directly:
+
+```bash
+cargo install {{ package_name }}
+```
+{%- endif %}
+
 ## Setup
 
 ```bash
 cargo run -- setup
 ```
 
-Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a `config.json` file, or a ready-to-run CLI invocation.
+Interactively collects the API URL and the credentials your chosen auth method needs, then lets you persist them as a `.env` file, a local (`./{{ project_name }}.config.yml`) or global (`~/.{{ project_name }}/config.yml`) YAML config file, or a ready-to-run CLI invocation.
+
+Supported auth methods: {% for m in auth_methods %}`{{ m.key }}`{% if m.key == "basic" %} (username/password){% elif m.key == "pat" %} (personal access token, sent as a bearer token){% elif m.key == "apiKey" %} (API key, sent as a header){% elif m.key == "oauth2" %} (OAuth 2.0 authorization code flow with PKCE){% elif m.key == "oauth1" %} (OAuth 1.0a, request signed with RSA-SHA1){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}.
 
 ## Configuration
 
@@ -47,6 +63,10 @@ OpenAPI spec `servers` entry).
 {{ project_name }} call <operationId> --args '{"key":"value"}'
 ```
 
+`call` accepts one JSON object through `--args` (or `-a`), not arbitrary per-operation CLI flags. Use `get <operationId>` to see the accepted field names and which ones are required.
+
+Other subcommands: `{{ project_name }} test-connection` (verify the configured API URL/credentials are reachable), `{{ project_name }} config` (print the resolved configuration, secrets redacted), `{{ project_name }} version` (print the installed version), and `{{ project_name }} versions` (list the API spec versions this project has a store for).
+
 ### Harness Server
 
 ```bash
@@ -70,6 +90,76 @@ Both services read configuration from a local `.env` file (copy `.env.example`) 
 
 Stdio is a process transport, not a listening service: the MCP client must start the server and communicate through that exact child process's stdin/stdout. This is useful when an MCP client is configured to launch `docker compose run --rm -T {{ project_name }}`, in local scripts or CI that directly exchange MCP messages with the process, or in a custom image where your application launches the generated server's `start` subcommand as a child process. Merely putting the application and server in the same image—or starting the stdio container separately with `docker compose up`—does not connect their streams. One stdio server process normally serves one client. Use HTTP when independently started applications, multiple clients, another container, or a remote machine need to connect over the network.
 
+## Observability & Resilience
+
+### Logging
+
+Structured logs go to **stderr** (never stdout, which is reserved for MCP JSON-RPC frames on stdio transport): JSON by default, pretty-printed automatically when stderr is an interactive TTY (auto-detected — there's no separate flag for this). Level is controlled by `{{ tool_prefix_env }}_LOG_LEVEL` (default `info`), passed straight through to `tracing_subscriber::EnvFilter`, so directive syntax works too, e.g.:
+
+```bash
+{{ tool_prefix_env }}_LOG_LEVEL="{{ crate_name }}=debug,warn" {{ project_name }} start
+```
+
+Secret redaction exists as a helper (`core::sanitizer::sanitize`, case-insensitive substring match on keys containing `password`/`token`/`secret`/`authorization`/`apikey`/`api_key`/`api-key`/`credential`), but today its only caller is `{{ project_name }} config` (which prints the resolved config with those fields redacted). Request/response payloads aren't logged at all currently — the only `tracing` call sites are lifecycle/error events — so there's no in-flight redaction path exercised in normal operation yet.
+
+### OpenTelemetry tracing
+
+An OTLP/HTTP trace exporter (`core/otel.rs`) is built unconditionally at startup; if it fails to build, tracing export is silently skipped — there's no dedicated on/off switch in this app. It's *tracing only* (no OTel metrics exporter is wired up — see "Metrics" below). Point it at a collector with the OTLP SDK's own standard env vars (not `{{ tool_prefix_env }}_`-prefixed), which `opentelemetry-otlp` reads directly:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 {{ project_name }} start
+```
+
+Defaults to `http://localhost:4318` if unset. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `_PROTOCOL`, `_TIMEOUT`, and `_COMPRESSION` are also honored (standard OTLP conventions).
+
+### Metrics
+
+Separate from OTel: `GET /metrics` (HTTP transport only — not available over stdio) serves a minimal hand-rolled Prometheus-text counter store (`http/metrics.rs`). Today it only tracks one counter, `http_requests_total`:
+
+```bash
+curl http://127.0.0.1:3000/metrics
+# http_requests_total 4
+```
+
+### Circuit breaker, retries, and rate limiting
+
+Every outbound call to the target API (`services/api_client.rs`) passes through a rate limiter, then a circuit breaker, then the retry loop:
+
+| Behavior | Configurable? | Knob | Default |
+|---|---|---|---|
+| Request timeout | Yes | `{{ tool_prefix_env }}_TIMEOUT_MS` / `timeout_ms` | 30000 ms |
+| Retry attempts on request failure | Yes | `{{ tool_prefix_env }}_RETRY_ATTEMPTS` / `retry_attempts` | 3 (immediate retry, no backoff/jitter) |
+| Rate limit | Partially | `{{ tool_prefix_env }}_RATE_LIMIT` / `rate_limit` | 100 calls; window is hardcoded to 1 second, not configurable |
+| Circuit breaker | **No** | — (`CircuitBreaker::default()`) | opens after 5 consecutive failures, 30s before a half-open trial call |
+
+("Knob" here means an env var or a matching key in `{{ project_name }}.config.yml`/`~/.{{ project_name }}/config.yml`/`/etc/{{ project_name }}/config.yml` — see the config cascade in `core/config_manager.rs`.)
+
+### Health checks
+
+`GET /healthz` (HTTP transport only) reports the status of a `ComponentRegistry`, refreshed every 30 seconds with a 5-second per-check timeout by a `HealthCheckManager` — both intervals are hardcoded, not configurable. Today exactly one check is registered, `store` (can the active `mcp_store*.db` file be opened), marked critical:
+
+```bash
+curl http://127.0.0.1:3000/healthz
+# {"status":"Healthy","components":1}   # 503 + "Unhealthy" if the critical check is failing
+```
+
+Two related but distinct checks exist:
+- `{{ project_name }}-healthcheck` — the standalone binary wired into the Dockerfile's `HEALTHCHECK`; it only checks that the active store file exists and is readable on disk, and does not talk to a running server or `/healthz`.
+- `{{ project_name }} test-connection` — an on-demand CLI check that the *target API itself* is reachable with the configured credentials; unrelated to the periodic `/healthz` checks above.
+
+### Credential storage
+
+`{{ project_name }} setup` writes credentials straight to the OS-native secret store via the `keyring` crate (macOS Keychain / Windows Credential Manager / Linux Secret Service), under service `{{ project_name }}`, account `active-credentials`. If no OS keychain backend is available (e.g. no D-Bus secret-service daemon in a minimal container), it falls back automatically to an AES-256-GCM-encrypted file at `~/.{{ project_name }}/credentials.enc` (`0600`, parent dir `0700` on Unix); the key is derived from `$HOME` plus the service name, so that file isn't portable to another machine.
+{%- if "pat" in auth_method_keys or "apiKey" in auth_method_keys %}
+
+The `{{ tool_prefix_env }}_TOKEN`/`{{ tool_prefix_env }}_API_KEY` (for token/API-key auth){% if "basic" in auth_method_keys %} and `{{ tool_prefix_env }}_USERNAME`/`{{ tool_prefix_env }}_PASSWORD` (for basic auth){% endif %} env vars documented in `.env.example` are read directly by `AuthManager::credentials()` and take priority over the stored keychain/file credentials — useful for supplying credentials purely via environment (e.g. in a container) without ever running `setup`.
+{%- elif "basic" in auth_method_keys %}
+
+The `{{ tool_prefix_env }}_USERNAME`/`{{ tool_prefix_env }}_PASSWORD` env vars documented in `.env.example` are read directly by `AuthManager::credentials()` and take priority over the stored keychain/file credentials — useful for supplying credentials purely via environment (e.g. in a container) without ever running `setup`.
+{%- endif %}
+
+Credentials are never persisted into the `.env`/config-file output of `setup` itself; those files only carry non-secret settings, with credentials always going through the keychain/encrypted-file path.
+
 ## Testing
 
 ```bash
@@ -92,6 +182,10 @@ bash scripts/profile-heap.sh   # steady-state heap profiling via dhat-rs
 ```
 
 CPU and heap profiling use separate builds: `scripts/profile.sh` deliberately profiles normal release binaries so DHAT allocation tracking cannot distort CPU samples, while `scripts/profile-heap.sh` starts DHAT collection only after its warmup search. CPU profiling records `profile/cold-start.json.gz` from a one-shot CLI search, then attaches to an already-initialized search harness and records `profile/warm-search.json.gz`; this keeps model initialization from being mistaken for steady-state request cost. Heap profiling defaults to 1 warmup and 5 measured searches, configurable with `PROFILE_HEAP_WARMUPS`, `PROFILE_HEAP_ITERATIONS`, and `PROFILE_QUERY`. Both scripts supply harmless URL/auth defaults when a generated checkout has not been configured because catalog search never calls the generated API. `profile/bottleneck-report.md` ranks coverage gaps and shows separate cold and warm CPU summaries. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
+
+## License
+
+{% if publication.license %}{{ publication.license }}{% else %}MIT{% endif %} — see [LICENSE](LICENSE).
 
 ---
 
