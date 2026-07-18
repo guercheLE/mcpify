@@ -31,10 +31,8 @@ pub async fn run_shared_pipeline(
     publish_registry: bool,
     version_label: &str,
 ) -> Result<GeneratorContext> {
-    let project_name = output_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("mcpify-client");
+    let project_name = crate::context::resolve_dir_name(&output_dir)
+        .unwrap_or_else(|| "mcpify-client".to_string());
     let settings = ProjectSettings {
         default_headers: vec![HeaderSetting {
             name: "User-Agent".to_string(),

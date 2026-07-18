@@ -107,10 +107,8 @@ impl TsTemplateContext {
     pub fn from_context(ctx: &GeneratorContext) -> Self {
         let settings = read_settings(&ctx.output_dir);
         let project_name = ctx
-            .output_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(kebab_case)
+            .output_dir_name()
+            .map(|name| kebab_case(&name))
             .filter(|slug| !slug.is_empty())
             .unwrap_or_else(|| kebab_case(&ctx.api_title));
 

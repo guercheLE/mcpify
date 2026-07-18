@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -42,6 +42,38 @@ pub struct GeneratorContext {
     /// re-renders that same small region with the full, updated list
     /// without needing a `GeneratorContext` of its own.
     pub version_label: String,
+}
+
+impl GeneratorContext {
+    /// `output_dir`'s last path component, for targets to slug into a
+    /// project/crate/package name. Delegates to [`resolve_dir_name`] so
+    /// `output: .` in a `sync`-driven manifest (the shape every previously
+    /// generated project's `mcpify.yaml` uses) still resolves to the actual
+    /// working directory's name rather than silently losing it.
+    pub fn output_dir_name(&self) -> Option<String> {
+        resolve_dir_name(&self.output_dir)
+    }
+}
+
+/// The last path component of `dir`, falling back to canonicalizing it first
+/// when `dir` has none of its own — notably `.` and `..`, whose only
+/// component (`CurDir`/`ParentDir`) isn't a `Normal` component, so
+/// `Path::file_name` returns `None` for them even though they plainly
+/// resolve to a real, named directory (canonicalizing `.` yields the actual
+/// working directory, e.g. `/repos/bamboo-mcp-rs`, whose basename is what
+/// callers actually want). Still returns `None` for paths with no
+/// meaningful basename even once resolved, e.g. `/`.
+pub(crate) fn resolve_dir_name(dir: &Path) -> Option<String> {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .or_else(|| {
+            dir.canonicalize()
+                .ok()?
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
 }
 
 /// One version's on-disk artifact file names, in the shape every target's
@@ -104,5 +136,36 @@ fn identifier_suffix(label: &str) -> String {
     match sanitized.chars().next() {
         Some(c) if c.is_ascii_digit() => format!("v{sanitized}"),
         _ => sanitized,
+    }
+}
+
+#[cfg(test)]
+mod resolve_dir_name_tests {
+    use super::resolve_dir_name;
+    use std::path::Path;
+
+    #[test]
+    fn returns_the_basename_of_a_named_path() {
+        assert_eq!(
+            resolve_dir_name(Path::new("/repos/bamboo-mcp-rs")),
+            Some("bamboo-mcp-rs".to_string())
+        );
+    }
+
+    #[test]
+    fn resolves_a_bare_current_dir_marker_to_the_working_directory_name() {
+        let expected = std::env::current_dir()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(resolve_dir_name(Path::new(".")), Some(expected));
+    }
+
+    #[test]
+    fn falls_back_to_none_for_a_path_with_no_meaningful_basename() {
+        assert_eq!(resolve_dir_name(Path::new("/")), None);
     }
 }
