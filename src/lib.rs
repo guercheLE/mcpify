@@ -9,5 +9,6 @@ pub mod pipeline;
 pub mod progress;
 pub mod project_config;
 pub mod schemas_asset;
+pub mod store_compress;
 pub mod sync_project;
 pub mod targets;

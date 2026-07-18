@@ -2,6 +2,13 @@
 *.log
 .env
 .DS_Store
+
+# Raw SQLite stores are regenerated from their committed `.db.zst`
+# siblings (see src/data/store.rs's resolve_store_path and
+# src/bin/populate_embeddings.rs) — the uncompressed copies alone can
+# exceed crates.io's 10MiB package limit, so only the compressed form is
+# tracked.
+mcp_store*.db
 .fastembed_cache/
 profile/
 dhat-heap.json

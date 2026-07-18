@@ -49,6 +49,16 @@ pub async fn generate_mcp_tools(ctx: &GeneratorContext) -> Result<()> {
 
     write_generated_schemas(ctx).await?;
 
+    // `store.rs.tera`'s `VERSION_STORE_BYTES` (just rendered above) embeds
+    // this version's store `.db.zst`, not the raw `.db` `db::assemble_store`
+    // wrote before any target-specific step ran — compress it in place now
+    // so a `cargo build` of the freshly generated project can already
+    // resolve the `include_bytes!` path.
+    crate::store_compress::compress_and_remove_raw(
+        &ctx.output_dir.join(crate::db::STORE_FILE_NAME),
+    )
+    .await?;
+
     Ok(())
 }
 

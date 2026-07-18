@@ -18,7 +18,7 @@ expression: file_tree(&output_dir)
     "dist-workspace.toml",
     "docker-compose.yml",
     "examples/profile_search.rs",
-    "mcp_store.db",
+    "mcp_store.db.zst",
     "scripts/check_production_coverage.py",
     "scripts/coverage.sh",
     "scripts/profile-heap.sh",

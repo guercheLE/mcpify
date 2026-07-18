@@ -74,6 +74,8 @@ pub async fn run(request: AddVersionRequest) -> Result<()> {
     }
     sync::sync_versions(&request.project_dir, &ledger).await?;
 
+    compress_rust_stores(&request.project_dir, &ledger).await?;
+
     if crate::progress::enabled() {
         eprintln!("==> Writing project ledger");
     }
@@ -81,6 +83,26 @@ pub async fn run(request: AddVersionRequest) -> Result<()> {
 
     print_embedding_reminder(&ledger, &request.version_label);
 
+    Ok(())
+}
+
+/// Sweeps every version this ledger knows about and compresses whichever
+/// of their store files still sit on disk raw — a no-op for any entry
+/// already compressed by an earlier call. Only Rust embeds a store via
+/// `include_bytes!` (see `store_compress::compress_and_remove_raw`'s doc
+/// comment), so every other target's ledger is left untouched: those
+/// targets read `mcp_store*.db` straight off disk at runtime and must keep
+/// the raw file. A whole-ledger sweep (rather than compressing only the
+/// version `run()` was called for) is what correctly picks up
+/// `promote_to_default`'s demoted old-default file too, which lands at a
+/// fresh raw path of its own as a side effect of this same call.
+async fn compress_rust_stores(project_dir: &Path, ledger: &Ledger) -> Result<()> {
+    if ledger.language != "rust" {
+        return Ok(());
+    }
+    for entry in ledger.versions.values() {
+        crate::store_compress::compress_and_remove_raw(&project_dir.join(&entry.db_file)).await?;
+    }
     Ok(())
 }
 
@@ -130,8 +152,14 @@ pub async fn remove(request: RemoveVersionRequest) -> Result<()> {
     sync::sync_versions(&request.project_dir, &ledger).await?;
 
     // Only remove the now-orphaned files once every version-aware code
-    // region has been successfully re-rendered without this version.
-    let _ = tokio::fs::remove_file(request.project_dir.join(&entry.db_file)).await;
+    // region has been successfully re-rendered without this version. Tries
+    // the db file's `.zst` sibling too — for Rust it's the compressed form
+    // that's actually on disk (see `store_compress::compress_and_remove_raw`),
+    // and removing only the bare (raw) path would silently leave it
+    // orphaned; harmless no-op for every other target, which never has one.
+    let db_path = request.project_dir.join(&entry.db_file);
+    let _ = tokio::fs::remove_file(crate::store_compress::zst_sibling(&db_path)).await;
+    let _ = tokio::fs::remove_file(db_path).await;
     let _ = tokio::fs::remove_file(request.project_dir.join(&entry.schemas_file)).await;
 
     if crate::progress::enabled() {
@@ -224,8 +252,14 @@ async fn promote_to_default(
     .await?;
 
     // Only remove the stale files once the new data is safely on disk, so a
-    // failure partway through this function never loses data.
+    // failure partway through this function never loses data. Also tries
+    // each stale path's `.zst` sibling: for Rust, an earlier `run()` call's
+    // end-of-run compression sweep may have already turned that raw file
+    // into `<path>.zst` and removed the raw copy, in which case removing
+    // the bare (raw) path alone would silently leave the `.zst` orphaned.
+    // Harmless no-op for every other target, which never has one.
     for stale in stale_files {
+        let _ = tokio::fs::remove_file(crate::store_compress::zst_sibling(&stale)).await;
         let _ = tokio::fs::remove_file(stale).await;
     }
 

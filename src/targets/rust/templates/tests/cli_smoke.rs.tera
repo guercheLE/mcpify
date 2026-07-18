@@ -162,10 +162,15 @@ fn stdio_and_helper_binaries_cover_their_bootstrap_and_error_paths() {
         .unwrap();
     assert!(!populate.status.success());
 
+    // Only the `.zst` sibling is committed at the project root (see
+    // .gitignore) — copying that and pointing populate-embeddings at the
+    // bare `mcp_store.db` path exercises the same `ensure_raw_db`
+    // decompress-on-demand path a real `cargo install`/CI run relies on.
     let store_copy = empty.path().join("mcp_store.db");
+    let store_copy_zst = empty.path().join("mcp_store.db.zst");
     std::fs::copy(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mcp_store.db"),
-        &store_copy,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mcp_store.db.zst"),
+        &store_copy_zst,
     )
     .unwrap();
     let populated = Command::new(env!("CARGO_BIN_EXE_{{ project_name }}-populate-embeddings"))

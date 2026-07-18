@@ -9,27 +9,46 @@ const GO_DOCKERFILE: &str = include_str!("../src/targets/go/templates/Dockerfile
 
 #[test]
 fn every_language_packages_and_populates_all_version_stores() {
-    for (language, dockerfile, populate_all) in [
+    for (language, dockerfile, populate_all, store_copy_glob) in [
         (
             "rust",
             RUST_DOCKERFILE,
             "{{ project_name }}-populate-embeddings --all",
+            // Only Rust embeds its store via `include_bytes!` at compile
+            // time, so only Rust's copy needs to fit crates.io's 10MiB
+            // package limit — the `.zst` sibling is what's actually
+            // committed and copied into the image (see store_compress.rs
+            // and populate_embeddings.rs.tera's decompress/recompress
+            // round-trip).
+            "COPY mcp_store*.db.zst ./",
         ),
         (
             "python",
             PYTHON_DOCKERFILE,
             "services.populate_embeddings --all",
+            "COPY mcp_store*.db ./",
         ),
         (
             "typescript",
             TYPESCRIPT_DOCKERFILE,
             "npm run populate-embeddings -- --all",
+            "COPY mcp_store*.db ./",
         ),
-        ("csharp", CSHARP_DOCKERFILE, "populate-embeddings --all"),
-        ("go", GO_DOCKERFILE, "./populate-embeddings --all"),
+        (
+            "csharp",
+            CSHARP_DOCKERFILE,
+            "populate-embeddings --all",
+            "COPY mcp_store*.db ./",
+        ),
+        (
+            "go",
+            GO_DOCKERFILE,
+            "./populate-embeddings --all",
+            "COPY mcp_store*.db ./",
+        ),
     ] {
         assert!(
-            dockerfile.contains("COPY mcp_store*.db ./"),
+            dockerfile.contains(store_copy_glob),
             "{language} Dockerfile must package databases added after initial generation"
         );
         assert!(
