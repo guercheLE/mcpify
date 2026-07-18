@@ -1,7 +1,7 @@
 //! The real, slow acceptance test (Story 14 / PRD REQ-2.5.1): runs the full
 //! `TypeScriptTargetGenerator::execute()` lifecycle — including
 //! `run_generated_tests`' actual `npm install` (with the
-//! `@xenova/transformers` model download) and `npm test` — against a
+//! `@xenova/transformers` model download), `npm run build`, and `npm test` — against a
 //! fixture spec. Requires Node.js/npm and network access, so it's ignored
 //! by default; run explicitly with:
 //!
@@ -34,10 +34,9 @@ async fn generates_a_project_and_passes_its_own_test_suite() {
     .await
     .expect("shared pipeline must succeed");
 
-    TypeScriptTargetGenerator
-        .execute(&ctx)
-        .await
-        .expect("execute() must succeed, including run_generated_tests' real npm install/test");
+    TypeScriptTargetGenerator.execute(&ctx).await.expect(
+        "execute() must succeed, including run_generated_tests' real npm install/build/test",
+    );
 }
 
 /// Story R8's analogous acceptance test for the Rust target: runs the full

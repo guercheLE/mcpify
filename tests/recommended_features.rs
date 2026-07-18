@@ -312,6 +312,9 @@ async fn rust_release_templates_encode_onnx_runtime_constraints() {
     assert!(ci.contains(
         "cargo test --locked --features profiling --test cli_smoke profiling_feature_records_warmed_search_and_non_search_commands -- --exact"
     ));
+    assert!(ci.contains("components: rustfmt, clippy, llvm-tools-preview"));
+    assert!(ci.contains("cargo install cargo-llvm-cov --locked"));
+    assert!(ci.contains("bash scripts/coverage.sh"));
     let container = tera
         .render(".github/workflows/container-image.yml.tera", &tera_context)
         .unwrap();

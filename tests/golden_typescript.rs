@@ -1,8 +1,8 @@
 //! Golden/snapshot tests for the TypeScript target's generation steps
 //! (REQ-2.6.1) — the strongest regression guard against unintentional
 //! template drift. Deliberately does NOT call `run_generated_tests`
-//! (Story 14's real `npm install`/`npm test` gate is exercised manually,
-//! not here): these tests only assert that the *content* mcpify writes
+//! (Story 14's real `npm install`/`npm run build`/`npm test` gate is
+//! exercised manually, not here): these tests only assert that the *content* mcpify writes
 //! hasn't changed, and stay fast/offline by skipping the npm step entirely.
 //!
 //! Review changes with `cargo insta review` (or accept them directly with
@@ -168,6 +168,23 @@ async fn auth_manager_normalizes_valid_raw_credentials_before_use() {
 }
 
 #[tokio::test]
+async fn single_basic_auth_manager_only_reads_supported_environment_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let manager = std::fs::read_to_string(output_dir.join("src/auth/auth-manager.ts"))
+        .expect("generated auth manager must be readable");
+    assert!(manager.contains("this.authMethod === 'basic'"));
+    assert!(!manager.contains("this.authMethod === 'pat'"));
+    assert!(!manager.contains("this.authMethod === 'apiKey'"));
+}
+
+#[tokio::test]
 async fn validator_uses_json_schema_2020_12_for_openapi_31() {
     let dir = tempfile::tempdir().unwrap();
     let output_dir = dir.path().join("out");
@@ -179,7 +196,7 @@ async fn validator_uses_json_schema_2020_12_for_openapi_31() {
 
     let validator = std::fs::read_to_string(output_dir.join("src/validation/validator.ts"))
         .expect("generated validator must be readable");
-    assert!(validator.contains("ajv/dist/2020"));
+    assert!(validator.contains("import { Ajv2020 } from 'ajv/dist/2020.js';"));
     assert!(!validator.contains("const ajv = new Ajv2020"));
     assert!(validator.contains("new Ajv2020({ allErrors: true, strict: false }).compile"));
 

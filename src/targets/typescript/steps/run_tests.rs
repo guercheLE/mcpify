@@ -14,10 +14,10 @@ const NPM_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// `run_generated_tests` (architecture.md §1, step 11): installs
 /// dependencies and runs the emitted test suite to completion. A run that
-/// generates code but whose tests fail (or don't run) is not a successful
-/// `execute()` (PRD REQ-2.5.1) — there is no separate "does it build" step,
-/// since vitest running at all already requires the TS source to at least
-/// type-check/import cleanly.
+/// generates code but whose production build or tests fail (or don't run) is
+/// not a successful `execute()` (PRD REQ-2.5.1). Vitest transpiles test imports
+/// without enforcing every production TypeScript diagnostic, so `npm run
+/// build` is a separate, mandatory gate.
 pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     run_npm_command(&ctx.output_dir, &["install"], "npm install").await?;
     // Templates are hand-formatted, not run through Biome at render
@@ -27,6 +27,7 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
     // — mirrors `targets::python`'s `ruff check --fix` → `black` order.
     run_npm_command(&ctx.output_dir, &["run", "lint:fix"], "npm run lint:fix").await?;
     run_npm_command(&ctx.output_dir, &["run", "format"], "npm run format").await?;
+    run_npm_command(&ctx.output_dir, &["run", "build"], "npm run build").await?;
     // mcp_store.db leaves Story 5 with an empty semantic_endpoints table —
     // vectors are computed here, in TypeScript, not by mcpify itself (see
     // the plan's embeddings decision), so this must run before `npm test`.

@@ -151,19 +151,25 @@ export class AuthManager {
    * entirely via environment, with no `setup` step required.
    */
   private credentialsFromEnv(): AuthConfig | undefined {
+{%- if "pat" in auth_method_keys %}
     if (this.authMethod === 'pat') {
       const token = process.env.{{ tool_prefix_env }}_TOKEN;
       if (token) return { token };
     }
+{%- endif %}
+{%- if "apiKey" in auth_method_keys %}
     if (this.authMethod === 'apiKey') {
       const apiKey = process.env.{{ tool_prefix_env }}_API_KEY;
       if (apiKey) return { apiKey };
     }
+{%- endif %}
+{%- if "basic" in auth_method_keys %}
     if (this.authMethod === 'basic') {
       const username = process.env.{{ tool_prefix_env }}_USERNAME;
       const password = process.env.{{ tool_prefix_env }}_PASSWORD;
       if (username && password) return { username, password };
     }
+{%- endif %}
     return undefined;
   }
 

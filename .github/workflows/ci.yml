@@ -2,6 +2,12 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      run_full_e2e:
+        description: Run all five generated-language and multi-version acceptance tests
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test:
@@ -55,14 +61,15 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.0.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
 
   e2e:
     # The slow, real acceptance gate for all five targets (v1 Story 14 /
     # v2 Story R8 / v3 Story P8 / v4 Story C8 / v5 Story G8, PRD
     # REQ-2.5.1): the TypeScript test does npm install (including the
-    # @xenova/transformers model download) and npm test; the Rust test
+    # @xenova/transformers model download), npm run build, and npm test;
+    # the Rust test
     # does cargo run --bin populate-embeddings (including the fastembed
     # model download) and cargo test; the Python test does uv sync and uv
     # run pytest (including the sentence-transformers all-mpnet-base-v2
@@ -73,11 +80,10 @@ jobs:
     # ~90MB Xenova/all-MiniLM-L6-v2 ONNX model download plus a real ONNX
     # Runtime inference session), and go test -tags=integration — all
     # five against a generated project, all in tests/e2e_generation.rs,
-    # so this one `cargo test` invocation runs all five. Only on pushes
-    # to main, not every PR, to keep PR feedback fast — it takes minutes,
-    # not seconds. No separate Rust toolchain install needed here: this
-    # workflow already runs on Rust, since mcpify itself is Rust.
-    if: github.event_name == 'push'
+    # so this job runs all five language tests plus the real multi-version
+    # acceptance test. It is opt-in because model and package downloads make
+    # it substantially slower than the regular test matrix.
+    if: inputs.run_full_e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -128,4 +134,5 @@ jobs:
           mkdir -p onnxruntime
           tar -xzf onnxruntime.tgz -C onnxruntime --strip-components=1
       - run: echo "ONNXRUNTIME_SHARED_LIBRARY_PATH=$GITHUB_WORKSPACE/onnxruntime/lib/libonnxruntime.so" >> "$GITHUB_ENV"
-      - run: cargo test --test e2e_generation -- --ignored
+      - run: cargo test --locked --test e2e_generation -- --ignored
+      - run: cargo test --locked --test e2e_multi_version -- --ignored

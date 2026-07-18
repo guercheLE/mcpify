@@ -138,10 +138,6 @@ export class AuthManager {
       const token = process.env.OUT_TOKEN;
       if (token) return { token };
     }
-    if (this.authMethod === 'apiKey') {
-      const apiKey = process.env.OUT_API_KEY;
-      if (apiKey) return { apiKey };
-    }
     if (this.authMethod === 'basic') {
       const username = process.env.OUT_USERNAME;
       const password = process.env.OUT_PASSWORD;
