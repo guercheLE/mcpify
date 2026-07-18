@@ -355,6 +355,65 @@ mod tests {
         {%- endif %}
     }
 
+    {%- if auth_methods.0.key == "oauth2" %}
+    #[tokio::test]
+    async fn stdio_applies_each_supported_credential_header_shape() {
+        let cases = [
+            (
+                Credentials::from([
+                    ("access_token".to_string(), "validated".to_string()),
+                    ("request_header_name".to_string(), "X-Relay".to_string()),
+                    ("request_header_value".to_string(), "relay-value".to_string()),
+                ]),
+                "X-Relay",
+                "relay-value",
+            ),
+            (
+                Credentials::from([
+                    ("access_token".to_string(), "validated".to_string()),
+                    (
+                        "authorization_header".to_string(),
+                        "Bearer explicit".to_string(),
+                    ),
+                ]),
+                "Authorization",
+                "Bearer explicit",
+            ),
+            (
+                Credentials::from([
+                    ("access_token".to_string(), "validated".to_string()),
+                    ("api_key".to_string(), "api-key-value".to_string()),
+                ]),
+                "X-Api-Key",
+                "api-key-value",
+            ),
+        ];
+
+        for (credentials, expected_name, expected_value) in cases {
+            let mut manager = AuthManager::new(AuthMethod::OAuth2);
+            manager.set_credentials(credentials);
+            let headers = manager
+                .apply_auth_headers(
+                    std::collections::HashMap::from([(
+                        "X-Existing".to_string(),
+                        "preserved".to_string(),
+                    )]),
+                    "POST",
+                    "https://example.test/resource",
+                    Transport::Stdio,
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(headers.get(expected_name).map(String::as_str), Some(expected_value));
+            assert_eq!(
+                headers.get("X-Existing").map(String::as_str),
+                Some("preserved")
+            );
+        }
+    }
+    {%- endif %}
+
     {%- if auth_methods.0.key != "oauth1" %}
     #[tokio::test]
     async fn http_transport_uses_the_request_override_not_the_config_cascade() {

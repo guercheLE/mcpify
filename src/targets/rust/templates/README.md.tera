@@ -79,10 +79,10 @@ cargo test
 ## Coverage
 
 ```bash
-bash scripts/coverage.sh   # generates HTML and fails below 80% production-line coverage
+bash scripts/coverage.sh   # generates HTML and fails below 85% production-line coverage
 ```
 
-The 80% gate counts executable production lines under `src/` and removes inline `#[cfg(test)]` module bodies from the LCOV denominator, so adding test code cannot inflate the result. The unfiltered annotated HTML remains useful for line-by-line analysis at `target/coverage/html/index.html`; the gate's machine-readable input is `target/coverage/production-lcov.info`. The command requires Python 3, `cargo-llvm-cov`, and the `llvm-tools-preview` Rust component.
+The 85% gate counts executable production lines under `src/` and removes inline `#[cfg(test)]` module bodies from the LCOV denominator, so adding test code cannot inflate the result. The unfiltered annotated HTML remains useful for line-by-line analysis at `target/coverage/html/index.html`; the gate's machine-readable input is `target/coverage/production-lcov.info`. The command requires Python 3, `cargo-llvm-cov`, and the `llvm-tools-preview` Rust component.
 
 ## Profiling
 
@@ -91,7 +91,7 @@ bash scripts/profile.sh   # CPU profiling via samply, writes profile/bottleneck-
 cargo run --release --features profiling --bin {{ project_name }} -- search "test query"   # heap profiling via dhat-rs, writes dhat-heap.json
 ```
 
-CPU and heap profiling use separate builds: `scripts/profile.sh` deliberately profiles the normal release binary so DHAT allocation tracking cannot distort CPU samples, while the explicit heap command enables the `profiling` feature. `profile/bottleneck-report.md` ranks coverage gaps by missed-line impact and combines them with the hottest CPU functions in one small text file — paste it into an LLM (or hand it to another tool) to find and fix bottlenecks. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
+CPU and heap profiling use separate builds: `scripts/profile.sh` deliberately profiles normal release binaries so DHAT allocation tracking cannot distort CPU samples, while the explicit heap command enables the `profiling` feature. The script records `profile/cold-start.json.gz` from a one-shot CLI search, then attaches to an already-initialized search harness and records `profile/warm-search.json.gz`; this keeps model initialization from being mistaken for steady-state request cost. `profile/bottleneck-report.md` ranks coverage gaps and shows separate cold and warm CPU summaries. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
 
 ---
 

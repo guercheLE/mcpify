@@ -30,6 +30,17 @@ fn read_yaml_if_exists(path: &Path) -> Map<String, Value> {
     }
 }
 
+fn parse_env_value(config_key: &str, value: &str) -> Value {
+    if matches!(
+        config_key,
+        "rate_limit" | "timeout_ms" | "cache_size" | "retry_attempts" | "port"
+    ) && let Ok(number) = value.parse::<u64>()
+    {
+        return Value::Number(number.into());
+    }
+    Value::String(value.to_string())
+}
+
 fn env_overrides() -> Map<String, Value> {
     let mut overrides = Map::new();
     for (config_key, env_suffix) in [
@@ -47,7 +58,7 @@ fn env_overrides() -> Map<String, Value> {
         ("port", "PORT"),
     ] {
         if let Ok(value) = std::env::var(format!("{ENV_PREFIX}_{env_suffix}")) {
-            overrides.insert(config_key.to_string(), Value::String(value));
+            overrides.insert(config_key.to_string(), parse_env_value(config_key, &value));
         }
     }
     overrides
@@ -118,5 +129,19 @@ mod tests {
     fn missing_required_fields_report_a_configuration_error() {
         let err = load_config(Map::new()).unwrap_err();
         assert_eq!(err.code(), "CONFIGURATION_ERROR");
+    }
+
+    #[test]
+    fn numeric_environment_overrides_are_typed_before_deserialization() {
+        assert_eq!(parse_env_value("port", "33017"), json!(33017));
+        assert_eq!(parse_env_value("timeout_ms", "2500"), json!(2500));
+        assert_eq!(
+            parse_env_value("url", "https://api.example"),
+            json!("https://api.example")
+        );
+        assert_eq!(
+            parse_env_value("port", "not-a-number"),
+            json!("not-a-number")
+        );
     }
 }

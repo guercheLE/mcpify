@@ -17,6 +17,7 @@ expression: file_tree(&output_dir)
     "README.md",
     "dist-workspace.toml",
     "docker-compose.yml",
+    "examples/profile_search.rs",
     "mcp_store.db",
     "scripts/check_production_coverage.py",
     "scripts/coverage.sh",

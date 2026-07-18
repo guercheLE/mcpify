@@ -29,6 +29,10 @@ const FILES: &[(&str, &str)] = &[
     ),
     ("tests/cli_smoke.rs.tera", "tests/cli_smoke.rs"),
     ("tests/runtime_paths.rs.tera", "tests/runtime_paths.rs"),
+    (
+        "examples/profile_search.rs.tera",
+        "examples/profile_search.rs",
+    ),
 ];
 
 /// `generate_setup_wizard_and_tests` (architecture.md §1, step 10): the

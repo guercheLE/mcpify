@@ -127,12 +127,83 @@ fn stdio_and_helper_binaries_cover_their_bootstrap_and_error_paths() {
     let setup = generated_server(&["setup"]);
     assert!(!setup.status.success());
 
+    let test_connection = generated_server(&["test-connection"]);
+    assert!(!test_connection.status.success());
+
     let http = generated_server(&[
         "http",
         "--host",
         "not a valid socket address",
         "--port",
         "3000",
+        "--cors-allow",
+        "https://client.example",
     ]);
     assert!(!http.status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn http_command_serves_health_and_shuts_down_cleanly() {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_{{ project_name }}"))
+        .args([
+            "http",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+            "--cors-allow",
+            "https://client.example",
+        ])
+        .env("{{ tool_prefix_env }}_URL", "http://127.0.0.1")
+{% if auth_methods | length > 0 %}
+        .env("{{ tool_prefix_env }}_AUTH_METHOD", "{{ auth_methods.0.key }}")
+{% endif %}
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut response = String::new();
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+            stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            stream
+                .write_all(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.read_to_string(&mut response).unwrap();
+            if response.contains(" 200 OK") {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let signal = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signal.success());
+    let status = child.wait().unwrap();
+    let mut server_stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut server_stderr)
+        .unwrap();
+
+    assert!(status.success(), "{server_stderr}");
+    assert!(response.contains(" 200 OK"), "{response}\n{server_stderr}");
+    assert!(response.contains("access-control-allow-origin: https://client.example"));
 }

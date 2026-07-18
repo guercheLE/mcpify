@@ -20,7 +20,7 @@ cargo llvm-cov report --html --output-dir target/coverage
 python3 scripts/check_production_coverage.py \
   target/coverage/lcov.info \
   target/coverage/production-lcov.info \
-  --minimum 80
+  --minimum 85
 
 echo
 echo "Coverage written to:"

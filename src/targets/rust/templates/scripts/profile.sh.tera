@@ -15,14 +15,65 @@ fi
 
 mkdir -p profile
 cargo build --release --bin {{ project_name }}
+cargo build --release --example profile_search
 
-samply record --save-only --unstable-presymbolicate -o profile/profile.json.gz -- \
+samply record --save-only --unstable-presymbolicate -o profile/cold-start.json.gz -- \
   ./target/release/{{ project_name }} search "test query"
 
 python3 scripts/samply_to_text.py \
-  profile/profile.json.gz \
-  profile/folded-stacks.txt \
-  profile/cpu-top.txt
+  profile/cold-start.json.gz \
+  profile/cold-start-folded-stacks.txt \
+  profile/cold-start-cpu-top.txt
+
+ready_file="$(mktemp "${TMPDIR:-/tmp}/{{ project_name }}-profile-ready.XXXXXX")"
+rm -f "$ready_file"
+warm_pid=""
+samply_pid=""
+cleanup() {
+  if [[ -n "$samply_pid" ]] && kill -0 "$samply_pid" >/dev/null 2>&1; then
+    kill -INT "$samply_pid" >/dev/null 2>&1 || true
+    wait "$samply_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$warm_pid" ]] && kill -0 "$warm_pid" >/dev/null 2>&1; then
+    kill -TERM "$warm_pid" >/dev/null 2>&1 || true
+    wait "$warm_pid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$ready_file"
+}
+trap cleanup EXIT
+
+./target/release/examples/profile_search "$ready_file" 30 &
+warm_pid=$!
+for _ in {1..300}; do
+  if [[ -f "$ready_file" ]]; then
+    break
+  fi
+  if ! kill -0 "$warm_pid" >/dev/null 2>&1; then
+    echo "error: warm-search profiling harness exited before becoming ready" >&2
+    wait "$warm_pid" || true
+    exit 1
+  fi
+  sleep 0.1
+done
+if [[ ! -f "$ready_file" ]]; then
+  echo "error: warm-search profiling harness did not become ready" >&2
+  exit 1
+fi
+
+samply record --save-only --unstable-presymbolicate \
+  --pid "$warm_pid" -o profile/warm-search.json.gz &
+samply_pid=$!
+sleep 5
+kill -INT "$samply_pid"
+wait "$samply_pid"
+samply_pid=""
+
+python3 scripts/samply_to_text.py \
+  profile/warm-search.json.gz \
+  profile/warm-search-folded-stacks.txt \
+  profile/warm-search-cpu-top.txt
+cleanup
+trap - EXIT
 
 {
   echo "# Generated server bottleneck report"
@@ -45,17 +96,24 @@ python3 scripts/samply_to_text.py \
     echo '```'
     echo
   fi
-  echo "## Hottest functions (CPU, self-time sample count)"
+  echo "## Cold-start hottest functions (CPU, self-time sample count)"
   echo
   echo '```'
-  tail -n +2 profile/cpu-top.txt | head -20
+  tail -n +2 profile/cold-start-cpu-top.txt | head -20
+  echo '```'
+  echo
+  echo "## Warm-search hottest functions (CPU, self-time sample count)"
+  echo
+  echo '```'
+  tail -n +2 profile/warm-search-cpu-top.txt | head -20
   echo '```'
 } > profile/bottleneck-report.md
 
 echo
 echo "Profile written to:"
-echo "  profile/profile.json.gz    (interactive — samply load profile/profile.json.gz)"
-echo "  profile/cpu-top.txt        (LLM/tool-ingestable)"
+echo "  profile/cold-start.json.gz (interactive cold-start profile)"
+echo "  profile/warm-search.json.gz (interactive steady-state search profile)"
+echo "  profile/*-cpu-top.txt      (LLM/tool-ingestable summaries)"
 echo "  profile/bottleneck-report.md (combined coverage + hot-path summary; run scripts/coverage.sh first for the coverage section)"
 echo
 echo "For heap profiling: cargo run --release --features profiling --bin {{ project_name }} -- search \"test query\""
