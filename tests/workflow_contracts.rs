@@ -32,3 +32,12 @@ fn tag_workflows_verify_locked_sources_before_releasing() {
     assert!(publish.contains("cargo package --locked"));
     assert!(publish.contains("cargo publish --locked --token"));
 }
+
+#[test]
+fn perf_installs_generated_go_smoke_test_dependencies() {
+    let perf = workflow("perf.yml");
+
+    assert!(perf.contains("actions/setup-go@v6"));
+    assert!(perf.contains("go install github.com/golangci-lint/v2/cmd/golangci-lint@v2.0.0"));
+    assert!(perf.contains("echo \"$(go env GOPATH)/bin\" >> \"$GITHUB_PATH\""));
+}
