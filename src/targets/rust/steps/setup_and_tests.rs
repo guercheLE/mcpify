@@ -8,6 +8,10 @@ use crate::targets::rust::render::render_engine;
 const FILES: &[(&str, &str)] = &[
     ("cli/setup_wizard.rs.tera", "src/cli/setup_wizard.rs"),
     ("scripts/coverage.sh.tera", "scripts/coverage.sh"),
+    (
+        "scripts/check_production_coverage.py.tera",
+        "scripts/check_production_coverage.py",
+    ),
     ("scripts/profile.sh.tera", "scripts/profile.sh"),
     (
         "scripts/samply_to_text.py.tera",
@@ -23,19 +27,18 @@ const FILES: &[(&str, &str)] = &[
         "tests/embeddings_populated.rs.tera",
         "tests/embeddings_populated.rs",
     ),
+    ("tests/cli_smoke.rs.tera", "tests/cli_smoke.rs"),
+    ("tests/runtime_paths.rs.tera", "tests/runtime_paths.rs"),
 ];
 
 /// `generate_setup_wizard_and_tests` (architecture.md §1, step 10): the
 /// interactive `setup` command. Unlike `targets::typescript`'s Story 13
 /// (which conditionally emits separate `tests/unit/auth/*.test.ts` files
 /// per discovered scheme, since vitest needs standalone test files), this
-/// target's "generated test suite" is the inline `#[cfg(test)] mod tests`
-/// block every core/auth/data/services/tools module already carries —
-/// this whole codebase's own convention (see e.g. `steps::auth`'s doc
-/// comment). Those are already scoped to discovered schemes by
-/// construction (Story R4 only emits a strategy's `.rs` file — inline
-/// tests included — for kinds actually present in the spec), so there's
-/// nothing left for this step to conditionally emit.
+/// target's generated suite combines inline `#[cfg(test)]` modules with
+/// public-surface integration tests under `tests/`: CLI behavior is shared
+/// by every project, while `runtime_paths.rs` uses Tera conditions to emit
+/// only the auth-protocol coverage supported by the discovered schemes.
 pub async fn generate_setup_wizard_and_tests(ctx: &GeneratorContext) -> Result<()> {
     let view = RsTemplateContext::from_context(ctx);
     let tera = render_engine()?;

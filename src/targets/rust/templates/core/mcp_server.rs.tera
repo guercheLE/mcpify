@@ -227,3 +227,95 @@ where
     running.waiting().await?;
     Ok(())
 }
+
+{% if auth_methods | length > 0 %}#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config_schema::AuthMethod;
+    use crate::data::store::list_endpoints;
+
+    fn server() -> McpifyServer {
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "url": "https://api.example.test",
+            "auth_method": "{{ auth_methods.0.key }}"
+        }))
+        .unwrap();
+        McpifyServer::new(
+            "{{ default_version_label }}".to_string(),
+            config,
+            Arc::new(Mutex::new(AuthManager::new(AuthMethod::{{ auth_methods.0.variant_name }}))),
+        )
+    }
+
+    #[test]
+    fn argument_defaults_match_the_public_tool_contract() {
+        assert_eq!(default_search_limit(), 5);
+        assert_eq!(default_call_arguments(), serde_json::json!({}));
+        let search: SearchArgs = serde_json::from_value(serde_json::json!({
+            "query": "find an operation"
+        }))
+        .unwrap();
+        assert_eq!(search.limit, 5);
+        let call: CallArgs = serde_json::from_value(serde_json::json!({
+            "operation_id": "an-operation"
+        }))
+        .unwrap();
+        assert_eq!(call.arguments, serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn search_and_get_return_mcp_content_envelopes() {
+        let server = server();
+        let search = server
+            .search(Parameters(SearchArgs {
+                query: "find an operation".to_string(),
+                limit: 2,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(search.is_error, Some(false));
+
+        let operation_id = {
+            let conn = cached_store_connection("{{ default_version_label }}").unwrap();
+            let conn = conn.lock().unwrap();
+            list_endpoints(&conn).unwrap()[0].operation_id.clone()
+        };
+        let get = server
+            .get(Parameters(GetArgs { operation_id }))
+            .await
+            .unwrap();
+        assert_eq!(get.is_error, Some(false));
+
+        let missing = server
+            .get(Parameters(GetArgs {
+                operation_id: "definitely-unknown-operation".to_string(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(missing.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn run_tool_formats_successes_and_failures_consistently() {
+        let server = server();
+        let success = server
+            .run_tool("coverage", async { Ok(serde_json::json!({ "ok": true })) })
+            .await
+            .unwrap();
+        assert_eq!(success.is_error, Some(false));
+        let failure = server
+            .run_tool("coverage", async { anyhow::bail!("coverage failure") })
+            .await
+            .unwrap();
+        assert_eq!(failure.is_error, Some(true));
+    }
+
+    #[test]
+    fn server_info_advertises_the_generated_tool_surface() {
+        let info = server().get_info();
+        assert_eq!(info.protocol_version, ProtocolVersion::V_2024_11_05);
+        assert!(info.capabilities.tools.is_some());
+        assert!(info.instructions.unwrap().contains("search, get, call"));
+    }
+}
+{% endif %}

@@ -117,8 +117,7 @@ fn missing_operation_ids(path: &Path) -> anyhow::Result<Vec<String>> {
 /// explicitly, so the safe default is "populate everything". An explicit
 /// path argument still targets exactly that one file, for a targeted
 /// re-run.
-fn targets() -> Vec<PathBuf> {
-    let mut args = std::env::args().skip(1);
+fn targets_from(mut args: impl Iterator<Item = String>) -> Vec<PathBuf> {
     match args.next().as_deref() {
         Some("--all") | None => VERSION_STORE_FILES
             .iter()
@@ -126,6 +125,10 @@ fn targets() -> Vec<PathBuf> {
             .collect(),
         Some(path) => vec![PathBuf::from(path)],
     }
+}
+
+fn targets() -> Vec<PathBuf> {
+    targets_from(std::env::args().skip(1))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -156,4 +159,23 @@ fn main() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_selection_covers_defaults_all_and_explicit_paths_without_mutating_stores() {
+        let expected = VERSION_STORE_FILES
+            .iter()
+            .map(|(_, file)| PathBuf::from(file))
+            .collect::<Vec<_>>();
+        assert_eq!(targets_from(std::iter::empty()), expected);
+        assert_eq!(targets_from(["--all".to_string()].into_iter()), expected);
+        assert_eq!(
+            targets_from(["copy.db".to_string()].into_iter()),
+            vec![PathBuf::from("copy.db")]
+        );
+    }
 }

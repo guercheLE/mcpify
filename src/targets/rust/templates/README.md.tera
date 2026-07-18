@@ -79,8 +79,10 @@ cargo test
 ## Coverage
 
 ```bash
-bash scripts/coverage.sh   # writes target/coverage/html/index.html (requires cargo-llvm-cov)
+bash scripts/coverage.sh   # generates HTML and fails below 80% production-line coverage
 ```
+
+The 80% gate counts executable production lines under `src/` and removes inline `#[cfg(test)]` module bodies from the LCOV denominator, so adding test code cannot inflate the result. The unfiltered annotated HTML remains useful for line-by-line analysis at `target/coverage/html/index.html`; the gate's machine-readable input is `target/coverage/production-lcov.info`. The command requires Python 3, `cargo-llvm-cov`, and the `llvm-tools-preview` Rust component.
 
 ## Profiling
 

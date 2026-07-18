@@ -1,0 +1,138 @@
+use std::process::{Command, Output};
+
+fn generated_server(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_{{ project_name }}"))
+        .args(args)
+        .env("{{ tool_prefix_env }}_URL", "http://127.0.0.1")
+{% if auth_methods | length > 0 %}
+        .env("{{ tool_prefix_env }}_AUTH_METHOD", "{{ auth_methods.0.key }}")
+{% endif %}
+        .env_remove("{{ tool_prefix_env }}_API_VERSION")
+        .env_remove("{{ tool_prefix_env }}_TRANSPORT")
+        .output()
+        .expect("generated server should run")
+}
+
+fn stdout(output: &Output) -> &str {
+    std::str::from_utf8(&output.stdout).expect("stdout should be UTF-8")
+}
+
+fn stderr(output: &Output) -> &str {
+    std::str::from_utf8(&output.stderr).expect("stderr should be UTF-8")
+}
+
+#[test]
+fn version_help_versions_and_config_are_available() {
+    let version = generated_server(&["version"]);
+    assert!(version.status.success(), "{}", stderr(&version));
+    assert_eq!(stdout(&version), concat!(env!("CARGO_PKG_VERSION"), "\n"));
+
+    let help = generated_server(&["--help"]);
+    assert!(help.status.success(), "{}", stderr(&help));
+    assert!(stdout(&help).contains("Semantic search for operations"));
+
+    let versions = generated_server(&["versions"]);
+    assert!(versions.status.success(), "{}", stderr(&versions));
+    assert!(stdout(&versions).contains("{{ default_version_label }}"));
+
+    let config = generated_server(&["config"]);
+    assert!(config.status.success(), "{}", stderr(&config));
+    let config: serde_json::Value = serde_json::from_slice(&config.stdout).unwrap();
+    assert_eq!(config["api_version"], "{{ default_version_label }}");
+    assert_eq!(config["transport"], "stdio");
+}
+
+{% if operations | length > 0 %}#[test]
+fn search_and_get_exercise_the_embedded_operation_catalog() {
+    let search = generated_server(&["search", "find an operation", "--limit", "2"]);
+    assert!(search.status.success(), "{}", stderr(&search));
+    let results: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
+    assert!(!results.as_array().unwrap().is_empty());
+
+    let get = generated_server(&["get", "{{ operations.0.operation_id }}"]);
+    assert!(get.status.success(), "{}", stderr(&get));
+    let operation: serde_json::Value = serde_json::from_slice(&get.stdout).unwrap();
+    assert_eq!(operation["operation_id"], "{{ operations.0.operation_id }}");
+}
+{% endif %}
+
+#[test]
+fn invalid_commands_operations_and_arguments_fail_without_network_calls() {
+    let unknown_command = generated_server(&["definitely-unknown-command"]);
+    assert_eq!(unknown_command.status.code(), Some(2));
+
+    let unknown_get = generated_server(&["get", "definitely-unknown-operation"]);
+    assert!(!unknown_get.status.success());
+    assert!(stderr(&unknown_get).contains("unknown operationId"));
+
+    let invalid_json = generated_server(&[
+        "call",
+{% if operations | length > 0 %}
+        "{{ operations.0.operation_id }}",
+{% else %}
+        "definitely-unknown-operation",
+{% endif %}
+        "--args",
+        "not-json",
+    ]);
+    assert!(!invalid_json.status.success());
+
+    let unknown_call = generated_server(&[
+        "call",
+        "definitely-unknown-operation",
+        "--args",
+        "{}",
+    ]);
+    assert!(!unknown_call.status.success());
+    assert!(stderr(&unknown_call).contains("unknown operationId"));
+}
+
+#[test]
+fn stdio_and_helper_binaries_cover_their_bootstrap_and_error_paths() {
+    let stdio = generated_server(&["start"]);
+    assert!(!stdio.status.success());
+    assert!(stderr(&stdio).contains("connection closed: initialize request"));
+
+    let healthy = Command::new(env!("CARGO_BIN_EXE_{{ project_name }}-healthcheck"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(healthy.status.success(), "{}", stderr(&healthy));
+
+    let empty = tempfile::tempdir().unwrap();
+    let unhealthy = Command::new(env!("CARGO_BIN_EXE_{{ project_name }}-healthcheck"))
+        .current_dir(empty.path())
+        .output()
+        .unwrap();
+    assert!(!unhealthy.status.success());
+
+    let populate = Command::new(env!("CARGO_BIN_EXE_{{ project_name }}-populate-embeddings"))
+        .arg("definitely-missing-store.db")
+        .output()
+        .unwrap();
+    assert!(!populate.status.success());
+
+    let store_copy = empty.path().join("mcp_store.db");
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mcp_store.db"),
+        &store_copy,
+    )
+    .unwrap();
+    let populated = Command::new(env!("CARGO_BIN_EXE_{{ project_name }}-populate-embeddings"))
+        .arg(&store_copy)
+        .output()
+        .unwrap();
+    assert!(populated.status.success(), "{}", stderr(&populated));
+
+    let setup = generated_server(&["setup"]);
+    assert!(!setup.status.success());
+
+    let http = generated_server(&[
+        "http",
+        "--host",
+        "not a valid socket address",
+        "--port",
+        "3000",
+    ]);
+    assert!(!http.status.success());
+}

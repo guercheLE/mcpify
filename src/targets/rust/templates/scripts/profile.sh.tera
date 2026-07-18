@@ -29,7 +29,11 @@ python3 scripts/samply_to_text.py \
   echo
   echo "Generated $(date -u +%Y-%m-%dT%H:%M:%SZ)."
   echo
-  if [ -f target/coverage/lcov.info ]; then
+  coverage_report="target/coverage/production-lcov.info"
+  if [ ! -f "$coverage_report" ]; then
+    coverage_report="target/coverage/lcov.info"
+  fi
+  if [ -f "$coverage_report" ]; then
     echo "## Coverage gaps (most missed lines)"
     echo
     echo '```'
@@ -37,7 +41,7 @@ python3 scripts/samply_to_text.py \
       /^SF:/ { file=substr($0,4); hit=0; total=0 }
       /^DA:/ { total++; split($0,a,","); if (a[2]+0 > 0) hit++ }
       /^end_of_record/ { if (total > 0 && hit < total) { missed=total-hit; pct=100*hit/total; printf "%6d missed  %6.1f%% covered  %s  (%d/%d lines)\n", missed, pct, file, hit, total } }
-    ' target/coverage/lcov.info | sort -nr -k1,1 | head -20
+    ' "$coverage_report" | sort -nr -k1,1 | head -20
     echo '```'
     echo
   fi

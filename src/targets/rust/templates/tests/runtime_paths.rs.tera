@@ -1,0 +1,130 @@
+{% if "oauth2" in auth_method_keys %}use std::collections::VecDeque;
+
+use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+
+use {{ crate_name }}::auth::auth_manager::AuthManager;
+use {{ crate_name }}::auth::auth_strategy::{AuthConfig, AuthStrategy};
+use {{ crate_name }}::auth::strategies::oauth2::OAuth2Strategy;
+use {{ crate_name }}::core::config_schema::{AuthMethod, Config};
+use {{ crate_name }}::data::store::EndpointRecord;
+use {{ crate_name }}::tools::call_tool::call_operation;
+
+async fn mock_http(responses: Vec<&'static str>) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut responses = VecDeque::from(responses);
+    let handle = tokio::spawn(async move {
+        while let Some(body) = responses.pop_front() {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let headers_end = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|index| index + 4);
+                if let Some(headers_end) = headers_end {
+                    let headers = String::from_utf8_lossy(&request[..headers_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= headers_end + content_length {
+                        break;
+                    }
+                }
+            }
+            let wire = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(wire.as_bytes()).await.unwrap();
+        }
+    });
+    (format!("http://{address}"), handle)
+}
+
+#[tokio::test]
+async fn oauth_code_exchange_and_refresh_cover_the_real_http_protocol() {
+    let (token_url, server) = mock_http(vec![
+        r#"{"access_token":"first","refresh_token":"refresh-one","expires_in":3600}"#,
+        r#"{"access_token":"second","refresh_token":"refresh-two","expires_in":3600}"#,
+    ])
+    .await;
+    let mut config = AuthConfig::new();
+    config.insert("client_id".to_string(), "coverage-client".to_string());
+    config.insert("client_secret".to_string(), "coverage-secret".to_string());
+    config.insert("token_url".to_string(), token_url);
+    config.insert("authorization_code".to_string(), "coverage-code".to_string());
+    config.insert("redirect_uri".to_string(), "http://127.0.0.1/callback".to_string());
+    config.insert("code_verifier".to_string(), "coverage-verifier".to_string());
+
+    let strategy = OAuth2Strategy;
+    let first = strategy.authenticate(&config).await.unwrap();
+    assert_eq!(first["authorization_header"], "Bearer first");
+    assert!(strategy.validate_credentials(&first));
+    let second = strategy.refresh_token(&first).await.unwrap();
+    assert_eq!(second["authorization_header"], "Bearer second");
+    server.await.unwrap();
+
+    assert!(OAuth2Strategy.authenticate(&AuthConfig::new()).await.is_err());
+    assert!(
+        OAuth2Strategy
+            .refresh_token(&Default::default())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn call_operation_validates_dispatches_and_returns_the_api_response() {
+    let (base_url, server) = mock_http(vec![r#"{"value":"covered"}"#]).await;
+    let config: Config = serde_json::from_value(json!({
+        "url": base_url,
+        "auth_method": "oauth2",
+        "retry_attempts": 0,
+        "rate_limit": 100,
+        "timeout_ms": 1_000
+    }))
+    .unwrap();
+    let endpoint = EndpointRecord {
+        operation_id: "coverage-operation".to_string(),
+        path: "/coverage".to_string(),
+        method: "POST".to_string(),
+        summary: None,
+        description: None,
+        input_schema: json!({ "parameters": [] }),
+        output_schema: Value::Null,
+        auth_scheme_ref: None,
+    };
+    let mut auth = AuthManager::new(AuthMethod::OAuth2);
+    auth.set_credentials(std::collections::HashMap::from([
+        ("access_token".to_string(), "coverage-access".to_string()),
+        ("expires_at".to_string(), u64::MAX.to_string()),
+    ]));
+
+    let response = call_operation(
+        &endpoint,
+        &config,
+        &mut auth,
+        "coverage-operation",
+        json!({}),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response, json!({ "value": "covered" }));
+    server.await.unwrap();
+}
+{% endif %}

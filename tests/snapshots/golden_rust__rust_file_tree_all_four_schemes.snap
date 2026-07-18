@@ -18,6 +18,7 @@ expression: file_tree(&output_dir)
     "dist-workspace.toml",
     "docker-compose.yml",
     "mcp_store.db",
+    "scripts/check_production_coverage.py",
     "scripts/coverage.sh",
     "scripts/profile.sh",
     "scripts/samply_to_text.py",
@@ -82,5 +83,7 @@ expression: file_tree(&output_dir)
     "src/validation/generated_schemas.json.zst",
     "src/validation/mod.rs",
     "src/validation/validator.rs",
+    "tests/cli_smoke.rs",
     "tests/embeddings_populated.rs",
+    "tests/runtime_paths.rs",
 ]

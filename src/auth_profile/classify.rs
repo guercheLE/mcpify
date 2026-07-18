@@ -265,7 +265,10 @@ components:
         let schemes = classify_schemes(&doc);
         assert_eq!(
             schemes[0].scopes,
-            vec!["playlist-modify-public".to_string(), "user-read-email".to_string()],
+            vec![
+                "playlist-modify-public".to_string(),
+                "user-read-email".to_string()
+            ],
             "scopes must come back sorted regardless of declaration order"
         );
     }
@@ -280,7 +283,8 @@ components:
     }
 
     #[test]
-    fn oauth2_scopes_fall_back_to_whichever_flow_is_present_when_no_authorization_code_flow_exists() {
+    fn oauth2_scopes_fall_back_to_whichever_flow_is_present_when_no_authorization_code_flow_exists()
+    {
         let doc = doc_with_scheme(
             "      type: oauth2\n      flows:\n        clientCredentials:\n          tokenUrl: https://example.com/token\n          scopes:\n            service-scope: Service-to-service\n",
         );

@@ -113,6 +113,49 @@ struct OAuth2Setup {
     callback_port: u16,
 }
 
+fn build_oauth_authorization(
+    credentials: &mut HashMap<String, String>,
+    scope: &str,
+    callback_port: u16,
+    use_pkce: bool,
+) -> anyhow::Result<String> {
+    let redirect_uri = format!("http://127.0.0.1:{callback_port}/callback");
+    credentials.insert("redirect_uri".to_string(), redirect_uri.clone());
+
+    let code_challenge = if use_pkce {
+        let (verifier, challenge) =
+            {{ crate_name }}::auth::strategies::oauth2::create_pkce_pair();
+        credentials.insert("code_verifier".to_string(), verifier);
+        Some(challenge)
+    } else {
+        None
+    };
+
+    let client_id = credentials
+        .get("client_id")
+        .ok_or_else(|| anyhow::anyhow!("OAuth2 setup requires client_id"))?;
+    let auth_base = credentials
+        .get("auth_url")
+        .ok_or_else(|| anyhow::anyhow!("OAuth2 setup requires auth_url"))?;
+    let mut auth_url = format!(
+        "{}?response_type=code\
+         &client_id={}\
+         &redirect_uri={}\
+         &scope={}",
+        auth_base,
+        utf8_percent_encode(client_id, NON_ALPHANUMERIC),
+        utf8_percent_encode(&redirect_uri, NON_ALPHANUMERIC),
+        utf8_percent_encode(scope, NON_ALPHANUMERIC),
+    );
+    if let Some(challenge) = code_challenge {
+        auth_url.push_str(&format!(
+            "&code_challenge_method=S256&code_challenge={}",
+            utf8_percent_encode(&challenge, NON_ALPHANUMERIC),
+        ));
+    }
+    Ok(auth_url)
+}
+
 /// Blocking phase: collects client_id/secret, scopes, generates PKCE,
 /// builds the authorization URL, and asks whether to use the local
 /// callback server or paste the code manually. Must be called via
@@ -191,41 +234,9 @@ fn build_oauth2_setup_blocking() -> anyhow::Result<OAuth2Setup> {
     {%- endif %}
     .prompt()?;
 
-    // Redirect URI — MUST be registered with the OAuth2 app.
     let callback_port: u16 = 8888;
-    let redirect_uri = format!("http://127.0.0.1:{callback_port}/callback");
-    credentials.insert("redirect_uri".to_string(), redirect_uri.clone());
-
-    // PKCE: generate code_verifier/code_challenge when not using a secret.
-    let code_challenge_opt = if use_pkce {
-        let (verifier, challenge) =
-            {{ crate_name }}::auth::strategies::oauth2::create_pkce_pair();
-        credentials.insert("code_verifier".to_string(), verifier);
-        Some(challenge)
-    } else {
-        None
-    };
-
-    // Build the authorization URL. The user opens this in their browser to
-    // grant permission; the provider then redirects to
-    // redirect_uri?code=<authorization_code>.
-    let client_id = credentials.get("client_id").unwrap().clone();
-    let mut auth_url = format!(
-        "{}?response_type=code\
-         &client_id={}\
-         &redirect_uri={}\
-         &scope={}",
-        auth_base,
-        utf8_percent_encode(&client_id, NON_ALPHANUMERIC),
-        utf8_percent_encode(&redirect_uri, NON_ALPHANUMERIC),
-        utf8_percent_encode(&scope, NON_ALPHANUMERIC),
-    );
-    if let Some(challenge) = &code_challenge_opt {
-        auth_url.push_str(&format!(
-            "&code_challenge_method=S256&code_challenge={}",
-            utf8_percent_encode(challenge, NON_ALPHANUMERIC),
-        ));
-    }
+    let auth_url = build_oauth_authorization(&mut credentials, &scope, callback_port, use_pkce)?;
+    let redirect_uri = credentials["redirect_uri"].clone();
 
     let use_callback = inquire::Confirm::new(&format!(
         "Start a local callback server on {redirect_uri} to capture the\n\
@@ -245,6 +256,12 @@ fn build_oauth2_setup_blocking() -> anyhow::Result<OAuth2Setup> {
 /// Temporary local HTTP server that receives the OAuth2 redirect and
 /// extracts the `?code=` query parameter, then shuts itself down.
 async fn wait_for_oauth_callback(port: u16) -> anyhow::Result<String> {
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse()?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    receive_oauth_callback(listener).await
+}
+
+async fn receive_oauth_callback(listener: tokio::net::TcpListener) -> anyhow::Result<String> {
     use axum::{Router, extract::Query, routing::get};
     use std::sync::{Arc, Mutex};
     use tokio::sync::oneshot;
@@ -274,8 +291,6 @@ async fn wait_for_oauth_callback(port: u16) -> anyhow::Result<String> {
         }),
     );
 
-    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse()?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -443,6 +458,14 @@ async fn prompt_persistence(
     })
     .await??;
 
+    persist_selection(selection, env, config_fields).await
+}
+
+async fn persist_selection(
+    selection: &str,
+    env: &HashMap<String, String>,
+    config_fields: &serde_json::Value,
+) -> anyhow::Result<()> {
     match selection {
         "Write a .env file" => {
             let contents = env
@@ -471,6 +494,53 @@ async fn prompt_persistence(
         }
     }
     Ok(())
+}
+
+fn build_runtime_settings(
+    url: String,
+    auth_method: AuthMethod,
+    api_version: String,
+    transport: Transport,
+    credentials: &HashMap<String, String>,
+) -> anyhow::Result<(HashMap<String, String>, serde_json::Value)> {
+    let mut env = HashMap::new();
+    env.insert("{{ tool_prefix_env }}_URL".to_string(), url);
+    env.insert(
+        "{{ tool_prefix_env }}_AUTH_METHOD".to_string(),
+        serde_json::to_value(auth_method)?
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    );
+    env.insert("{{ tool_prefix_env }}_API_VERSION".to_string(), api_version);
+    env.insert(
+        "{{ tool_prefix_env }}_TRANSPORT".to_string(),
+        serde_json::to_value(transport)?
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    );
+    for (key, value) in credentials {
+        {%- if "oauth2" in auth_method_keys %}
+        if auth_method == AuthMethod::OAuth2
+            && matches!(
+                key.as_str(),
+                "authorization_code" | "code_verifier" | "redirect_uri" | "token_url" | "auth_url"
+            )
+        {
+            continue;
+        }
+        {%- endif %}
+        env.insert(format!("{{ tool_prefix_env }}_{}", to_env_key(key)), value.clone());
+    }
+
+    let config_fields = serde_json::json!({
+        "url": env.get("{{ tool_prefix_env }}_URL"),
+        "auth_method": env.get("{{ tool_prefix_env }}_AUTH_METHOD"),
+        "api_version": env.get("{{ tool_prefix_env }}_API_VERSION"),
+        "transport": env.get("{{ tool_prefix_env }}_TRANSPORT"),
+    });
+    Ok((env, config_fields))
 }
 
 /// Prints a ready-to-use MCP client config (the `mcpServers` block a host
@@ -553,52 +623,8 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
 
     save_credential("active-credentials", &serde_json::to_string(&credentials)?)?;
 
-    let mut env: HashMap<String, String> = HashMap::new();
-    env.insert("{{ tool_prefix_env }}_URL".to_string(), url);
-    env.insert(
-        "{{ tool_prefix_env }}_AUTH_METHOD".to_string(),
-        serde_json::to_value(auth_method)?
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-    );
-    env.insert("{{ tool_prefix_env }}_API_VERSION".to_string(), api_version);
-    env.insert(
-        "{{ tool_prefix_env }}_TRANSPORT".to_string(),
-        serde_json::to_value(transport)?
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-    );
-    for (key, value) in &credentials {
-        {%- if "oauth2" in auth_method_keys %}
-        if auth_method == AuthMethod::OAuth2
-            && matches!(
-                key.as_str(),
-                "authorization_code" | "code_verifier" | "redirect_uri" | "token_url" | "auth_url"
-            )
-        {
-            // Single-use (authorization_code, code_verifier — an
-            // authorization code is spent in minutes and a PKCE verifier
-            // is useless without it) or provider-fixed (redirect_uri,
-            // token_url, auth_url — already baked into the keychain blob
-            // `save_credential` wrote above) fields. Persisting these to
-            // `.env`/config.yml/CLI args would either leak a spent code or
-            // go stale the moment the provider rotates an endpoint.
-            continue;
-        }
-        {%- endif %}
-        env.insert(format!("{{ tool_prefix_env }}_{}", to_env_key(key)), value.clone());
-    }
-
-    // Non-secret fields only, keyed exactly as `config_manager::load_config`
-    // reads them back from YAML — credentials never go in this file.
-    let config_fields = serde_json::json!({
-        "url": env.get("{{ tool_prefix_env }}_URL"),
-        "auth_method": env.get("{{ tool_prefix_env }}_AUTH_METHOD"),
-        "api_version": env.get("{{ tool_prefix_env }}_API_VERSION"),
-        "transport": env.get("{{ tool_prefix_env }}_TRANSPORT"),
-    });
+    let (env, config_fields) =
+        build_runtime_settings(url, auth_method, api_version, transport, &credentials)?;
 
     prompt_persistence(&env, &config_fields).await?;
     print_mcp_client_config(transport, auth_method, &env);
@@ -610,3 +636,142 @@ pub async fn run_setup_wizard() -> anyhow::Result<()> {
     println!("Setup complete! Run: {{ project_name }} {run_command}");
     Ok(())
 }
+
+{% if auth_methods | length > 0 %}#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_settings_keep_config_fields_and_filter_ephemeral_oauth_values() {
+        let credentials = HashMap::from([
+            ("client_id".to_string(), "client".to_string()),
+            ("authorization_code".to_string(), "spent-code".to_string()),
+        ]);
+        let (env, config) = build_runtime_settings(
+            "https://api.example/v1".to_string(),
+            AuthMethod::{{ auth_methods.0.variant_name }},
+            "{{ default_version_label }}".to_string(),
+            Transport::Stdio,
+            &credentials,
+        )
+        .unwrap();
+
+        assert_eq!(config["url"], "https://api.example/v1");
+        assert_eq!(config["transport"], "stdio");
+        assert_eq!(env["{{ tool_prefix_env }}_CLIENT_ID"], "client");
+        {%- if auth_methods.0.key == "oauth2" %}
+        assert!(!env.contains_key("{{ tool_prefix_env }}_AUTHORIZATION_CODE"));
+        {%- else %}
+        assert_eq!(env["{{ tool_prefix_env }}_AUTHORIZATION_CODE"], "spent-code");
+        {%- endif %}
+    }
+
+    #[tokio::test]
+    async fn noninteractive_output_paths_cover_both_transports() {
+        let credentials = HashMap::new();
+        let (env, config) = build_runtime_settings(
+            "https://api.example/v1".to_string(),
+            AuthMethod::{{ auth_methods.0.variant_name }},
+            "{{ default_version_label }}".to_string(),
+            Transport::Http,
+            &credentials,
+        )
+        .unwrap();
+        persist_selection("Print a ready-to-run CLI invocation", &env, &config)
+            .await
+            .unwrap();
+        print_mcp_client_config(
+            Transport::Stdio,
+            AuthMethod::{{ auth_methods.0.variant_name }},
+            &env,
+        );
+        print_mcp_client_config(
+            Transport::Http,
+            AuthMethod::{{ auth_methods.0.variant_name }},
+            &env,
+        );
+    }
+
+    #[tokio::test]
+    async fn file_persistence_writes_env_and_local_yaml() {
+        static CWD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _guard = CWD_LOCK.lock().await;
+        let original = std::env::current_dir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let credentials = HashMap::new();
+        let (env, config) = build_runtime_settings(
+            "https://api.example/v1".to_string(),
+            AuthMethod::{{ auth_methods.0.variant_name }},
+            "{{ default_version_label }}".to_string(),
+            Transport::Stdio,
+            &credentials,
+        )
+        .unwrap();
+        persist_selection("Write a .env file", &env, &config)
+            .await
+            .unwrap();
+        persist_selection(
+            "Write a config.yml file (local — ./{{ project_name }}.config.yml, read only from this directory)",
+            &env,
+            &config,
+        )
+        .await
+        .unwrap();
+
+        assert!(dir.path().join(".env").is_file());
+        assert!(dir.path().join("{{ project_name }}.config.yml").is_file());
+        std::env::set_current_dir(original).unwrap();
+    }
+
+    {%- if "oauth2" in auth_method_keys %}
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn oauth_credentials() -> HashMap<String, String> {
+        HashMap::from([
+            ("client_id".to_string(), "client id/with spaces".to_string()),
+            (
+                "auth_url".to_string(),
+                "https://accounts.example/authorize".to_string(),
+            ),
+        ])
+    }
+
+    #[test]
+    fn oauth_authorization_url_encodes_values_and_validates_inputs() {
+        let mut credentials = oauth_credentials();
+        let url = build_oauth_authorization(&mut credentials, "scope:a scope:b", 43210, true)
+            .unwrap();
+        assert!(url.contains("client_id=client%20id%2Fwith%20spaces"));
+        assert!(url.contains("scope=scope%3Aa%20scope%3Ab"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(credentials.contains_key("code_verifier"));
+
+        let mut confidential = oauth_credentials();
+        assert!(!build_oauth_authorization(&mut confidential, "one", 8888, false)
+            .unwrap()
+            .contains("code_challenge"));
+        assert!(build_oauth_authorization(&mut HashMap::new(), "one", 8888, false).is_err());
+    }
+
+    #[tokio::test]
+    async fn callback_server_extracts_the_authorization_code() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let callback = tokio::spawn(receive_oauth_callback(listener));
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(b"GET /callback?code=code-123 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(response.contains("Authorized!"));
+        assert_eq!(callback.await.unwrap().unwrap(), "code-123");
+    }
+    {%- endif %}
+}
+{% endif %}
