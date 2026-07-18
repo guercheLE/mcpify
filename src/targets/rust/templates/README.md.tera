@@ -86,10 +86,10 @@ bash scripts/coverage.sh   # writes target/coverage/html/index.html (requires ca
 
 ```bash
 bash scripts/profile.sh   # CPU profiling via samply, writes profile/bottleneck-report.md
-cargo run --release --features profiling -- search "test query"   # heap profiling via dhat-rs, writes dhat-heap.json
+cargo run --release --features profiling --bin {{ project_name }} -- search "test query"   # heap profiling via dhat-rs, writes dhat-heap.json
 ```
 
-`profile/bottleneck-report.md` combines coverage gaps with the hottest CPU functions in one small text file — paste it into an LLM (or hand it to another tool) to find and fix bottlenecks. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
+CPU and heap profiling use separate builds: `scripts/profile.sh` deliberately profiles the normal release binary so DHAT allocation tracking cannot distort CPU samples, while the explicit heap command enables the `profiling` feature. `profile/bottleneck-report.md` ranks coverage gaps by missed-line impact and combines them with the hottest CPU functions in one small text file — paste it into an LLM (or hand it to another tool) to find and fix bottlenecks. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
 
 ---
 

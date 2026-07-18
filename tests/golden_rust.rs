@@ -152,3 +152,39 @@ async fn curated_file_contents_all_four_schemes() {
         insta::assert_snapshot!(format!("rust_{name}_all_four_schemes"), contents);
     }
 }
+
+/// Profiling is exposed through generated commands and scripts, so assert at
+/// that public generated-project seam rather than against template internals.
+#[tokio::test]
+async fn generated_profiling_keeps_cpu_and_heap_instrumentation_separate() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let cargo_toml = std::fs::read_to_string(output_dir.join("Cargo.toml")).unwrap();
+    let readme = std::fs::read_to_string(output_dir.join("README.md")).unwrap();
+    let profile_script = std::fs::read_to_string(output_dir.join("scripts/profile.sh")).unwrap();
+
+    assert!(cargo_toml.contains("default-run = \"out\""));
+
+    let cpu_build = profile_script
+        .lines()
+        .find(|line| line.starts_with("cargo build "))
+        .expect("generated profile script must build the CPU-profiled binary");
+    assert_eq!(cpu_build, "cargo build --release --bin out");
+    assert!(!cpu_build.contains("profiling"));
+    assert!(profile_script.contains("--features profiling --bin out -- search"));
+    assert!(profile_script.contains("## Coverage gaps (most missed lines)"));
+    assert!(profile_script.contains("sort -nr -k1,1 | head -20"));
+
+    assert!(
+        readme.contains(
+            "cargo run --release --features profiling --bin out -- search \"test query\""
+        )
+    );
+    assert!(readme.contains("CPU and heap profiling use separate builds"));
+}
