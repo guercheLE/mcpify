@@ -9,6 +9,16 @@ fn generated_server(args: &[&str]) -> Output {
 {% endif %}
         .env_remove("{{ tool_prefix_env }}_API_VERSION")
         .env_remove("{{ tool_prefix_env }}_TRANSPORT")
+        // Isolates the config cascade's global-config layer
+        // (`~/.{{ project_name }}/config.yml`, resolved via
+        // `core::credential_storage::resolve_home_dir`'s `HOME`/`USERPROFILE`
+        // lookup) from whatever this machine's real user has configured —
+        // without this, a developer who has actually run `setup` for real
+        // use gets spurious failures here from their own settings (e.g. a
+        // stale `api_version` predating a version-labeling change),
+        // depending on the machine `cargo test` happens to run on rather
+        // than on this crate's own code.
+        .env("HOME", env!("CARGO_TARGET_TMPDIR"))
         .output()
         .expect("generated server should run")
 }
