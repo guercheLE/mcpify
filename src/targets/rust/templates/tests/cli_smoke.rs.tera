@@ -88,6 +88,56 @@ fn invalid_commands_operations_and_arguments_fail_without_network_calls() {
 }
 
 #[test]
+fn profiling_workload_controls_are_hidden_and_reject_zero_iterations() {
+    let help = generated_server(&["search", "--help"]);
+    assert!(help.status.success(), "{}", stderr(&help));
+    assert!(!stdout(&help).contains("profile-warmups"));
+    assert!(!stdout(&help).contains("profile-iterations"));
+
+    let invalid = generated_server(&[
+        "search",
+        "test query",
+        "--profile-iterations",
+        "0",
+    ]);
+    assert!(!invalid.status.success());
+    assert!(stderr(&invalid).contains("--profile-iterations must be at least 1"));
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_feature_records_warmed_search_and_non_search_commands() {
+    fn heap_profile() -> serde_json::Value {
+        let contents = std::fs::read_to_string("dhat-heap.json")
+            .expect("profiling command should write dhat-heap.json");
+        serde_json::from_str(&contents).expect("dhat-heap.json should contain valid JSON")
+    }
+
+    let search = generated_server(&[
+        "search",
+        "test query",
+        "--profile-warmups",
+        "1",
+        "--profile-iterations",
+        "2",
+    ]);
+    assert!(search.status.success(), "{}", stderr(&search));
+    assert!(stderr(&search).contains("1 warmup(s), 2 measured iteration(s)"));
+    let search_profile = heap_profile();
+    assert_eq!(search_profile["dhatFileVersion"], 2);
+    assert_eq!(search_profile["mode"], "rust-heap");
+    assert!(search_profile["cmd"].as_str().unwrap().contains("search test query"));
+    assert!(!search_profile["pps"].as_array().unwrap().is_empty());
+
+    let version = generated_server(&["version"]);
+    assert!(version.status.success(), "{}", stderr(&version));
+    assert_eq!(stdout(&version), concat!(env!("CARGO_PKG_VERSION"), "\n"));
+    let version_profile = heap_profile();
+    assert_eq!(version_profile["dhatFileVersion"], 2);
+    assert!(version_profile["cmd"].as_str().unwrap().ends_with(" version"));
+}
+
+#[test]
 fn stdio_and_helper_binaries_cover_their_bootstrap_and_error_paths() {
     let stdio = generated_server(&["start"]);
     assert!(!stdio.status.success());

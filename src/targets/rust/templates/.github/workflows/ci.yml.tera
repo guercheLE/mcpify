@@ -17,3 +17,4 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      - run: cargo test --locked --features profiling --test cli_smoke profiling_feature_records_warmed_search_and_non_search_commands -- --exact

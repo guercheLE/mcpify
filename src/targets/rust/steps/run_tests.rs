@@ -77,6 +77,22 @@ pub async fn run_generated_tests(ctx: &GeneratorContext) -> Result<()> {
         "cargo test --locked",
     )
     .await?;
+    run_cargo_command(
+        &ctx.output_dir,
+        &[
+            "test",
+            "--locked",
+            "--features",
+            "profiling",
+            "--test",
+            "cli_smoke",
+            "profiling_feature_records_warmed_search_and_non_search_commands",
+            "--",
+            "--exact",
+        ],
+        "cargo test --locked --features profiling --test cli_smoke profiling_feature_records_warmed_search_and_non_search_commands -- --exact",
+    )
+    .await?;
     if ctx.publish_registry {
         run_cargo_command(
             &ctx.output_dir,

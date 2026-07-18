@@ -156,7 +156,7 @@ async fn curated_file_contents_all_four_schemes() {
 /// Profiling is exposed through generated commands and scripts, so assert at
 /// that public generated-project seam rather than against template internals.
 #[tokio::test]
-async fn generated_profiling_keeps_cpu_and_heap_instrumentation_separate() {
+async fn generated_profiling_is_self_contained_and_keeps_instrumentation_separate() {
     let dir = tempfile::tempdir().unwrap();
     let output_dir = dir.path().join("out");
     generate(
@@ -168,6 +168,7 @@ async fn generated_profiling_keeps_cpu_and_heap_instrumentation_separate() {
     let cargo_toml = std::fs::read_to_string(output_dir.join("Cargo.toml")).unwrap();
     let readme = std::fs::read_to_string(output_dir.join("README.md")).unwrap();
     let profile_script = std::fs::read_to_string(output_dir.join("scripts/profile.sh")).unwrap();
+    let heap_script = std::fs::read_to_string(output_dir.join("scripts/profile-heap.sh")).unwrap();
 
     assert!(cargo_toml.contains("default-run = \"out\""));
 
@@ -177,14 +178,35 @@ async fn generated_profiling_keeps_cpu_and_heap_instrumentation_separate() {
         .expect("generated profile script must build the CPU-profiled binary");
     assert_eq!(cpu_build, "cargo build --release --bin out");
     assert!(!cpu_build.contains("profiling"));
-    assert!(profile_script.contains("--features profiling --bin out -- search"));
+    assert!(
+        profile_script
+            .lines()
+            .any(|line| line == "export OUT_URL=\"${OUT_URL:-http://127.0.0.1}\"")
+    );
+    assert!(
+        profile_script
+            .lines()
+            .any(|line| line == "export OUT_AUTH_METHOD=\"${OUT_AUTH_METHOD:-basic}\"")
+    );
+    assert!(profile_script.contains("For heap profiling: bash scripts/profile-heap.sh"));
     assert!(profile_script.contains("## Coverage gaps (most missed lines)"));
     assert!(profile_script.contains("sort -nr -k1,1 | head -20"));
 
+    assert!(heap_script.contains("cargo run --release --features profiling --bin out -- search"));
+    assert!(heap_script.contains("--profile-warmups \"$profile_warmups\""));
+    assert!(heap_script.contains("--profile-iterations \"$profile_iterations\""));
+    assert!(heap_script.contains("PROFILE_HEAP_WARMUPS"));
+    assert!(heap_script.contains("PROFILE_HEAP_ITERATIONS"));
     assert!(
-        readme.contains(
-            "cargo run --release --features profiling --bin out -- search \"test query\""
-        )
+        heap_script
+            .lines()
+            .any(|line| line == "export OUT_URL=\"${OUT_URL:-http://127.0.0.1}\"")
     );
+    assert!(
+        heap_script
+            .lines()
+            .any(|line| line == "export OUT_AUTH_METHOD=\"${OUT_AUTH_METHOD:-basic}\"")
+    );
+    assert!(readme.contains("bash scripts/profile-heap.sh"));
     assert!(readme.contains("CPU and heap profiling use separate builds"));
 }

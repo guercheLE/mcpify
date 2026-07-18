@@ -14,11 +14,23 @@ if ! command -v samply >/dev/null 2>&1; then
 fi
 
 mkdir -p profile
+
+# Catalog search does not call the generated API, but its shared config loader
+# still requires these fields. Preserve explicit operator configuration and
+# provide harmless local defaults for a fresh generated checkout.
+export {{ tool_prefix_env }}_URL="{% raw %}${{% endraw %}{{ tool_prefix_env }}_URL{% raw %}:-http://127.0.0.1}{% endraw %}"
+{% if auth_methods | length > 0 %}
+export {{ tool_prefix_env }}_AUTH_METHOD="{% raw %}${{% endraw %}{{ tool_prefix_env }}_AUTH_METHOD{% raw %}:-{% endraw %}{{ auth_methods.0.key }}{% raw %}}{% endraw %}"
+{% endif %}
+
+profile_query="${PROFILE_QUERY:-test query}"
+profile_warm_seconds="${PROFILE_WARM_SECONDS:-30}"
+
 cargo build --release --bin {{ project_name }}
 cargo build --release --example profile_search
 
 samply record --save-only --unstable-presymbolicate -o profile/cold-start.json.gz -- \
-  ./target/release/{{ project_name }} search "test query"
+  ./target/release/{{ project_name }} search "$profile_query"
 
 python3 scripts/samply_to_text.py \
   profile/cold-start.json.gz \
@@ -42,7 +54,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-./target/release/examples/profile_search "$ready_file" 30 &
+./target/release/examples/profile_search "$ready_file" "$profile_warm_seconds" &
 warm_pid=$!
 for _ in {1..300}; do
   if [[ -f "$ready_file" ]]; then
@@ -116,5 +128,4 @@ echo "  profile/warm-search.json.gz (interactive steady-state search profile)"
 echo "  profile/*-cpu-top.txt      (LLM/tool-ingestable summaries)"
 echo "  profile/bottleneck-report.md (combined coverage + hot-path summary; run scripts/coverage.sh first for the coverage section)"
 echo
-echo "For heap profiling: cargo run --release --features profiling --bin {{ project_name }} -- search \"test query\""
-echo "  (writes dhat-heap.json — view at https://nnethercote.github.io/dh_view/dh_view.html)"
+echo "For heap profiling: bash scripts/profile-heap.sh"

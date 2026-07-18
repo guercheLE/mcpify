@@ -13,6 +13,7 @@ const FILES: &[(&str, &str)] = &[
         "scripts/check_production_coverage.py",
     ),
     ("scripts/profile.sh.tera", "scripts/profile.sh"),
+    ("scripts/profile-heap.sh.tera", "scripts/profile-heap.sh"),
     (
         "scripts/samply_to_text.py.tera",
         "scripts/samply_to_text.py",

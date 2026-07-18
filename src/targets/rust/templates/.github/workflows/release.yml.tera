@@ -33,6 +33,8 @@ jobs:
         run: cargo install cargo-dist --version 0.32.0 --locked
       - name: Verify
         run: cargo test --locked
+      - name: Verify DHAT profiling lifecycle
+        run: cargo test --locked --features profiling --test cli_smoke profiling_feature_records_warmed_search_and_non_search_commands -- --exact
       - name: Build archives and installers
         run: dist build --artifacts=local --target={% raw %}${{ matrix.target }}{% endraw %}
       - uses: actions/upload-artifact@v7

@@ -301,8 +301,17 @@ async fn rust_release_templates_encode_onnx_runtime_constraints() {
         .render(".github/workflows/release.yml.tera", &tera_context)
         .unwrap();
     assert!(release.contains("cargo test --locked"));
+    assert!(release.contains(
+        "cargo test --locked --features profiling --test cli_smoke profiling_feature_records_warmed_search_and_non_search_commands -- --exact"
+    ));
     assert!(release.contains("dist build --artifacts=local"));
     assert!(!release.contains("docker/build-push-action"));
+    let ci = tera
+        .render(".github/workflows/ci.yml.tera", &tera_context)
+        .unwrap();
+    assert!(ci.contains(
+        "cargo test --locked --features profiling --test cli_smoke profiling_feature_records_warmed_search_and_non_search_commands -- --exact"
+    ));
     let container = tera
         .render(".github/workflows/container-image.yml.tera", &tera_context)
         .unwrap();

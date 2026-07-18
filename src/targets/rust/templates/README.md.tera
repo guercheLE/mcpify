@@ -87,11 +87,11 @@ The 85% gate counts executable production lines under `src/` and removes inline 
 ## Profiling
 
 ```bash
-bash scripts/profile.sh   # CPU profiling via samply, writes profile/bottleneck-report.md
-cargo run --release --features profiling --bin {{ project_name }} -- search "test query"   # heap profiling via dhat-rs, writes dhat-heap.json
+bash scripts/profile.sh        # clean CPU profiling via samply
+bash scripts/profile-heap.sh   # steady-state heap profiling via dhat-rs
 ```
 
-CPU and heap profiling use separate builds: `scripts/profile.sh` deliberately profiles normal release binaries so DHAT allocation tracking cannot distort CPU samples, while the explicit heap command enables the `profiling` feature. The script records `profile/cold-start.json.gz` from a one-shot CLI search, then attaches to an already-initialized search harness and records `profile/warm-search.json.gz`; this keeps model initialization from being mistaken for steady-state request cost. `profile/bottleneck-report.md` ranks coverage gaps and shows separate cold and warm CPU summaries. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
+CPU and heap profiling use separate builds: `scripts/profile.sh` deliberately profiles normal release binaries so DHAT allocation tracking cannot distort CPU samples, while `scripts/profile-heap.sh` starts DHAT collection only after its warmup search. CPU profiling records `profile/cold-start.json.gz` from a one-shot CLI search, then attaches to an already-initialized search harness and records `profile/warm-search.json.gz`; this keeps model initialization from being mistaken for steady-state request cost. Heap profiling defaults to 1 warmup and 5 measured searches, configurable with `PROFILE_HEAP_WARMUPS`, `PROFILE_HEAP_ITERATIONS`, and `PROFILE_QUERY`. Both scripts supply harmless URL/auth defaults when a generated checkout has not been configured because catalog search never calls the generated API. `profile/bottleneck-report.md` ranks coverage gaps and shows separate cold and warm CPU summaries. Requires [samply](https://github.com/mstange/samply) (`cargo install samply`).
 
 ---
 

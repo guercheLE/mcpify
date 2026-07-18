@@ -86,7 +86,7 @@ percent-encoding = "2"
 dhat = { version = "0.3", optional = true }
 
 [features]
-# Opt-in heap profiling via dhat-rs (see the explicit README command) — a
+# Opt-in heap profiling via dhat-rs (scripts/profile-heap.sh) — a
 # pure-library profiler with no external OS tool needed, so it works
 # identically on every platform. Zero cost when the feature isn't enabled.
 profiling = ["dep:dhat"]

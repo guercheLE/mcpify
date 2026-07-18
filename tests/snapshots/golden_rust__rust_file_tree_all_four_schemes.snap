@@ -21,6 +21,7 @@ expression: file_tree(&output_dir)
     "mcp_store.db",
     "scripts/check_production_coverage.py",
     "scripts/coverage.sh",
+    "scripts/profile-heap.sh",
     "scripts/profile.sh",
     "scripts/samply_to_text.py",
     "src/auth/auth_manager.rs",
