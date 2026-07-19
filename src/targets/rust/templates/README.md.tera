@@ -74,6 +74,46 @@ Other subcommands: `{{ project_name }} test-connection` (verify the configured A
 {{ project_name }} http --host 127.0.0.1 --port 3000  # HTTP transport
 ```
 
+### Connect an MCP client
+
+**stdio:** after running `{{ project_name }} setup`, configure an MCP host to spawn the server. Include the connection settings printed by the wizard:
+
+```json
+{
+  "mcpServers": {
+    "{{ project_name }}": {
+      "command": "{{ project_name }}",
+      "args": ["start"],
+      "env": {
+        "{{ tool_prefix_env }}_URL": "<your target API URL>"{% if auth_methods | length > 0 %},
+        "{{ tool_prefix_env }}_AUTH_METHOD": "{{ auth_methods.0.key }}"{% endif %}{% if version_entries | length > 1 %},
+        "{{ tool_prefix_env }}_API_VERSION": "{{ default_version_label }}"{% endif %},
+        "{{ tool_prefix_env }}_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+Use the absolute executable path if `{{ project_name }}` is not on the MCP host's `PATH`. The stdio server reads the connection settings from this `env` block and uses the credentials saved by `setup`.
+
+**HTTP:**{% if auth_methods | length > 0 and auth_methods.0.header_location == "header" %} every request must carry its own `{{ auth_methods.0.header_name }}` header{% else %} every request must carry its own credentials{% endif %} — HTTP transport intentionally does not fall back to credentials stored on the server:
+
+```json
+{
+  "mcpServers": {
+    "{{ project_name }}": {
+      "url": "http://127.0.0.1:3000/mcp"{% if auth_methods | length > 0 and auth_methods.0.header_location == "header" %},
+      "headers": {
+        "{{ auth_methods.0.header_name }}": "<credential value>"
+      }{% endif %}
+    }
+  }
+}
+```
+
+Keep the listener on localhost unless you have added appropriate network access controls and TLS in front of it.
+
 ## Docker
 
 ```bash
