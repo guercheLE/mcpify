@@ -38,6 +38,17 @@ samply setup   # macOS only — codesigns samply so it can attach to processes
   `run_generated_tests` fails for the fixture/language used (this script's
   job is capturing a profile, not asserting generation succeeded).
 
+  Note: `samply record` needs the `perf_event_open` syscall, which some
+  sandboxed CI environments block outright (no `CAP_PERFMON`, or the syscall
+  denied regardless of `kernel.perf_event_paranoid`) — this is common on a
+  subset of GitHub-hosted runners. `profile.sh` tries lowering
+  `kernel.perf_event_paranoid` via `sudo sysctl` first (harmless no-op if it
+  doesn't help or isn't permitted), and if samply still can't produce a
+  profile, degrades gracefully: it writes placeholder
+  `folded-stacks.txt`/`top-functions.txt` explaining why and exits 0 rather
+  than failing the job — this workflow is diagnostic-only and never a gate,
+  so a blocked profiler shouldn't turn the run red.
+
   Note: the profiled command itself invokes `run_generated_tests`, which for
   most targets means a real `npm install`/`cargo build`/`uv sync`/`dotnet
   restore`/`go mod tidy` plus a real embeddings-model download on first run

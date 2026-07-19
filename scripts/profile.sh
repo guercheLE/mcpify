@@ -29,6 +29,16 @@ echo "project's own dependencies as part of the run_generated_tests gate; reruns
 echo "reuse warmed caches)"
 
 
+# Best-effort: on some Linux hosts (including a subset of GitHub-hosted
+# runners) the default kernel.perf_event_paranoid blocks the perf_event_open
+# syscall samply needs. Lowering it only helps when the runner's sandboxing
+# allows perf_event_open at all (some hosted-runner sandboxes block the
+# syscall outright regardless of this sysctl) — harmless to attempt, and a
+# no-op on macOS or when we lack sudo.
+if [ "$(uname -s)" = "Linux" ]; then
+  sudo sysctl -w kernel.perf_event_paranoid=-1 >/dev/null 2>&1 || true
+fi
+
 # The profiled command's own exit status is irrelevant here — this script's
 # job is "did we capture a profile," not "did generation succeed" (that's
 # run_generated_tests's job, in the real pipeline). Don't let `set -e` abort
@@ -38,6 +48,26 @@ samply record --save-only --unstable-presymbolicate -o target/profile/profile.js
   ./target/release/mcpify -i "$FIXTURE" -o "$OUT_DIR" -l "$LANGUAGE" -f
 samply_status=$?
 set -e
+
+# Some sandboxed CI environments block perf_event_open outright (e.g. no
+# CAP_PERFMON, or the syscall is denied by the runner's sandbox regardless of
+# kernel.perf_event_paranoid) — samply then exits nonzero *before* the target
+# ever runs, so no profile.json.gz is produced. Since this workflow is
+# diagnostic-only and never a gate, degrade gracefully instead of failing the
+# job: emit placeholder outputs and a clear explanation rather than crashing
+# on the missing file in scripts/samply_to_text.py.
+if [ ! -f target/profile/profile.json.gz ]; then
+  echo "warning: samply exited $samply_status without producing a profile —" >&2
+  echo "this environment likely blocks perf_event_open (common on sandboxed CI" >&2
+  echo "runners). Skipping profile conversion; coverage results are unaffected." >&2
+  : > target/profile/folded-stacks.txt
+  {
+    echo "# Top functions by self-time (sample count)"
+    echo "# (unavailable: samply could not record — perf_event_open is likely blocked in this environment)"
+  } > target/profile/top-functions.txt
+  exit 0
+fi
+
 if [ "$samply_status" -ne 0 ]; then
   echo "note: the profiled 'mcpify' invocation exited non-zero ($samply_status) —" >&2
   echo "still profiled fine; this just means run_generated_tests failed for the" >&2
