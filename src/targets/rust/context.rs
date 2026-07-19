@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::Serialize;
 
 use super::naming::{pascal_case, screaming_snake_case, snake_case};
@@ -121,10 +123,14 @@ pub struct RsTemplateContext {
 impl RsTemplateContext {
     pub fn from_context(ctx: &GeneratorContext) -> Self {
         let settings = read_settings(&ctx.output_dir);
-        let project_name = ctx
-            .output_dir_name()
+        let project_name = existing_project_name(&ctx.output_dir)
             .map(|name| kebab_slug(&name))
             .filter(|slug| !slug.is_empty())
+            .or_else(|| {
+                ctx.output_dir_name()
+                    .map(|name| kebab_slug(&name))
+                    .filter(|slug| !slug.is_empty())
+            })
             .unwrap_or_else(|| kebab_slug(&ctx.api_title));
 
         let crate_name = snake_case(&project_name);
@@ -239,6 +245,68 @@ fn kebab_slug(input: &str) -> String {
     snake_case(input).replace('_', "-")
 }
 
+/// Reads the existing `src/main.rs` binary's declared name out of
+/// `<output_dir>/Cargo.toml`, if one is already there -- a `sync` run's
+/// `output_dir` is an already-generated project's own checkout, and its
+/// established name is the correct source of truth for `project_name`, not
+/// `output_dir_name()`. Every project this generator has produced is
+/// checked out locally in a directory named after its *GitHub repo*
+/// (conventionally suffixed `-rs`, e.g. `topdesk-mcp-rs`), which is almost
+/// never the same string as the project's own name (e.g. `topdesk-mcp`) --
+/// re-deriving `project_name` from the directory on every `sync` silently
+/// renames the project (and everything downstream of that name: package,
+/// binaries, env var prefix, config paths, README) out from under an
+/// already-published crate. A fresh `generate` (no existing Cargo.toml yet)
+/// still falls back to `output_dir_name()`/`api_title` as before.
+///
+/// Deliberately reads the `[[bin]] path = "src/main.rs"` entry's `name`,
+/// not `[package] name`: the two are expected to diverge for a project
+/// whose desired package name collides with an existing crates.io package
+/// (see bamboo-mcp-rs, hand-patched to `name = "bamboo-mcp-rs"` while every
+/// binary/env-var/doc reference stays `bamboo-mcp`) -- `[[bin]]`'s name is
+/// the one every template variable in this file actually derives from.
+fn existing_project_name(output_dir: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(output_dir.join("Cargo.toml")).ok()?;
+
+    let mut current_section = String::new();
+    let mut current_bin_path: Option<&str> = None;
+    let mut current_bin_name: Option<&str> = None;
+
+    for line in contents.lines() {
+        let line = line.split('#').next().unwrap_or(line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(section) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            if current_section == "[[bin]]"
+                && current_bin_path == Some("src/main.rs")
+                && let Some(name) = current_bin_name
+            {
+                return Some(name.to_string());
+            }
+            current_section = format!("[{section}]");
+            current_bin_path = None;
+            current_bin_name = None;
+            continue;
+        }
+        if current_section != "[[bin]]" {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let value = value.trim().trim_matches('"');
+            match key.trim() {
+                "path" => current_bin_path = Some(value),
+                "name" => current_bin_name = Some(value),
+                _ => {}
+            }
+        }
+    }
+    if current_section == "[[bin]]" && current_bin_path == Some("src/main.rs") {
+        return current_bin_name.map(str::to_string);
+    }
+    None
+}
+
 /// Maps a classified auth scheme onto the literal `auth_method` config value
 /// the generated project's auth-manager `match`es on, mirroring the 4-way
 /// discriminant proven by bitbucket-dc-mcp/jira-dc-mcp plus `apiKey`.
@@ -312,6 +380,70 @@ mod tests {
         assert_eq!(view.project_name, "my-api-mcp");
         assert_eq!(view.package_name, "my-api-mcp");
         assert_eq!(view.tool_prefix, "my-api-mcp");
+    }
+
+    /// A `sync` run's `output_dir` is a real, already-generated project's
+    /// own checkout -- almost always named after its GitHub repo (e.g.
+    /// `widget-api-mcp-rs`), not the project's own established name (e.g.
+    /// `widget-api-mcp`). `existing_project_name` must win over
+    /// `output_dir_name()` here, or every `sync` silently renames an
+    /// already-published crate to match whatever the local checkout
+    /// directory happens to be called.
+    #[test]
+    fn preserves_the_existing_project_name_on_sync_even_when_the_checkout_dir_differs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"widget-api-mcp\"\n",
+                "version = \"1.2.3\"\n",
+                "\n",
+                "[[bin]]\n",
+                "name = \"widget-api-mcp\"\n",
+                "path = \"src/main.rs\"\n",
+                "\n",
+                "[[bin]]\n",
+                "name = \"widget-api-mcp-healthcheck\"\n",
+                "path = \"src/bin/healthcheck.rs\"\n",
+            ),
+        )
+        .unwrap();
+
+        let mut ctx = sample_context();
+        ctx.output_dir = dir.path().to_path_buf();
+
+        let view = RsTemplateContext::from_context(&ctx);
+        assert_eq!(view.project_name, "widget-api-mcp");
+    }
+
+    /// The crates.io-collision workaround (see bamboo-mcp-rs) hand-patches
+    /// `[package] name` to a value that differs from every `[[bin]]` name
+    /// -- `existing_project_name` must read the `src/main.rs` binary's
+    /// name, not `[package] name`, or a re-sync would collapse that
+    /// deliberate split back together.
+    #[test]
+    fn reads_the_main_binary_name_not_the_package_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"widget-api-mcp-rs\"\n",
+                "default-run = \"widget-api-mcp\"\n",
+                "\n",
+                "[[bin]]\n",
+                "name = \"widget-api-mcp\"\n",
+                "path = \"src/main.rs\"\n",
+            ),
+        )
+        .unwrap();
+
+        let mut ctx = sample_context();
+        ctx.output_dir = dir.path().to_path_buf();
+
+        let view = RsTemplateContext::from_context(&ctx);
+        assert_eq!(view.project_name, "widget-api-mcp");
     }
 
     #[test]
