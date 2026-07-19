@@ -15,3 +15,10 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# The `plan` job's CI steps hand-add a fmt/clippy/test gate (rustfmt,
+# clippy, and the Go-target golangci-lint toolchain) before `dist` builds
+# release artifacts -- not something `dist generate` itself knows to emit,
+# so without this it flags release.yml as "out of date" and refuses to
+# run (`dist host --steps=create` fails outright rather than silently
+# dropping the gate).
+allow-dirty = ["ci"]
