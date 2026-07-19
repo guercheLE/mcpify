@@ -5,6 +5,7 @@ expression: file_tree(&output_dir)
 [
     ".dockerignore",
     ".env.example",
+    ".github/FUNDING.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/container-image.yml",
     ".github/workflows/docker-build.yml",

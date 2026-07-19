@@ -79,6 +79,7 @@ const FILES: &[(&str, &str)] = &[
         ".github/workflows/publish-crate.yml.tera",
         ".github/workflows/publish-crate.yml",
     ),
+    (".github/FUNDING.yml.tera", ".github/FUNDING.yml"),
     ("dist-workspace.toml.tera", "dist-workspace.toml"),
 ];
 
