@@ -3,15 +3,22 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::parse::OpenApiDocument;
-use super::schema_resolve::{resolve_input_schema_value, resolve_output_schema_value};
+use super::schema_resolve::{
+    embed_literal_schema_defs, resolve_input_schema_value, resolve_output_schema_value,
+};
 
 /// One HTTP operation flattened out of `doc.paths`, ready for both
 /// `mcp_store.db` assembly (Story 5) and, later, target template contexts
-/// (Story 12). `input_schema`/`output_schema` here are a straightforward
-/// JSON snapshot of the OpenAPI-level parameter/requestBody/responses
-/// objects — not yet a fully `$ref`-resolved JSON Schema document. That
-/// resolution is Story 12's concern when building the generated project's
-/// Ajv validator; this struct only needs to survive a JSON round-trip.
+/// (Story 12). `input_schema`/`output_schema` here are a JSON snapshot of
+/// the OpenAPI-level parameter/requestBody/responses objects — the shape
+/// `get` and api-client's parameter-location lookups need (a `parameters`
+/// array with `in`/`name`, a per-status `responses` map) — rather than the
+/// normalized-to-a-single-object-schema shape of `validation_*_schema`
+/// below. Any `$ref` to a `components.schemas` entry found within it is
+/// rewritten to `#/$defs/...` with the referenced component embedded
+/// alongside in a top-level `$defs` map (`embed_literal_schema_defs`), so
+/// the snapshot stays self-contained for a reader who only ever sees this
+/// one operation — never the full spec.
 #[derive(Debug, Clone)]
 pub struct NormalizedOperation {
     pub operation_id: String,
@@ -106,26 +113,43 @@ pub fn normalize_operations(doc: &OpenApiDocument) -> Vec<NormalizedOperation> {
                 .and_then(|requirement| requirement.keys().next())
                 .cloned();
 
+            let mut input_schema = serde_json::json!({
+                "parameters": operation.get("parameters").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "requestBody": operation.get("requestBody").cloned().unwrap_or(Value::Null),
+            });
+            embed_literal_schema_defs(&mut input_schema, components);
+
+            let mut output_schema = operation
+                .get("responses")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            embed_literal_schema_defs(&mut output_schema, components);
+
             operations.push(NormalizedOperation {
                 operation_id,
                 path: path.clone(),
                 method: method.to_string(),
-                summary: operation.get("summary").and_then(Value::as_str).map(str::to_string),
+                summary: operation
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 description: operation
                     .get("description")
                     .and_then(Value::as_str)
                     .map(str::to_string),
-                input_schema: serde_json::json!({
-                    "parameters": operation.get("parameters").cloned().unwrap_or_else(|| serde_json::json!([])),
-                    "requestBody": operation.get("requestBody").cloned().unwrap_or(Value::Null),
-                }),
-                output_schema: operation
-                    .get("responses")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({})),
+                input_schema,
+                output_schema,
                 auth_scheme_ref,
-                validation_input_schema: resolve_input_schema_value(operation, components, doc.is_31()),
-                validation_output_schema: resolve_output_schema_value(operation, components, doc.is_31()),
+                validation_input_schema: resolve_input_schema_value(
+                    operation,
+                    components,
+                    doc.is_31(),
+                ),
+                validation_output_schema: resolve_output_schema_value(
+                    operation,
+                    components,
+                    doc.is_31(),
+                ),
             });
         }
     }
@@ -357,6 +381,119 @@ paths:
         assert_eq!(
             operations[0].validation_input_schema["$schema"],
             "https://json-schema.org/draft/2020-12/schema"
+        );
+    }
+
+    #[test]
+    fn literal_output_schema_embeds_defs_for_its_refs() {
+        let doc = parse(
+            r##"
+openapi: 3.0.0
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Widget"
+components:
+  schemas:
+    Widget:
+      type: object
+      properties:
+        name:
+          type: string
+        parent:
+          $ref: "#/components/schemas/Widget"
+    Unused:
+      type: object
+      properties:
+        ignored:
+          type: string
+"##,
+        );
+
+        let operations = normalize_operations(&doc);
+        let output = &operations[0].output_schema;
+
+        // The literal snapshot `get` hands back keeps its per-status-code
+        // shape (unlike `validation_output_schema`), but the dangling
+        // `$ref` inside it now resolves within the same document.
+        let item_ref = &output["200"]["content"]["application/json"]["schema"]["items"]["$ref"];
+        assert_eq!(item_ref, "#/$defs/Widget");
+        assert_eq!(
+            output["$defs"]["Widget"]["properties"]["name"]["type"],
+            "string"
+        );
+        // Self-reference must point at the rewritten location too, not the
+        // original OpenAPI-only pointer that has nothing to resolve
+        // against inside this snapshot.
+        assert_eq!(
+            output["$defs"]["Widget"]["properties"]["parent"]["$ref"],
+            "#/$defs/Widget"
+        );
+        assert!(output["$defs"].get("Unused").is_none());
+    }
+
+    #[test]
+    fn literal_input_schema_embeds_defs_while_keeping_parameter_locations() {
+        let doc = parse(
+            r##"
+openapi: 3.0.0
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Widget"
+      responses:
+        "201":
+          description: Created
+components:
+  schemas:
+    Widget:
+      type: object
+      properties:
+        name:
+          type: string
+"##,
+        );
+
+        let operations = normalize_operations(&doc);
+        let input = &operations[0].input_schema;
+
+        // api-client's parameter-location lookup (`in`/`name`) still works
+        // against the literal snapshot's `parameters` array.
+        assert_eq!(input["parameters"][0]["name"], "id");
+        assert_eq!(input["parameters"][0]["in"], "path");
+
+        let body_ref = &input["requestBody"]["content"]["application/json"]["schema"]["$ref"];
+        assert_eq!(body_ref, "#/$defs/Widget");
+        assert_eq!(
+            input["$defs"]["Widget"]["properties"]["name"]["type"],
+            "string"
         );
     }
 }

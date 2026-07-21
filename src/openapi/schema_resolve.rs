@@ -154,6 +154,26 @@ fn decorate_value_schema(
     schema
 }
 
+/// Rewrites every `$ref`/`$dynamicRef` inside `schema` to point at a
+/// `$defs` map embedded directly in `schema` itself, populated with every
+/// component transitively reachable from it — the same self-containment
+/// `decorate_value_schema` gives the Ajv-facing `validation_*_schema`
+/// fields, applied instead to the *literal* OpenAPI-shape snapshot
+/// (`NormalizedOperation::input_schema`/`output_schema`) that the `get`
+/// tool hands back verbatim. Without this, a `get` response can contain a
+/// `$ref` naming a component schema that appears nowhere else in the
+/// response, leaving the caller (human or LLM) nothing to resolve it
+/// against.
+pub fn embed_literal_schema_defs(schema: &mut Value, components: Option<&Map<String, Value>>) {
+    rewrite_refs(schema);
+    let defs = build_defs_from_value(schema, components);
+    if defs.as_object().is_some_and(|map| !map.is_empty())
+        && let Value::Object(map) = schema
+    {
+        map.insert("$defs".to_string(), defs);
+    }
+}
+
 pub fn resolve_input_schema_value(
     operation: &Map<String, Value>,
     components: Option<&Map<String, Value>>,
