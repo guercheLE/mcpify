@@ -28,6 +28,10 @@ const FILES: &[(&str, &str)] = &[
         "tests/embeddings_populated.rs.tera",
         "tests/embeddings_populated.rs",
     ),
+    (
+        "tests/schema_references.rs.tera",
+        "tests/schema_references.rs",
+    ),
     ("tests/cli_smoke.rs.tera", "tests/cli_smoke.rs"),
     ("tests/runtime_paths.rs.tera", "tests/runtime_paths.rs"),
     (

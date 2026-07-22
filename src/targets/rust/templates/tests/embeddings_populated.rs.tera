@@ -27,6 +27,26 @@
 use {{ crate_name }}::data::store::{VERSION_STORE_FILES, open_store, resolve_store_path};
 
 #[test]
+fn operation_summaries_and_descriptions_have_no_underscores() {
+    for (label, _file) in VERSION_STORE_FILES {
+        let path = resolve_store_path(label)
+            .unwrap_or_else(|err| panic!("failed to resolve store path for '{label}': {err}"));
+        let conn = open_store(&path)
+            .unwrap_or_else(|err| panic!("failed to open store for '{label}': {err}"));
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT count(*) FROM endpoints
+                 WHERE coalesce(summary, '') LIKE '%\_%' ESCAPE '\'
+                    OR coalesce(description, '') LIKE '%\_%' ESCAPE '\'"#,
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|err| panic!("failed to inspect prose for '{label}': {err}"));
+        assert_eq!(count, 0, "version '{label}' contains identifier underscores in prose");
+    }
+}
+
+#[test]
 #[ignore = "requires `{{ project_name }}-populate-embeddings --all` to have been run first"]
 fn semantic_endpoints_row_count_matches_endpoints_row_count_for_every_version() {
     let mut mismatches = Vec::new();

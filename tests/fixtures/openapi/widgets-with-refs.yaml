@@ -6,7 +6,8 @@ paths:
   /widgets:
     post:
       operationId: createWidget
-      summary: Create a widget
+      summary: Create_a_widget
+      description: Creates_a_widget_from_the_request_body.
       requestBody:
         required: true
         content:
@@ -30,7 +31,8 @@ paths:
   /widgets/{id}:
     get:
       operationId: getWidget
-      summary: Get a widget
+      summary: Get_a_widget
+      description: Gets_a_widget_by_id.
       parameters:
         - name: id
           in: path

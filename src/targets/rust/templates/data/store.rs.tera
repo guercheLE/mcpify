@@ -19,8 +19,25 @@ use anyhow::{Context, Result};
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, Row};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 static REGISTER_VEC_EXTENSION: Once = Once::new();
+
+fn publish_without_overwrite(tmp_path: &Path, path: &Path) -> Result<()> {
+    if let Err(error) = std::fs::hard_link(tmp_path, path)
+        && !path.is_file()
+    {
+        let _ = std::fs::remove_file(tmp_path);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to publish extracted store data at '{}' without overwriting it",
+                path.display()
+            )
+        });
+    }
+    let _ = std::fs::remove_file(tmp_path);
+    Ok(())
+}
 
 // mcpify:versions:begin
 pub const VERSION_STORE_FILES: &[(&str, &str)] = &[
@@ -55,29 +72,16 @@ const VERSION_STORE_BYTES: &[(&str, &[u8])] = &[
 /// `cargo install`. The one difference from a schema lookup: SQLite
 /// needs a real file to open a `Connection` against (unlike a `&[u8]`
 /// JSON schema, read directly from memory), so this extracts the
-/// embedded bytes to a fixed path in the OS temp dir the first time a
-/// given `api_version` is requested in this process, then reuses that
-/// same path on every later call (see `EXTRACTED` below) — a rebuilt
-/// binary with different embedded bytes (a `populate_embeddings` re-run,
-/// an `add-version` update) still can never be shadowed by a stale
-/// leftover from a previous install, since a fresh process always
-/// extracts fresh.
+/// embedded bytes to a content-addressed path in the OS temp dir. A rebuilt
+/// binary with different embedded bytes gets a different path, while repeated
+/// and concurrent calls reuse the same immutable file. This is important on
+/// Windows, where replacing a SQLite file that another connection has open can
+/// fail with a sharing violation.
 pub fn resolve_store_path(api_version: &str) -> Result<PathBuf> {
-    // `cached_store_connection` calls this on every tool invocation, and
-    // tool calls run concurrently (each MCP request is its own tokio
-    // task) — caching the resolved path per `api_version`, guarded by
-    // this same mutex, means the actual extract-and-rename-into-place
-    // below only ever runs once per `api_version` per process: every
-    // concurrent first caller blocks here rather than racing each other
-    // to write the same destination file. That race used to be real: on
-    // Windows, `rename`-ing over a destination another thread already has
-    // open via `open_store` can fail outright ("failed to move extracted
-    // store data into place") rather than just being non-atomic, unlike
-    // POSIX where the same rename silently succeeds.
-    static EXTRACTED: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
-    let extracted = EXTRACTED.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut extracted = extracted.lock().unwrap();
-    if let Some(path) = extracted.get(api_version) {
+    static RESOLVED_PATHS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+    let resolved_paths = RESOLVED_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut resolved_paths = resolved_paths.lock().unwrap();
+    if let Some(path) = resolved_paths.get(api_version) {
         return Ok(path.clone());
     }
 
@@ -94,71 +98,40 @@ pub fn resolve_store_path(api_version: &str) -> Result<PathBuf> {
 
     let mut dir = std::env::temp_dir();
     dir.push(concat!(env!("CARGO_PKG_NAME"), "-store"));
+    let fingerprint = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    dir.push(&fingerprint[..16]);
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create temp dir '{}'", dir.display()))?;
 
     let path = dir.join(file);
-    // Writes to a uniquely-named sibling file first, then `rename`s it
-    // into place, rather than writing `path` directly, so a *different*
-    // process sharing this same temp dir (a fresh `populate_embeddings`
-    // run, a second server instance starting up concurrently) never
-    // observes a momentarily-empty or partially-written file and fails
-    // with "no such table: endpoints". `rename` within the same
-    // directory is atomic on both POSIX and Windows with respect to
-    // content — a reader always sees either the complete previous copy
-    // or the complete new one, never a partial write. The per-`api_version`
-    // cache above prevents *this* process from ever racing itself, but a
-    // genuinely different OS process can still have `path` open at the
-    // exact moment of the rename below — see the retry loop there for why
-    // that's handled with a backoff instead of a lock.
-    //
-    // `bytes` is the zstd-compressed `.db.zst` payload (see
-    // `VERSION_STORE_BYTES`), not a valid SQLite file itself — it must be
-    // decompressed before `rusqlite::Connection::open` can read it.
-    let decompressed = zstd::stream::decode_all(bytes).with_context(|| {
-        format!("failed to decompress embedded store data for api_version '{api_version}'")
-    })?;
-    static UNIQUE: AtomicU64 = AtomicU64::new(0);
-    let tmp_path = dir.join(format!(
-        "{file}.{}.{}.tmp",
-        std::process::id(),
-        UNIQUE.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&tmp_path, decompressed).with_context(|| {
-        format!(
-            "failed to extract embedded store data to '{}'",
-            tmp_path.display()
-        )
-    })?;
-    // The per-`api_version` cache above only prevents *this* process from
-    // racing itself; it can't stop a genuinely different OS process (a
-    // concurrently-starting second server instance, a `populate_embeddings`
-    // run) from having `path` open via `open_store` at the exact moment
-    // this rename happens. On Windows that can make the rename itself fail
-    // outright rather than just being non-atomic, unlike POSIX — but the
-    // other process's use of the file is always brief (open, backup into
-    // memory or write, close), so a few retries with a short backoff
-    // resolve it without needing any cross-process locking.
-    let mut rename_attempts = 0u32;
-    loop {
-        match std::fs::rename(&tmp_path, &path) {
-            Ok(()) => break,
-            Err(_) if rename_attempts < 5 => {
-                rename_attempts += 1;
-                std::thread::sleep(Duration::from_millis(50 * u64::from(rename_attempts)));
-            }
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!(
-                        "failed to move extracted store data into place at '{}'",
-                        path.display()
-                    )
-                });
-            }
-        }
+    if !path.is_file() {
+        // Write a complete unique sibling and publish it with a hard link,
+        // whose create-if-absent behavior is atomic and never replaces the
+        // destination. Another process may win the same extraction race; in
+        // that case its complete final file is reused and our private temp is
+        // discarded.
+        let decompressed = zstd::stream::decode_all(bytes).with_context(|| {
+            format!("failed to decompress embedded store data for api_version '{api_version}'")
+        })?;
+        static UNIQUE: AtomicU64 = AtomicU64::new(0);
+        let tmp_path = dir.join(format!(
+            "{file}.{}.{}.tmp",
+            std::process::id(),
+            UNIQUE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&tmp_path, decompressed).with_context(|| {
+            format!(
+                "failed to extract embedded store data to '{}'",
+                tmp_path.display()
+            )
+        })?;
+        publish_without_overwrite(&tmp_path, &path)?;
     }
 
-    extracted.insert(api_version.to_string(), path.clone());
+    resolved_paths.insert(api_version.to_string(), path.clone());
     Ok(path)
 }
 
@@ -227,7 +200,8 @@ fn cached_in_memory_connection(cache_key: &str, path: &Path) -> Result<&'static 
     static CACHE: OnceLock<Mutex<HashMap<String, &'static Mutex<Connection>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-    if let Some(conn) = cache.lock().unwrap().get(cache_key) {
+    let mut cache = cache.lock().unwrap();
+    if let Some(conn) = cache.get(cache_key) {
         return Ok(conn);
     }
 
@@ -241,8 +215,8 @@ fn cached_in_memory_connection(cache_key: &str, path: &Path) -> Result<&'static 
     drop(disk_conn);
 
     let leaked: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(mem_conn)));
-    let mut cache = cache.lock().unwrap();
-    Ok(*cache.entry(cache_key.to_string()).or_insert(leaked))
+    cache.insert(cache_key.to_string(), leaked);
+    Ok(leaked)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -356,28 +330,55 @@ mod tests {
         assert_eq!(file_labels, byte_labels);
     }
 
-    /// Regression test: `resolve_store_path` used to `std::fs::write` the
-    /// shared extraction path directly, which let one thread's `open_store`
-    /// race another thread's in-progress truncate — exactly what happens
-    /// when multiple MCP tool calls run concurrently against the same
-    /// `api_version` (each hits this path via `cached_store_connection`).
-    /// The rename-into-place fix must make every one of these opens see a
-    /// complete file rather than an intermittently empty one.
+    /// Regression test for concurrent tool calls. The resolved store is
+    /// content-addressed and immutable, so every thread must receive the same
+    /// path and must be able to query it even while another connection remains
+    /// open. Replacing that path per call fails intermittently on Windows.
     #[test]
     fn resolve_store_path_survives_concurrent_calls() {
         let api_version = VERSION_STORE_FILES[0].0.to_string();
+        let expected_path = resolve_store_path(&api_version).unwrap();
+        let held_open = open_store(&expected_path).unwrap();
         let handles: Vec<_> = (0..16)
             .map(|_| {
                 let api_version = api_version.clone();
+                let expected_path = expected_path.clone();
                 std::thread::spawn(move || {
                     let path = resolve_store_path(&api_version).unwrap();
-                    open_store(&path).unwrap();
+                    assert_eq!(path, expected_path);
+                    let connection = open_store(&path).unwrap();
+                    let _: i64 = connection
+                        .query_row("SELECT count(*) FROM endpoints", [], |row| row.get(0))
+                        .unwrap();
                 })
             })
             .collect();
         for handle in handles {
             handle.join().unwrap();
         }
+        let _: i64 = held_open
+            .query_row("SELECT count(*) FROM endpoints", [], |row| row.get(0))
+            .unwrap();
+    }
+
+    #[test]
+    fn publishing_a_store_never_replaces_an_existing_open_file() {
+        use std::io::Read;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.db");
+        let candidate = dir.path().join("candidate.tmp");
+        std::fs::write(&path, b"already complete").unwrap();
+        std::fs::write(&candidate, b"must not replace").unwrap();
+        let mut held_open = std::fs::File::open(&path).unwrap();
+
+        publish_without_overwrite(&candidate, &path).unwrap();
+
+        assert!(!candidate.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"already complete");
+        let mut original_contents = String::new();
+        held_open.read_to_string(&mut original_contents).unwrap();
+        assert_eq!(original_contents, "already complete");
     }
 
     /// Builds a read-write connection with the same schema mcpify's shared

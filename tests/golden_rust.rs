@@ -210,3 +210,20 @@ async fn generated_profiling_is_self_contained_and_keeps_instrumentation_separat
     assert!(readme.contains("bash scripts/profile-heap.sh"));
     assert!(readme.contains("CPU and heap profiling use separate builds"));
 }
+
+#[tokio::test]
+async fn generated_store_uses_content_addressing_and_no_clobber_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("out");
+    generate(
+        "tests/fixtures/openapi/minimal-with-auth.yaml",
+        output_dir.clone(),
+    )
+    .await;
+
+    let store = std::fs::read_to_string(output_dir.join("src/data/store.rs")).unwrap();
+    assert!(store.contains("Sha256::digest(bytes)"));
+    assert!(store.contains("std::fs::hard_link(tmp_path, path)"));
+    assert!(store.contains("if !path.is_file()"));
+    assert!(!store.contains("std::fs::rename(&tmp_path, &path)"));
+}

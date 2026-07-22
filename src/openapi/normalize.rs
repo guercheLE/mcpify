@@ -55,6 +55,10 @@ const METHODS: &[(&str, &str)] = &[
     ("TRACE", "trace"),
 ];
 
+fn normalize_prose(value: &str) -> String {
+    value.replace('_', " ")
+}
+
 /// Flattens `doc.paths` into one `NormalizedOperation` per HTTP method
 /// actually defined, synthesizing an `operation_id` (`"METHOD /path"`) for
 /// operations that omit one. Path items behind a `$ref` are skipped — mcpify
@@ -132,11 +136,11 @@ pub fn normalize_operations(doc: &OpenApiDocument) -> Vec<NormalizedOperation> {
                 summary: operation
                     .get("summary")
                     .and_then(Value::as_str)
-                    .map(str::to_string),
+                    .map(normalize_prose),
                 description: operation
                     .get("description")
                     .and_then(Value::as_str)
-                    .map(str::to_string),
+                    .map(normalize_prose),
                 input_schema,
                 output_schema,
                 auth_scheme_ref,
@@ -201,6 +205,36 @@ paths:
             operations
                 .iter()
                 .any(|op| op.operation_id == "createWidget" && op.method == "POST")
+        );
+    }
+
+    #[test]
+    fn replaces_underscores_only_in_operation_prose() {
+        let doc = parse(
+            r#"
+openapi: 3.0.0
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /pg_catalog/pg_tables:
+    get:
+      operationId: list_pg_tables
+      summary: List_pg_tables
+      description: Reads_pg_catalog.pg_tables.
+      responses:
+        "200":
+          description: OK
+"#,
+        );
+
+        let operation = normalize_operations(&doc).remove(0);
+        assert_eq!(operation.operation_id, "list_pg_tables");
+        assert_eq!(operation.path, "/pg_catalog/pg_tables");
+        assert_eq!(operation.summary.as_deref(), Some("List pg tables"));
+        assert_eq!(
+            operation.description.as_deref(),
+            Some("Reads pg catalog.pg tables.")
         );
     }
 
