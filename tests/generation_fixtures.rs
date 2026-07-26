@@ -131,9 +131,13 @@ async fn refs_fixture_resolves_allof_and_self_referential_schemas() {
         body_schema["allOf"].is_array(),
         "body schema must preserve allOf"
     );
-    assert_eq!(body_schema["allOf"][0]["$ref"], "#/$defs/BaseWidget");
+    // BaseWidget is acyclic, so it's fully inlined rather than left as $ref.
+    assert!(body_schema["allOf"][0].get("$ref").is_none());
+    assert_eq!(body_schema["allOf"][0]["properties"]["name"]["type"], "string");
 
     let output_schema = &create_widget.validation_output_schema;
+    // Widget references itself (parent), so it cannot be fully inlined —
+    // this is the one case that keeps $ref/$defs.
     assert_eq!(output_schema["$ref"], "#/$defs/Widget");
     // The self-referential Widget.parent field must resolve to the
     // rewritten $defs location, proving the ref-rewriter handles cycles.

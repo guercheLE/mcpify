@@ -523,11 +523,10 @@ components:
         assert_eq!(input["parameters"][0]["name"], "id");
         assert_eq!(input["parameters"][0]["in"], "path");
 
-        let body_ref = &input["requestBody"]["content"]["application/json"]["schema"]["$ref"];
-        assert_eq!(body_ref, "#/$defs/Widget");
-        assert_eq!(
-            input["$defs"]["Widget"]["properties"]["name"]["type"],
-            "string"
-        );
+        // Widget is acyclic, so it's fully inlined — no $ref/$defs left.
+        let body_schema = &input["requestBody"]["content"]["application/json"]["schema"];
+        assert!(body_schema.get("$ref").is_none());
+        assert_eq!(body_schema["properties"]["name"]["type"], "string");
+        assert!(input.get("$defs").is_none());
     }
 }

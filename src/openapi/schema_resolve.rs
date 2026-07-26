@@ -96,12 +96,140 @@ fn build_defs(schema: &Value, components: Option<&Components>) -> Value {
 }
 
 fn insert_defs_if_any(schema: &mut Value, components: Option<&Components>) {
-    let defs = build_defs(schema, components);
-    if defs.as_object().is_some_and(|map| !map.is_empty())
-        && let Value::Object(map) = schema
-    {
-        map.insert("$defs".to_string(), defs);
+    let Value::Object(defs) = build_defs(schema, components) else {
+        return;
+    };
+    if defs.is_empty() {
+        return;
     }
+    *schema = finalize_with_defs(std::mem::take(schema), defs);
+}
+
+/// Names of every `$defs` entry that participates in a reference cycle —
+/// directly self-referential, or mutually recursive through one or more
+/// other entries. These are the only entries `finalize_with_defs` cannot
+/// fully inline: JSON has no finite representation for infinite expansion,
+/// so a cyclic entry keeps its `$ref`/`$defs` form instead.
+fn detect_cyclic_defs(defs: &Map<String, Value>) -> HashSet<String> {
+    fn visit(
+        name: &str,
+        defs: &Map<String, Value>,
+        stack: &mut Vec<String>,
+        done: &mut HashSet<String>,
+        cyclic: &mut HashSet<String>,
+    ) {
+        if done.contains(name) {
+            return;
+        }
+        if let Some(pos) = stack.iter().position(|entry| entry == name) {
+            for entry in &stack[pos..] {
+                cyclic.insert(entry.clone());
+            }
+            return;
+        }
+        let Some(body) = defs.get(name) else {
+            return;
+        };
+        stack.push(name.to_string());
+        let mut refs = HashSet::new();
+        collect_component_refs(body, &mut refs);
+        for reference in refs {
+            visit(&reference, defs, stack, done, cyclic);
+        }
+        stack.pop();
+        done.insert(name.to_string());
+    }
+
+    let mut cyclic = HashSet::new();
+    let mut done = HashSet::new();
+    let mut stack = Vec::new();
+    for name in defs.keys() {
+        visit(name, defs, &mut stack, &mut done, &mut cyclic);
+    }
+    cyclic
+}
+
+/// Replaces every `$ref` to a non-cyclic `#/$defs/<name>` entry with a deep
+/// copy of that entry's own (already similarly inlined) content. A `$ref`
+/// naming an entry in `keep` (only ever a cyclic entry — see
+/// `detect_cyclic_defs`) is left exactly as-is, and `$dynamicRef` is never
+/// touched: it's OpenAPI 3.1's mechanism for describing an intentionally
+/// recursive schema, which this function cannot flatten any more than a
+/// cyclic plain `$ref` can be.
+fn inline_except(value: &Value, defs: &Map<String, Value>, keep: &HashSet<String>) -> Value {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(reference)) = map.get("$ref")
+                && let Some(name) = reference.strip_prefix("#/$defs/")
+                && !keep.contains(name)
+                && let Some(target) = defs.get(name)
+            {
+                let inlined = inline_except(target, defs, keep);
+                if map.len() == 1 {
+                    return inlined;
+                }
+                let mut merged = inlined.as_object().cloned().unwrap_or_default();
+                for (key, v) in map {
+                    if key == "$ref" {
+                        continue;
+                    }
+                    merged.insert(key.clone(), inline_except(v, defs, keep));
+                }
+                return Value::Object(merged);
+            }
+            let mut out = Map::new();
+            for (key, v) in map {
+                out.insert(key.clone(), inline_except(v, defs, keep));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| inline_except(item, defs, keep))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Finishes a schema that already has every `$ref`/`$dynamicRef` rewritten
+/// to `#/$defs/<name>`, given the full map of reachable definitions:
+/// inlines every `$ref` whose target isn't part of a reference cycle, so
+/// the only `$ref`/`$dynamicRef`/`$defs` left in the result (if any) are
+/// the ones a genuinely recursive component schema requires — there's no
+/// finite JSON representation for those. In the common case (no recursive
+/// components in the source spec — e.g. every PostgreSQL catalog operation
+/// today), this removes `$ref`/`$defs` entirely.
+fn finalize_with_defs(schema: Value, defs: Map<String, Value>) -> Value {
+    let cyclic = detect_cyclic_defs(&defs);
+    let result = inline_except(&schema, &defs, &cyclic);
+
+    let mut pending = HashSet::new();
+    collect_component_refs(&result, &mut pending);
+    if pending.is_empty() {
+        return result;
+    }
+
+    let mut kept = Map::new();
+    while let Some(name) = pending.iter().next().cloned() {
+        pending.remove(&name);
+        if kept.contains_key(&name) {
+            continue;
+        }
+        let Some(body) = defs.get(&name) else {
+            continue;
+        };
+        let inlined_body = inline_except(body, &defs, &cyclic);
+        collect_component_refs(&inlined_body, &mut pending);
+        kept.insert(name, inlined_body);
+    }
+
+    let mut result = result;
+    if let Value::Object(map) = &mut result {
+        map.insert("$defs".to_string(), Value::Object(kept));
+    }
+    result
 }
 
 fn build_defs_from_value(schema: &Value, components: Option<&Map<String, Value>>) -> Value {
@@ -139,12 +267,14 @@ fn decorate_value_schema(
     if !schema.is_object() {
         schema = serde_json::json!({ "allOf": [schema] });
     }
+    if let Value::Object(defs_map) = defs
+        && !defs_map.is_empty()
+    {
+        schema = finalize_with_defs(schema, defs_map);
+    }
     let object = schema
         .as_object_mut()
         .expect("schema was wrapped as an object");
-    if defs.as_object().is_some_and(|map| !map.is_empty()) {
-        object.insert("$defs".to_string(), defs);
-    }
     if openapi_31 {
         object.insert(
             "$schema".to_string(),
@@ -166,12 +296,13 @@ fn decorate_value_schema(
 /// against.
 pub fn embed_literal_schema_defs(schema: &mut Value, components: Option<&Map<String, Value>>) {
     rewrite_refs(schema);
-    let defs = build_defs_from_value(schema, components);
-    if defs.as_object().is_some_and(|map| !map.is_empty())
-        && let Value::Object(map) = schema
-    {
-        map.insert("$defs".to_string(), defs);
+    let Value::Object(defs) = build_defs_from_value(schema, components) else {
+        return;
+    };
+    if defs.is_empty() {
+        return;
     }
+    *schema = finalize_with_defs(std::mem::take(schema), defs);
 }
 
 pub fn resolve_input_schema_value(
@@ -428,7 +559,7 @@ paths:
     }
 
     #[test]
-    fn rewrites_component_schema_refs_into_defs() {
+    fn a_self_referential_component_keeps_ref_and_defs_since_it_cannot_be_inlined() {
         let doc = parse(
             r##"
 openapi: 3.0.0
@@ -466,6 +597,8 @@ components:
         let operation = first_operation(&doc);
         let output = resolve_output_schema(operation, doc.components.as_ref());
 
+        // Widget references itself, so full inlining would never terminate
+        // — this is the one case `finalize_with_defs` leaves as $ref/$defs.
         assert_eq!(output["$ref"], "#/$defs/Widget");
         assert_eq!(
             output["$defs"]["Widget"]["properties"]["name"]["type"],
@@ -538,17 +671,65 @@ components:
 
         let input = resolve_input_schema(operation, doc.components.as_ref());
         let all_of = input["properties"]["body"]["allOf"].as_array().unwrap();
-        assert_eq!(all_of[0]["$ref"], "#/$defs/Base");
-        assert_eq!(all_of[1]["properties"]["extra"]["type"], "string");
+        // Base and Child are acyclic, so both are fully inlined — no $ref
+        // and no $defs left anywhere in the schema.
         assert_eq!(
-            input["$defs"]["Base"]["properties"]["child"]["$ref"],
-            "#/$defs/Child"
-        );
-        assert_eq!(
-            input["$defs"]["Child"]["properties"]["id"]["type"],
+            all_of[0]["properties"]["child"]["properties"]["id"]["type"],
             "string"
         );
-        assert!(input["$defs"].get("Unused").is_none());
+        assert_eq!(all_of[1]["properties"]["extra"]["type"], "string");
+        assert!(input.get("$defs").is_none());
+    }
+
+    #[test]
+    fn a_component_referenced_from_multiple_places_is_inlined_at_each_one() {
+        // Mirrors the real-world PostgresError shape: one shared, non-
+        // recursive component reused across several response codes for the
+        // same operation. Every occurrence must be independently inlined,
+        // and $defs must not survive once nothing references it anymore.
+        let doc = parse(
+            r##"
+openapi: 3.0.0
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /widgets/{id}:
+    get:
+      operationId: getWidget
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Widget"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    Widget:
+      type: object
+      properties:
+        name:
+          type: string
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+"##,
+        );
+
+        let operation = first_operation(&doc);
+        let output = resolve_output_schema(operation, doc.components.as_ref());
+        assert_eq!(output["properties"]["name"]["type"], "string");
+        assert!(output.get("$ref").is_none());
+        assert!(output.get("$defs").is_none());
     }
 
     #[test]
