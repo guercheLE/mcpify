@@ -133,7 +133,10 @@ async fn refs_fixture_resolves_allof_and_self_referential_schemas() {
     );
     // BaseWidget is acyclic, so it's fully inlined rather than left as $ref.
     assert!(body_schema["allOf"][0].get("$ref").is_none());
-    assert_eq!(body_schema["allOf"][0]["properties"]["name"]["type"], "string");
+    assert_eq!(
+        body_schema["allOf"][0]["properties"]["name"]["type"],
+        "string"
+    );
 
     let output_schema = &create_widget.validation_output_schema;
     // Widget references itself (parent), so it cannot be fully inlined —
