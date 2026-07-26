@@ -518,17 +518,18 @@ mod tests {
 
         // If the disk connection were still open, removing the file out
         // from under it would be the exact failure mode this fix exists
-        // to avoid. On Windows, the OS can take a few milliseconds after
-        // `sqlite3_close` returns to actually release the file's sharing
-        // handle (observed in CI, not reproducible locally) -- that's an
-        // unrelated OS timing gap, not the leak this test exists to
-        // catch, so retry briefly before giving up.
+        // to avoid. On Windows CI runners specifically, a freshly-written
+        // file can stay transiently locked well past `sqlite3_close`
+        // returning -- most likely Defender's on-access scan grabbing a
+        // brief exclusive handle on it (never reproduces locally, and 1s
+        // of retrying wasn't enough in practice) -- so retry generously
+        // before treating this as the real leak the test exists to catch.
         let mut remove_result = std::fs::remove_file(&path);
-        for _ in 0..50 {
+        for _ in 0..100 {
             if remove_result.is_ok() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(100));
             remove_result = std::fs::remove_file(&path);
         }
         remove_result.unwrap();

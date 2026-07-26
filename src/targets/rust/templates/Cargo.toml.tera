@@ -14,6 +14,13 @@ categories = [{% for value in publication.categories %}{{ value | json_encode }}
 exclude = [{% for value in publication.exclude %}{{ value | json_encode }}{% if not loop.last %}, {% endif %}{% endfor %}]
 {% else -%}
 publish = false
+
+# `publish = false` above makes cargo-dist skip this crate's binaries by
+# default (it treats an unpublishable crate as a library, not something to
+# release) -- this override tells it they're still meant to ship via the
+# release-artifacts/installer flow even though they never go to crates.io.
+[package.metadata.dist]
+dist = true
 {% endif %}
 [lib]
 name = "{{ crate_name }}"
