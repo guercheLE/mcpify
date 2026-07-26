@@ -518,8 +518,20 @@ mod tests {
 
         // If the disk connection were still open, removing the file out
         // from under it would be the exact failure mode this fix exists
-        // to avoid.
-        std::fs::remove_file(&path).unwrap();
+        // to avoid. On Windows, the OS can take a few milliseconds after
+        // `sqlite3_close` returns to actually release the file's sharing
+        // handle (observed in CI, not reproducible locally) -- that's an
+        // unrelated OS timing gap, not the leak this test exists to
+        // catch, so retry briefly before giving up.
+        let mut remove_result = std::fs::remove_file(&path);
+        for _ in 0..50 {
+            if remove_result.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            remove_result = std::fs::remove_file(&path);
+        }
+        remove_result.unwrap();
 
         let endpoint = get_endpoint(&cached.lock().unwrap(), "listWidgets")
             .unwrap()
