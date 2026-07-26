@@ -521,11 +521,12 @@ mod tests {
         // to avoid. On Windows CI runners specifically, a freshly-written
         // file can stay transiently locked well past `sqlite3_close`
         // returning -- most likely Defender's on-access scan grabbing a
-        // brief exclusive handle on it (never reproduces locally, and 1s
-        // of retrying wasn't enough in practice) -- so retry generously
-        // before treating this as the real leak the test exists to catch.
+        // brief exclusive handle on it (never reproduces locally; 1s and
+        // then 10s of retrying both proved insufficient in practice) --
+        // so retry very generously before treating this as the real leak
+        // the test exists to catch.
         let mut remove_result = std::fs::remove_file(&path);
-        for _ in 0..100 {
+        for _ in 0..600 {
             if remove_result.is_ok() {
                 break;
             }

@@ -14,6 +14,10 @@ publish = false
 # default (it treats an unpublishable crate as a library, not something to
 # release) -- this override tells it they're still meant to ship via the
 # release-artifacts/installer flow even though they never go to crates.io.
+# (cargo-dist's GitHub CI support also hard-requires `repository` above,
+# independent of this override -- without it, `dist build` fails with
+# "Github CI support requires you to specify the URL of your repository"
+# even after this section makes the binaries visible to it at all.)
 [package.metadata.dist]
 dist = true
 
