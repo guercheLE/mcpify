@@ -37,6 +37,31 @@ type EmbeddingService struct {
 // pinned go.mod version is actually ABI-compatible with; bump both together.
 const onnxRuntimeVersion = "1.27.1"
 
+// ResolveCacheDir resolves the embedding model cache directory (passed as
+// cacheDir to ResolveSharedLibraryPath/NewEmbeddingService below) with an
+// explicit, CWD-independent 3-tier precedence, so the cache never silently
+// lands wherever the process happened to be launched from:
+//  1. {{ tool_prefix_env }}_CACHE_DIR, if set — an explicit override.
+//  2. ~/.{{ project_name }}/models — a stable per-user location.
+//  3. A directory next to the running binary — the final fallback when
+//     neither of the above is available (e.g. no HOME in a locked-down
+//     container). Every returned path is absolute.
+func ResolveCacheDir() (string, error) {
+	if dir := os.Getenv("{{ tool_prefix_env }}_CACHE_DIR"); dir != "" {
+		return dir, nil
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".{{ project_name }}", "models"), nil
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolving embedding model cache dir: no {{ tool_prefix_env }}_CACHE_DIR, no HOME, and os.Executable failed: %w", err)
+	}
+	return filepath.Join(filepath.Dir(exe), ".{{ project_name }}", "models"), nil
+}
+
 // ResolveSharedLibraryPath resolves the ONNX Runtime shared library this
 // process should load: an explicit ONNXRUNTIME_SHARED_LIBRARY_PATH
 // override always wins; otherwise it downloads and caches the official

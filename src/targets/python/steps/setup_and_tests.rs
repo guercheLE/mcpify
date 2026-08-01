@@ -47,6 +47,10 @@ const SHARED_TEST_FILES: &[(&str, &str)] = &[
         "tests/unit/validation/test_validator.py",
     ),
     (
+        "tests/unit/services/test_embedding_service.py.tera",
+        "tests/unit/services/test_embedding_service.py",
+    ),
+    (
         "tests/unit/auth/test_stub.py.tera",
         "tests/unit/auth/test_stub.py",
     ),

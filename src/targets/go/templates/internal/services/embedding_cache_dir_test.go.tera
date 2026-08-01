@@ -1,0 +1,34 @@
+package services
+
+import (
+	"testing"
+)
+
+func TestResolveCacheDir(t *testing.T) {
+	t.Run("override env var wins over HOME", func(t *testing.T) {
+		t.Setenv("{{ tool_prefix_env }}_CACHE_DIR", "/explicit/cache")
+		t.Setenv("HOME", "/home/user")
+
+		dir, err := ResolveCacheDir()
+		if err != nil {
+			t.Fatalf("ResolveCacheDir: %v", err)
+		}
+		if dir != "/explicit/cache" {
+			t.Errorf("got %q, want %q", dir, "/explicit/cache")
+		}
+	})
+
+	t.Run("falls back to a HOME-based dir when no override is set", func(t *testing.T) {
+		t.Setenv("{{ tool_prefix_env }}_CACHE_DIR", "")
+		t.Setenv("HOME", "/home/user")
+
+		dir, err := ResolveCacheDir()
+		if err != nil {
+			t.Fatalf("ResolveCacheDir: %v", err)
+		}
+		want := "/home/user/.{{ project_name }}/models"
+		if dir != want {
+			t.Errorf("got %q, want %q", dir, want)
+		}
+	})
+}

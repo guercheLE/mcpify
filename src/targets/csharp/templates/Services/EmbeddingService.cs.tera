@@ -39,11 +39,38 @@ public sealed class EmbeddingService : IDisposable
 
     public EmbeddingService(string? cacheDir = null)
     {
-        _cacheDir = cacheDir ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".{{ project_name }}",
-            "models");
+        _cacheDir = cacheDir ?? ResolveCacheDir();
         _model = new Lazy<Task<(InferenceSession Session, BertTokenizer Tokenizer)>>(LoadModelAsync);
+    }
+
+    /// <summary>
+    /// Resolves the embedding model cache directory with an explicit,
+    /// CWD-independent 3-tier precedence, so the cache never silently lands
+    /// wherever the process happened to be launched from:
+    /// 1. <c>{{ tool_prefix_env }}_CACHE_DIR</c>, if set — an explicit override.
+    /// 2. <c>~/.{{ project_name }}/models</c> — a stable per-user location.
+    /// 3. A directory next to the running app (<see cref="AppContext.BaseDirectory"/>)
+    ///    — the final fallback when neither of the above is available (e.g. no
+    ///    home directory in a locked-down container). Every returned path is absolute.
+    /// </summary>
+    public static string ResolveCacheDir() => ResolveCacheDir(
+        Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_CACHE_DIR"),
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        AppContext.BaseDirectory);
+
+    /// <summary>Pure resolution logic behind <see cref="ResolveCacheDir()"/> — explicit
+    /// inputs instead of reading the environment directly, so precedence is unit-testable.</summary>
+    public static string ResolveCacheDir(string? overrideDir, string? homeDir, string appDir)
+    {
+        if (!string.IsNullOrEmpty(overrideDir))
+        {
+            return overrideDir;
+        }
+        if (!string.IsNullOrEmpty(homeDir))
+        {
+            return Path.Combine(homeDir, ".{{ project_name }}", "models");
+        }
+        return Path.Combine(appDir, ".{{ project_name }}", "models");
     }
 
     /// <summary>Computes a 768-dim embedding vector for <paramref name="text"/>, mean-pooled over token embeddings and L2-normalized.</summary>

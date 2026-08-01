@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 # `tokenizers`' Rayon thread pool acquires the GIL from its worker threads
@@ -28,7 +29,41 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
-CACHE_DIR = ".sentence_transformers_cache"
+CACHE_DIR_ENV_VAR = "{{ tool_prefix_env }}_CACHE_DIR"
+
+
+def _resolve_cache_dir_from(override_dir: str | None, home_dir: str | None, app_dir: str) -> Path:
+    """Pure resolution logic behind `resolve_cache_dir` — explicit inputs
+    instead of reading the environment directly, so precedence is
+    unit-testable without mutating real process env vars.
+    """
+    if override_dir:
+        return Path(override_dir)
+    if home_dir:
+        return Path(home_dir) / ".{{ project_name }}" / "models"
+    return Path(app_dir) / ".{{ project_name }}" / "models"
+
+
+def resolve_cache_dir() -> Path:
+    """Resolves the embedding model cache directory with an explicit,
+    CWD-independent 3-tier precedence — replacing the previous bare
+    relative literal (`.sentence_transformers_cache`), which silently
+    landed wherever the process happened to be launched from (a systemd
+    unit, a Docker WORKDIR, a random shell cwd, ...):
+    1. `{{ tool_prefix_env }}_CACHE_DIR`, if set — an explicit override.
+    2. `~/.{{ project_name }}/models` — a stable per-user location, the
+       same `~/.{{ project_name }}/...` convention every other target uses
+       for its own downloaded models.
+    3. A directory next to this installed package — the final,
+       always-absolute fallback when neither of the above is available
+       (e.g. no HOME in a locked-down container). Mirrors `core/config.py`'s
+       `_install_dir()`.
+    """
+    return _resolve_cache_dir_from(
+        os.environ.get(CACHE_DIR_ENV_VAR),
+        os.environ.get("HOME") or os.environ.get("USERPROFILE"),
+        str(Path(__file__).resolve().parent.parent),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -38,7 +73,7 @@ def _model() -> SentenceTransformer:
     # torch-backed import cost on every CLI invocation.
     from sentence_transformers import SentenceTransformer
 
-    return SentenceTransformer(MODEL_NAME, cache_folder=CACHE_DIR)
+    return SentenceTransformer(MODEL_NAME, cache_folder=str(resolve_cache_dir()))
 
 
 def embed(text: str) -> list[float]:

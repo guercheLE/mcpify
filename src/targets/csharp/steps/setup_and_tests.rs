@@ -35,6 +35,10 @@ const SHARED_TEST_FILES: &[(&str, &str)] = &[
         "Tests/Data/SqliteVecStoreTests.cs.tera",
         "Tests/Data/SqliteVecStoreTests.cs",
     ),
+    (
+        "Tests/Services/EmbeddingServiceTests.cs.tera",
+        "Tests/Services/EmbeddingServiceTests.cs",
+    ),
     // Fix 8b regression test: asserts `semantic_endpoints` row count
     // equals `endpoints` row count for every version, once
     // `populate-embeddings --all` has been run. Skipped unless

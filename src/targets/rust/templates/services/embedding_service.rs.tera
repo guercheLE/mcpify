@@ -11,9 +11,58 @@
 // uses, so `-l rust` and `-l typescript` output are search-behavior
 // equivalent for the same spec.
 
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
+
+/// Pure resolution logic behind `resolve_cache_dir`, split out the same way
+/// `core::logger::resolve_log_level_from` is — explicit inputs instead of
+/// reading the environment directly, so precedence is unit-testable without
+/// mutating real process env vars (which `#[test]`s otherwise share/race
+/// across threads).
+fn resolve_cache_dir_from(
+    override_dir: Option<std::ffi::OsString>,
+    home_dir: Option<std::ffi::OsString>,
+    exe_dir: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return PathBuf::from(dir);
+    }
+
+    if let Some(home) = home_dir {
+        return PathBuf::from(home).join(".{{ project_name }}").join("models");
+    }
+
+    exe_dir
+        .map(|dir| dir.join(".{{ project_name }}").join("models"))
+        .unwrap_or_else(|| PathBuf::from(".fastembed_cache"))
+}
+
+/// Resolves the fastembed model cache directory with an explicit,
+/// CWD-independent 3-tier precedence — deliberately overriding fastembed's
+/// own default (`FASTEMBED_CACHE_DIR`/`HF_HOME`, falling back to the bare
+/// relative `.fastembed_cache`), since a bare relative fallback means the
+/// cache silently lands wherever the process happened to be launched from
+/// (a systemd unit, a Docker `WORKDIR`, a random shell cwd, ...):
+/// 1. `HF_HOME` or `FASTEMBED_CACHE_DIR`, if set — fastembed's own upstream
+///    override env vars, honored as-is (an explicit override is the
+///    caller's responsibility to make absolute).
+/// 2. `~/.{{ project_name }}/models` — a stable per-user location, the
+///    same `~/.{{ project_name }}/...` convention `targets::go` and
+///    `targets::csharp` already use for their own downloaded models.
+/// 3. A directory next to the running binary — the final, always-absolute
+///    fallback when neither of the above is available (e.g. no `HOME` in a
+///    locked-down container).
+fn resolve_cache_dir() -> PathBuf {
+    resolve_cache_dir_from(
+        std::env::var_os("HF_HOME").or_else(|| std::env::var_os("FASTEMBED_CACHE_DIR")),
+        std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")),
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
+    )
+}
 
 fn model() -> &'static Mutex<TextEmbedding> {
     static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
@@ -24,8 +73,11 @@ fn model() -> &'static Mutex<TextEmbedding> {
         // failure mode: an unrecoverable startup error either way if the
         // model can't be fetched/loaded.
         Mutex::new(
-            TextEmbedding::try_new(TextInitOptions::new(EmbeddingModel::AllMpnetBaseV2))
-                .expect("failed to load the all-mpnet-base-v2 embedding model"),
+            TextEmbedding::try_new(
+                TextInitOptions::new(EmbeddingModel::AllMpnetBaseV2)
+                    .with_cache_dir(resolve_cache_dir()),
+            )
+            .expect("failed to load the all-mpnet-base-v2 embedding model"),
         )
     })
 }
@@ -40,4 +92,31 @@ pub fn embed(text: &str) -> anyhow::Result<Vec<f32>> {
     embeddings
         .pop()
         .ok_or_else(|| anyhow::anyhow!("embedding model returned no output for the given text"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn override_env_var_wins_over_every_other_tier() {
+        let resolved = resolve_cache_dir_from(
+            Some("/explicit/cache".into()),
+            Some("/home/user".into()),
+            Some(PathBuf::from("/opt/app")),
+        );
+        assert_eq!(resolved, PathBuf::from("/explicit/cache"));
+    }
+
+    #[test]
+    fn home_dir_wins_when_no_override_is_set() {
+        let resolved = resolve_cache_dir_from(None, Some("/home/user".into()), Some(PathBuf::from("/opt/app")));
+        assert_eq!(resolved, PathBuf::from("/home/user/.{{ project_name }}/models"));
+    }
+
+    #[test]
+    fn falls_back_to_the_exe_dir_when_neither_override_nor_home_is_set() {
+        let resolved = resolve_cache_dir_from(None, None, Some(PathBuf::from("/opt/app")));
+        assert_eq!(resolved, PathBuf::from("/opt/app/.{{ project_name }}/models"));
+    }
 }

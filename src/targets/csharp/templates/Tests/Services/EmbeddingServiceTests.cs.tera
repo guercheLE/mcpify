@@ -1,0 +1,31 @@
+using {{ namespace }}.Services;
+using Xunit;
+
+namespace {{ namespace }}.Tests.Services;
+
+public class EmbeddingServiceTests
+{
+    [Fact]
+    public void OverrideDirWinsOverHomeDir()
+    {
+        var resolved = EmbeddingService.ResolveCacheDir("/explicit/cache", "/home/user", "/opt/app");
+
+        Assert.Equal("/explicit/cache", resolved);
+    }
+
+    [Fact]
+    public void FallsBackToHomeDirWhenNoOverrideIsSet()
+    {
+        var resolved = EmbeddingService.ResolveCacheDir(null, "/home/user", "/opt/app");
+
+        Assert.Equal(Path.Combine("/home/user", ".{{ project_name }}", "models"), resolved);
+    }
+
+    [Fact]
+    public void FallsBackToAppDirWhenNeitherOverrideNorHomeIsSet()
+    {
+        var resolved = EmbeddingService.ResolveCacheDir(null, null, "/opt/app");
+
+        Assert.Equal(Path.Combine("/opt/app", ".{{ project_name }}", "models"), resolved);
+    }
+}
