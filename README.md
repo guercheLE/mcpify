@@ -207,6 +207,14 @@ my-api-mcp setup      # prompts for an API version when more than one exists
 my-api-mcp versions    # lists all versions, e.g. "11.3 (default, active)", "11.2", "10.7"
 ```
 
+## Development
+
+This repo ships a local pre-commit hook (`.githooks/pre-commit`) that runs `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` — the same two fast gates CI checks first — so formatting/lint issues are caught before a commit, not after a CI run. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.

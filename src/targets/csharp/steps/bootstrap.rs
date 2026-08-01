@@ -22,7 +22,27 @@ const STATIC_FILES: &[(&str, &str)] = &[
     (".env.example.tera", ".env.example"),
     ("README.md.tera", "README.md"),
     ("LICENSE.tera", "LICENSE"),
+    (".githooks/pre-commit.tera", ".githooks/pre-commit"),
 ];
+
+/// Git only runs a hook file that's executable — `render_and_write` writes
+/// plain, non-executable files, so the pre-commit hook needs its own
+/// explicit chmod after being written.
+#[cfg(unix)]
+async fn make_pre_commit_hook_executable(output_dir: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let hook_path = output_dir.join(".githooks").join("pre-commit");
+    let mut permissions = tokio::fs::metadata(&hook_path).await?.permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&hook_path, permissions).await?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn make_pre_commit_hook_executable(_output_dir: &std::path::Path) -> Result<()> {
+    Ok(())
+}
 
 /// `bootstrap_project` (architecture.md §1, step 5): project skeleton,
 /// `.csproj` manifest, and config files — everything before enterprise
@@ -75,6 +95,7 @@ pub async fn bootstrap_project(ctx: &GeneratorContext) -> Result<()> {
             .join("ServiceCollectionExtensions.cs"),
     )
     .await?;
+    make_pre_commit_hook_executable(&ctx.output_dir).await?;
 
     Ok(())
 }
@@ -134,6 +155,25 @@ mod tests {
         for (_, out_name) in STATIC_FILES {
             assert!(dir.join(out_name).is_file(), "missing {out_name}");
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_commit_hook_is_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = tempfile::tempdir().unwrap();
+        let dir = output_dir(&parent);
+        let ctx = ctx_with_schemes(dir.clone(), Vec::new());
+
+        bootstrap_project(&ctx).await.unwrap();
+
+        let mode = tokio::fs::metadata(dir.join(".githooks").join("pre-commit"))
+            .await
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "pre-commit hook is not executable");
     }
 
     #[tokio::test]

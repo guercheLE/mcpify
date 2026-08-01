@@ -53,6 +53,14 @@ Both services read configuration from a local `.env` file (copy `.env.example`) 
 
 Stdio is a process transport, not a listening service: the MCP client must start the server and communicate through that exact child process's stdin/stdout. This is useful when an MCP client is configured to launch `docker compose run --rm -T {{ project_name }}`, in local scripts or CI that directly exchange MCP messages with the process, or in a custom image where your application launches the generated server's `start` subcommand as a child process. Merely putting the application and server in the same image—or starting the stdio container separately with `docker compose up`—does not connect their streams. One stdio server process normally serves one client. Use HTTP when independently started applications, multiple clients, another container, or a remote machine need to connect over the network.
 
+## Development
+
+This project ships a local pre-commit hook (`.githooks/pre-commit`) that runs `uv run ruff check .` and `uv run black --check .` — the same two fast gates CI checks first — so formatting/lint issues are caught before a commit, not after a CI run. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Testing
 
 ```bash

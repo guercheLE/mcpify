@@ -204,6 +204,14 @@ The `{{ tool_prefix_env }}_USERNAME`/`{{ tool_prefix_env }}_PASSWORD` env vars d
 
 Credentials are never persisted into the `.env`/config-file output of `setup` itself; those files only carry non-secret settings, with credentials always going through the keychain/encrypted-file path.
 
+## Development
+
+This project ships a local pre-commit hook (`.githooks/pre-commit`) that runs `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` — the same two fast gates CI checks first — so formatting/lint issues are caught before a commit, not after a CI run. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Testing
 
 ```bash

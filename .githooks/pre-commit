@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# mcpify's local pre-commit gate — mirrors the first two (fast) steps of the
+# `test` job in .github/workflows/ci.yml, so a formatting or lint problem is
+# caught before it ever reaches CI. Slower steps (cargo test, e2e) stay in
+# CI only.
+#
+# One-time setup (per clone): git config core.hooksPath .githooks
+set -euo pipefail
+
+echo "pre-commit: cargo fmt --check"
+cargo fmt --check
+
+echo "pre-commit: cargo clippy --locked --all-targets -- -D warnings"
+cargo clippy --locked --all-targets -- -D warnings
