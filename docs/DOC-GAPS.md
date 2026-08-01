@@ -25,6 +25,8 @@ Distilled, reusable guidance for writing `prd.md`/`architecture.md` on the *next
 
 7. **A retrofitted requirement should get a retrofitted line in the PRD, immediately, not just a code fix.** The output-schema-validation behavior (fatal on mismatch → non-fatal warning, PRD §"call Pipeline") is a case that *was* eventually written back into `architecture.md` after the v0.8.1 fix — that's the right instinct, and it's the exception here rather than the rule. Most of the gaps below never got a corresponding doc update. Treat a `fix:` commit that changes documented behavior as incomplete until the doc that described the old behavior is also updated.
 
+8. **When a generated project patches around a bug that clearly lives in the generator itself (a template default, a release-workflow setting, a dependency pin), propagate the fix back upstream in the same change, not as a follow-up someone might get to.** The `[profile.dist]` ThinLTO/macOS build failure (see `sqlserver-mcp-rs`, v0.1.3 below) was fixed once, locally, in a single downstream repo — and then silently left unfixed in the shared template, so every other generated project (and mcpify's own release build) stayed exposed to the identical failure. A generated project's own fix commit is the moment the gap is best understood; that's also the cheapest moment to fix it once, upstream, instead of leaving it to be independently rediscovered per repo (or, as here, never rediscovered until an unrelated retrospective audit went looking for exactly this pattern).
+
 ---
 
 ## [Unreleased]
@@ -60,6 +62,22 @@ Made log destination conditional on `{tool_prefix}_TRANSPORT` across all 5 targe
 ### Resulting work
 
 Added `.githooks/pre-commit` (mirroring each target's own CI gates) to mcpify itself and to all 5 generated-project templates, activated via `git config core.hooksPath .githooks`.
+
+### Doc gap: release-build LTO setting untested against the actual CI toolchain
+
+`docs/prd.md` REQ-2.3.7 requires a `cargo-dist`-based release pipeline, and `Cargo.toml.tera`'s `[profile.dist]` set `lto = "thin"` from the start — a reasonable-looking optimization choice that was never actually exercised end-to-end on every platform the release matrix targets. GitHub's macOS runner ships an Xcode/libLTO too old to parse ThinLTO bitcode from the pinned rustc's LLVM version, which fails the `aarch64-apple-darwin` dist build at link time ("could not parse bitcode object file ... Unknown attribute kind"). This didn't surface in mcpify's own CI/release history — it was discovered downstream, in `sqlserver-mcp-rs` (`v0.1.3`, 2026-07-17), which patched it locally by disabling LTO in `[profile.dist]`, but the fix was never propagated back upstream to the shared template, leaving every other mcpify-generated Rust project (and mcpify's own release build) still exposed to the same failure mode.
+
+### Resulting work
+
+Set `lto = false` in `[profile.dist]` (with a comment explaining why, so a future contributor doesn't just re-enable it as an obvious-looking optimization), matching the fix `sqlserver-mcp-rs` already applied locally.
+
+### Doc gap: unbounded dependency version ranges on a third-party SDK the generated project's own code imports from directly
+
+`pyproject.toml.tera` pinned `"mcp>=1.12"` with no upper bound. Neither `docs/prd.md` nor `docs/architecture.md` states a policy for dependencies whose public API the generated code imports from directly (as opposed to dependencies used only behind a stable, narrow interface) — the implicit assumption was that any version satisfying a lower bound would keep working. The official `mcp` SDK's `2.0.0` release renamed and moved `FastMCP` to `mcp.server.mcpserver.MCPServer`, breaking the `from mcp.server.fastmcp import Context, FastMCP` import both `core/mcp_server.py.tera` and `http/server.py.tera` rely on — every fresh Python-target generation resolved to `mcp==2.0.0` and failed at import time (`ModuleNotFoundError: No module named 'mcp.server.fastmcp'`), including in the generated project's own e2e test collection.
+
+### Resulting work
+
+Pinned `"mcp>=1.12,<2.0"` rather than migrating to the 2.0 API surface, since that surface hasn't been audited for other breaking changes beyond the `FastMCP`→`MCPServer` rename. A fresh generation now resolves to `mcp==1.29.0` and the e2e test collects and passes again.
 
 ## [0.11.14] - 2026-07-26
 
