@@ -104,7 +104,12 @@ profiling = ["dep:dhat"]
 
 [profile.dist]
 inherits = "release"
-lto = "thin"
+# Not "thin": GitHub's macOS runner ships an Xcode/libLTO too old to parse
+# ThinLTO bitcode from current rustc's LLVM version, which fails the
+# aarch64-apple-darwin dist build at link time ("could not parse bitcode
+# object file ... Unknown attribute kind"). Release-build correctness
+# shouldn't depend on the CI image's Xcode keeping pace with rustc's LLVM.
+lto = false
 
 [dev-dependencies]
 tempfile = "3"
