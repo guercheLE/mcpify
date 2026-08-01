@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 LOG_LEVEL_ENV_VAR = "{{ tool_prefix_env }}_LOG_LEVEL"
+TRANSPORT_ENV_VAR = "{{ tool_prefix_env }}_TRANSPORT"
 
 _REDACTED_KEYS = {
     "password",
@@ -38,23 +39,48 @@ def resolve_log_level() -> str:
     return os.environ.get(LOG_LEVEL_ENV_VAR, "info")
 
 
-def redact(data: dict[str, Any]) -> dict[str, Any]:
-    """Shallow-redacts sensitive fields from an arbitrary dict — the same
-    field list `_redact_sensitive_fields` applies to log events, reused by
-    `cli/config.py` (Story P5) so `{{ project_name }} config` never prints
-    a raw secret to the terminal.
+def _is_sensitive_key(key: str) -> bool:
+    """Substring match (case-insensitive), not exact match — so prefixed
+    names like `{{ tool_prefix_env }}_TOKEN` or nested keys like
+    `auth_token` are caught too. Mirrors `is_sensitive_key` in the Rust
+    target's `sanitizer.rs` and the regex in the TypeScript target's
+    `sanitizer.ts`.
     """
-    return {
-        key: (_REDACTED_VALUE if key.lower() in _REDACTED_KEYS else value)
-        for key, value in data.items()
-    }
+    lowered = key.lower()
+    return any(marker in lowered for marker in _REDACTED_KEYS)
+
+
+def redact(data: dict[str, Any]) -> dict[str, Any]:
+    """Recursively redacts sensitive fields from an arbitrary dict, walking
+    into nested dicts and lists — the same field list
+    `_redact_sensitive_fields` applies to log events, reused by
+    `cli/config.py` (Story P5) so `{{ project_name }} config` never prints
+    a raw secret to the terminal, including secrets nested inside grouped
+    sections (env vars, config-file contents, etc.). Mirrors `sanitize()`
+    in the Rust and TypeScript targets' `sanitizer` modules.
+    """
+    return {key: _redact_entry(key, value) for key, value in data.items()}
+
+
+def _redact_entry(key: str, value: Any) -> Any:
+    if _is_sensitive_key(key):
+        return _REDACTED_VALUE
+    return _redact_walk(value)
+
+
+def _redact_walk(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _redact_entry(key, val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_redact_walk(item) for item in value]
+    return value
 
 
 def _redact_sensitive_fields(
     _logger: Any, _method_name: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
     for key in event_dict:
-        if key.lower() in _REDACTED_KEYS:
+        if _is_sensitive_key(key):
             event_dict[key] = _REDACTED_VALUE
     return event_dict
 
@@ -62,11 +88,18 @@ def _redact_sensitive_fields(
 def init_logging() -> None:
     """Installs the process-global structured logger. Call once, at
     process startup, before any `structlog.get_logger()` call elsewhere.
+
+    The MCP stdio transport speaks JSON-RPC over stdout, so logs must go
+    to stderr in that mode to avoid corrupting the protocol stream. Over
+    HTTP, stdout carries no protocol traffic, so logs go there instead —
+    the conventional destination for container/process-manager log
+    collection.
     """
     level = getattr(logging, resolve_log_level().upper(), logging.INFO)
+    stream = sys.stdout if os.environ.get(TRANSPORT_ENV_VAR) == "http" else sys.stderr
     renderer = (
         structlog.dev.ConsoleRenderer()
-        if sys.stderr.isatty()
+        if stream.isatty()
         else structlog.processors.JSONRenderer()
     )
 
@@ -82,7 +115,7 @@ def init_logging() -> None:
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        logger_factory=structlog.PrintLoggerFactory(file=stream),
         cache_logger_on_first_use=True,
     )
 

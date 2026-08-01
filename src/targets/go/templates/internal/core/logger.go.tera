@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -28,9 +29,49 @@ func RedactField(field zap.Field) zap.Field {
 	return field
 }
 
+// RedactMap walks m and replaces the value of any key matching
+// sensitiveFields (case-insensitively, the same deny-list RedactField
+// checks) with "***REDACTED***", recursing into nested maps — the
+// generic-map counterpart to RedactField, needed because the `config`
+// command (REQ-2.3.1's redaction principle applied to that output too)
+// deals in arbitrary map[string]any decoded from config files and structs,
+// not zap.Field key/value pairs. Returns a new map; m is left untouched.
+func RedactMap(m map[string]any) map[string]any {
+	redacted := make(map[string]any, len(m))
+	for key, value := range m {
+		if _, sensitive := sensitiveFields[strings.ToLower(key)]; sensitive {
+			redacted[key] = "***REDACTED***"
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			redacted[key] = RedactMap(nested)
+			continue
+		}
+		redacted[key] = value
+	}
+	return redacted
+}
+
+// RedactJSONBytes parses data as a JSON object, runs it through RedactMap,
+// and returns the result re-marshaled with indentation. The shared
+// primitive the `config` command uses to safely display defaults, the
+// resolved config, and raw config-file contents — every caller redacts
+// through this one function instead of hand-rolling its own copy of the
+// deny-list check RedactField/RedactMap already enforce.
+func RedactJSONBytes(data []byte) ([]byte, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(RedactMap(parsed), "", "  ")
+}
+
 // NewLogger builds the shared zap.Logger every package logs through:
 // JSON-encoded, level driven by {{ tool_prefix_env }}_LOG_LEVEL, and every
-// field passed through RedactField before it reaches the sink.
+// field passed through RedactField before it reaches the sink. Output goes
+// to stdout in HTTP mode and stderr in stdio mode: the MCP stdio transport
+// speaks JSON-RPC over stdout, so any other writer sharing that stream
+// would corrupt every frame parsed on the client side.
 func NewLogger() (*zap.Logger, error) {
 	level := parseLevel(os.Getenv("{{ tool_prefix_env }}_LOG_LEVEL"))
 
@@ -38,6 +79,9 @@ func NewLogger() (*zap.Logger, error) {
 	config.Level = zap.NewAtomicLevelAt(level)
 	config.EncoderConfig.TimeKey = "timestamp"
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	if os.Getenv("{{ tool_prefix_env }}_TRANSPORT") == "http" {
+		config.OutputPaths = []string{"stdout"}
+	}
 
 	return config.Build(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
 		return &redactingCore{Core: c}

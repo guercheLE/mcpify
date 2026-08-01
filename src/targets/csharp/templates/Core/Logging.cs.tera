@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using Serilog.Core;
@@ -7,12 +9,18 @@ using Serilog.Formatting.Compact;
 namespace {{ namespace }}.Core;
 
 /// <summary>
-/// REQ-2.3.1: redacts well-known sensitive property names from every log
-/// event before it reaches a sink, so a stray <c>Log.Information("token={Token}",
-/// token)</c> call can never leak a secret into the structured log stream.
+/// REQ-2.3.1's shared "never leak a secret" deny-list, plus generic
+/// redaction primitives over shapes that aren't a live Serilog
+/// <see cref="LogEvent"/> — a config-file <see cref="JsonNode"/>, an env
+/// var/config-key dictionary, a single CLI-flag or env-var name. Both
+/// <see cref="RedactionEnricher"/> (log properties) and <c>Cli/Roles.cs</c>'s
+/// `config` command (config-cascade-by-source dump) read from this one
+/// <see cref="SensitiveNames"/> list rather than each keeping their own copy.
 /// </summary>
-public sealed class RedactionEnricher : ILogEventEnricher
+public static class RedactionHelper
 {
+    public const string RedactedValue = "***REDACTED***";
+
     private static readonly string[] SensitiveNames =
     [
         "password", "token", "secret", "apikey", "api_key",
@@ -20,15 +28,77 @@ public sealed class RedactionEnricher : ILogEventEnricher
         "privatekey", "private_key", "authorization",
     ];
 
+    /// <summary>
+    /// True when <paramref name="propertyName"/> (a log property name, a
+    /// config key like <c>AuthMethod</c>, or an env var name like
+    /// <c>{{ tool_prefix_env }}_CLIENT_SECRET</c>) names — or contains, once
+    /// underscores are stripped for a case/format-insensitive comparison —
+    /// one of the well-known sensitive markers. The underscore-insensitive
+    /// "contains" check (rather than a strict equality check) is what lets
+    /// this same list catch both a bare log property (<c>Token</c>) and a
+    /// prefixed, SCREAMING_SNAKE_CASE env var (<c>TOOL_CLIENT_SECRET</c>) or
+    /// a compound name like <c>PRIVATE_KEY_PATH</c>.
+    /// </summary>
+    public static bool IsSensitive(string propertyName)
+    {
+        var normalized = propertyName.Replace("_", string.Empty);
+        return Array.Exists(
+            SensitiveNames,
+            name => normalized.Contains(name.Replace("_", string.Empty), StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Redacts every sensitive-named entry's value in a flat key/value source (env vars, CLI flags, a config-key dictionary).</summary>
+    public static IReadOnlyDictionary<string, string?> Redact(IReadOnlyDictionary<string, string?> source)
+    {
+        var redacted = new Dictionary<string, string?>(source.Count);
+        foreach (var (key, value) in source)
+        {
+            redacted[key] = IsSensitive(key) ? RedactedValue : value;
+        }
+        return redacted;
+    }
+
+    /// <summary>Recursively redacts every sensitive-named property's value in a parsed config-file JSON tree, leaving its shape otherwise intact.</summary>
+    public static JsonNode? RedactJsonNode(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject jsonObject:
+                var redactedObject = new JsonObject();
+                foreach (var (key, value) in jsonObject)
+                {
+                    redactedObject[key] = IsSensitive(key) ? JsonValue.Create(RedactedValue) : RedactJsonNode(value);
+                }
+                return redactedObject;
+            case JsonArray jsonArray:
+                var redactedArray = new JsonArray();
+                foreach (var item in jsonArray)
+                {
+                    redactedArray.Add(RedactJsonNode(item?.DeepClone()));
+                }
+                return redactedArray;
+            default:
+                return node?.DeepClone();
+        }
+    }
+}
+
+/// <summary>
+/// REQ-2.3.1: redacts well-known sensitive property names from every log
+/// event before it reaches a sink, so a stray <c>Log.Information("token={Token}",
+/// token)</c> call can never leak a secret into the structured log stream.
+/// </summary>
+public sealed class RedactionEnricher : ILogEventEnricher
+{
     public void Enrich(LogEvent logEvent, ILogEventPropertyFactory propertyFactory)
     {
         // Snapshot the keys first — `AddOrUpdateProperty` mutates the same
         // dictionary `Properties.Keys` enumerates.
         foreach (var propertyName in logEvent.Properties.Keys.ToList())
         {
-            if (Array.Exists(SensitiveNames, name => string.Equals(name, propertyName, StringComparison.OrdinalIgnoreCase)))
+            if (RedactionHelper.IsSensitive(propertyName))
             {
-                logEvent.AddOrUpdateProperty(propertyFactory.CreateProperty(propertyName, "***REDACTED***"));
+                logEvent.AddOrUpdateProperty(propertyFactory.CreateProperty(propertyName, RedactionHelper.RedactedValue));
             }
         }
     }
@@ -36,19 +106,25 @@ public sealed class RedactionEnricher : ILogEventEnricher
 
 public static partial class ServiceCollectionExtensions
 {
-    static partial void AddLogging(IServiceCollection services)
+    static partial void AddLogging(IServiceCollection services, IConfiguration configuration)
     {
         var minimumLevel = ParseLevel(Environment.GetEnvironmentVariable("{{ tool_prefix_env }}_LOG_LEVEL"));
+        var useStdout = string.Equals(configuration["Transport"], nameof(Transport.Http), StringComparison.OrdinalIgnoreCase);
 
         services.AddSerilog((_, loggerConfiguration) => loggerConfiguration
             .MinimumLevel.Is(minimumLevel)
             .Enrich.With(new RedactionEnricher())
             .Enrich.FromLogContext()
-            // `standardErrorFromLevel: LogEventLevel.Verbose`: Serilog's
-            // Console sink writes to stdout by default, but the MCP stdio
-            // transport speaks JSON-RPC over that same stream — routing
-            // every level to stderr instead keeps logs from corrupting it.
-            .WriteTo.Console(new CompactJsonFormatter(), standardErrorFromLevel: LogEventLevel.Verbose));
+            // Serilog's Console sink writes to stdout by default, but the
+            // MCP stdio transport speaks JSON-RPC over that same stream —
+            // routing every level to stderr instead (the lowest level,
+            // `Verbose`) keeps stdio-mode logs from corrupting it. In HTTP
+            // mode stdout carries no protocol traffic, so `null` (no
+            // minimum stderr level) leaves every event on the sink's
+            // default stdout stream instead.
+            .WriteTo.Console(
+                new CompactJsonFormatter(),
+                standardErrorFromLevel: useStdout ? null : LogEventLevel.Verbose));
     }
 
     private static LogEventLevel ParseLevel(string? level) => level?.ToLowerInvariant() switch

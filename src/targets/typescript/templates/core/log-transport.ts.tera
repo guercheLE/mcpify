@@ -2,18 +2,27 @@
 
 import type { TransportTargetOptions } from 'pino';
 
+/** `true` when the active transport is HTTP, in which case stdout carries
+ * no protocol traffic and logs go there instead of stderr — see
+ * `logger.ts`. */
+export function logsToStdout(): boolean {
+  return process.env['{{ tool_prefix_env }}_TRANSPORT'] === 'http';
+}
+
 /** Pretty-printed to an interactive TTY, structured JSON otherwise
- * (containers/CI) — REQ-2.3.1. Checks stderr, not stdout: that's where logs
- * are actually written (see `logger.ts`), since stdout is reserved for the
- * MCP stdio transport's JSON-RPC frames. `destination: 2` routes
- * pino-pretty's own output to stderr too, for the same reason. */
+ * (containers/CI) — REQ-2.3.1. Checks whichever stream logs actually land
+ * on (see `logger.ts`): stderr in stdio mode, since stdout is reserved for
+ * the MCP stdio transport's JSON-RPC frames, or stdout in HTTP mode.
+ * `destination` routes pino-pretty's own output to that same stream. */
 export function resolveLogTransport(): TransportTargetOptions | undefined {
-  if (!process.stderr.isTTY) {
+  const destination = logsToStdout() ? 1 : 2;
+  const stream = logsToStdout() ? process.stdout : process.stderr;
+  if (!stream.isTTY) {
     return undefined; // default pino JSON transport
   }
   return {
     target: 'pino-pretty',
-    options: { colorize: true, translateTime: 'SYS:standard', destination: 2 },
+    options: { colorize: true, translateTime: 'SYS:standard', destination },
     level: process.env['{{ tool_prefix_env }}_LOG_LEVEL'] ?? 'info',
   };
 }
