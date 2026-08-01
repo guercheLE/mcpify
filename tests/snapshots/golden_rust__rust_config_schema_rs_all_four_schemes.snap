@@ -58,6 +58,28 @@ fn default_api_version() -> String {
 }
 // mcpify:versions:end
 
+/// Every `Config` field that carries a built-in `#[serde(default = ...)]`
+/// below, assembled directly from this module's own `default_*` functions
+/// so the `config` CLI command's "what applies with nothing else set"
+/// display can never drift from what deserialization actually falls back
+/// to. `url` and `auth_method` are deliberately absent: neither has a
+/// built-in default, so the cascade requires one of its higher-priority
+/// layers to supply them.
+pub fn built_in_defaults() -> serde_json::Value {
+    serde_json::json!({
+        "api_version": default_api_version(),
+        "log_level": default_log_level(),
+        "rate_limit": default_rate_limit(),
+        "timeout_ms": default_timeout_ms(),
+        "cache_size": default_cache_size(),
+        "retry_attempts": default_retry_attempts(),
+        "transport": default_transport(),
+        "host": default_host(),
+        "port": default_port(),
+        "cors_allow": Option::<String>::None,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub url: String,

@@ -4,6 +4,7 @@ expression: file_tree(&output_dir)
 ---
 [
     ".env.example",
+    ".githooks/pre-commit",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-build.yml",
     ".github/workflows/release.yml",
@@ -77,6 +78,7 @@ expression: file_tree(&output_dir)
     "tests/unit/core/test_circuit_breaker.py",
     "tests/unit/core/test_config.py",
     "tests/unit/core/test_rate_limiter.py",
+    "tests/unit/services/test_embedding_service.py",
     "tests/unit/tools/test_call_tool.py",
     "tests/unit/tools/test_get_tool.py",
     "tests/unit/tools/test_search_tool.py",

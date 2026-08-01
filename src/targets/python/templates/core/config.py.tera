@@ -72,6 +72,22 @@ def _install_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def local_config_path() -> Path:
+    return Path(LOCAL_CONFIG_FILE)
+
+
+def home_config_path() -> Path:
+    return _home_dir() / CONFIG_DIR_NAME / "config.yml"
+
+
+def system_config_path() -> Path:
+    return SYSTEM_CONFIG_FILE
+
+
+def install_dir_config_path() -> Path:
+    return _install_dir() / "config.yml"
+
+
 def _read_yaml_if_exists(path: Path) -> dict[str, Any]:
     try:
         contents = path.read_text()
@@ -110,10 +126,10 @@ def load_config(cli_flags: dict[str, Any] | None = None) -> Config:
     layers = [
         cli_flags or {},
         _env_overrides(),
-        _read_yaml_if_exists(Path(LOCAL_CONFIG_FILE)),
-        _read_yaml_if_exists(_home_dir() / CONFIG_DIR_NAME / "config.yml"),
-        _read_yaml_if_exists(SYSTEM_CONFIG_FILE),
-        _read_yaml_if_exists(_install_dir() / "config.yml"),
+        _read_yaml_if_exists(local_config_path()),
+        _read_yaml_if_exists(home_config_path()),
+        _read_yaml_if_exists(system_config_path()),
+        _read_yaml_if_exists(install_dir_config_path()),
     ]
 
     # Lowest-priority layer merged first, each higher-priority layer merged
@@ -127,3 +143,18 @@ def load_config(cli_flags: dict[str, Any] | None = None) -> Config:
         return Config(**merged)
     except Exception as err:  # pydantic.ValidationError, deliberately caught broadly
         raise ConfigurationError(f"invalid configuration: {err}") from err
+
+
+def built_in_defaults() -> dict[str, Any]:
+    """The lowest-priority cascade layer: `Config`'s own field defaults,
+    e.g. for `{{ project_name }} config`'s cascade-by-source display.
+    `url`/`auth_method` have no default (they're required), so they're
+    absent here — every other tier can still supply them.
+    """
+    defaults: dict[str, Any] = {}
+    for name, field in Config.model_fields.items():
+        if field.is_required():
+            continue
+        value = field.default
+        defaults[name] = value.value if isinstance(value, Enum) else value
+    return defaults

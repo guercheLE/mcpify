@@ -37,3 +37,21 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+/**
+ * The built-in defaults layer of the config cascade (REQ-2.2's lowest-priority
+ * tier) — every field of `ConfigSchema` that carries a zod `.default(...)`,
+ * with the value it defaults to. Introspects the schema itself (rather than
+ * hand-maintaining a parallel list) so this can never drift from the actual
+ * `.default()` calls above. `url` and `auth_method` carry no default and are
+ * intentionally absent from the result.
+ */
+export function builtInDefaults(): Partial<Config> {
+  const defaults: Record<string, unknown> = {};
+  for (const [key, fieldSchema] of Object.entries(ConfigSchema.shape)) {
+    if (fieldSchema instanceof z.ZodDefault) {
+      defaults[key] = fieldSchema._def.defaultValue();
+    }
+  }
+  return defaults as Partial<Config>;
+}

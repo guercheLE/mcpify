@@ -20,7 +20,10 @@ fn home_dir() -> PathBuf {
     resolve_home_dir()
 }
 
-fn read_yaml_if_exists(path: &Path) -> Map<String, Value> {
+/// Public so the `config` CLI command can render each file layer's actual
+/// parsed contents (sanitized) alongside its path/exists status, using the
+/// exact same read/parse logic `load_config` itself relies on.
+pub fn read_yaml_if_exists(path: &Path) -> Map<String, Value> {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return Map::new();
     };
@@ -64,6 +67,33 @@ fn env_overrides() -> Map<String, Value> {
     overrides
 }
 
+fn install_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Single source of truth for each cascade tier's file path, so both
+/// `load_config` and the `config` CLI command (which displays these same
+/// paths to help debug the cascade) always agree — never recomputed
+/// independently at the display site.
+pub fn local_config_path() -> PathBuf {
+    PathBuf::from(LOCAL_CONFIG_FILE)
+}
+
+pub fn home_config_path() -> PathBuf {
+    home_dir().join(CONFIG_DIR_NAME).join("config.yml")
+}
+
+pub fn system_config_path() -> PathBuf {
+    PathBuf::from("/etc/{{ project_name }}/config.yml")
+}
+
+pub fn install_dir_config_path() -> PathBuf {
+    install_dir().join("config.yml")
+}
+
 /// Resolves configuration through the strict, stop-at-first-match cascade
 /// (REQ-2.2): CLI flags -> env vars -> local file
 /// (`./{{ project_name }}.config.yml`) -> home file
@@ -71,18 +101,13 @@ fn env_overrides() -> Map<String, Value> {
 /// (`/etc/{{ project_name }}/config.yml`) -> install-dir file -> built-in
 /// defaults (applied by `Config`'s own `#[serde(default = ...)]` fields).
 pub fn load_config(cli_flags: Map<String, Value>) -> Result<Config, McpifyError> {
-    let install_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from("."));
-
     let layers = [
         cli_flags,
         env_overrides(),
-        read_yaml_if_exists(&PathBuf::from(LOCAL_CONFIG_FILE)),
-        read_yaml_if_exists(&home_dir().join(CONFIG_DIR_NAME).join("config.yml")),
-        read_yaml_if_exists(&PathBuf::from("/etc/{{ project_name }}/config.yml")),
-        read_yaml_if_exists(&install_dir.join("config.yml")),
+        read_yaml_if_exists(&local_config_path()),
+        read_yaml_if_exists(&home_config_path()),
+        read_yaml_if_exists(&system_config_path()),
+        read_yaml_if_exists(&install_dir_config_path()),
     ];
 
     // Lowest-priority layer merged first, each higher-priority layer merged

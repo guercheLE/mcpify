@@ -1,4 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -36,7 +39,7 @@ public static class Roles
         // command actually ran, not whatever value the cascade would
         // otherwise resolve to.
         builder.Configuration["Transport"] = nameof(Transport.Stdio);
-        builder.Services.AddMcpifyServices();
+        builder.Services.AddMcpifyServices(builder.Configuration);
         builder.Services.AddMcpServer().WithStdioServerTransport();
 
         using var host = builder.Build();
@@ -67,7 +70,7 @@ public static class Roles
         {
             builder.Configuration["CorsAllow"] = corsAllowOverride;
         }
-        builder.Services.AddMcpifyServices();
+        builder.Services.AddMcpifyServices(builder.Configuration);
         // Core/McpServer.cs's AddMcpServer() is deliberately
         // transport-agnostic (`.WithToolsFromAssembly()` only) — each
         // harness role adds its own transport, mirroring
@@ -99,24 +102,138 @@ public static class Roles
         Console.WriteLine(version?.ToString() ?? "0.0.0");
     }
 
-    /// <summary>Prints the resolved configuration with secrets redacted (REQ-2.3.1's redaction principle applied to this output too).</summary>
-    public static Task PrintConfigAsync(string[] args, CancellationToken cancellationToken)
+    /// <summary>
+    /// Shows the config cascade (REQ-2.2) by source — one section per
+    /// tier, highest-precedence-first — instead of only the final merged
+    /// result, so "why is my config wrong" is answerable from this output
+    /// alone: which layer a value actually came from, and which config
+    /// files even exist on disk. Every path shown is computed by
+    /// <see cref="ConfigPaths"/>, the exact same helpers
+    /// <see cref="Core.ConfigurationExtensions.AddMcpifyConfiguration"/> itself
+    /// calls, so there's a single source of truth per tier. Every value
+    /// shown is redacted through <see cref="RedactionHelper"/> — the same
+    /// deny-list <see cref="RedactionEnricher"/> applies to the structured
+    /// log stream (REQ-2.3.1) — so no secret ever reaches this output.
+    /// </summary>
+    public static async Task PrintConfigAsync(string[] args, CancellationToken cancellationToken)
     {
+        const string projectName = "{{ project_name }}";
+
         var builder = Host.CreateApplicationBuilder(args);
-        builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
+        builder.Configuration.AddMcpifyConfiguration(projectName, args);
         builder.Services.AddOptions<McpifyOptions>().BindConfiguration(string.Empty);
 
         using var host = builder.Build();
         var options = host.Services.GetRequiredService<IOptions<McpifyOptions>>().Value;
 
-        Console.WriteLine($"Url: {options.Url}");
-        Console.WriteLine($"AuthMethod: {options.AuthMethod}");
-        Console.WriteLine("Credentials: ***REDACTED***");
-        Console.WriteLine($"LogLevel: {options.LogLevel}");
-        Console.WriteLine($"Transport: {options.Transport}");
-        Console.WriteLine($"Host: {options.Host}");
-        Console.WriteLine($"Port: {options.Port}");
-        return Task.CompletedTask;
+        // Tier 1: CLI flags — a *separate* configuration built from only
+        // the `AddCommandLine` provider, so this section reflects exactly
+        // what that provider parsed out of `args` for this invocation
+        // (which still carries the leading `config` positional token
+        // `AddCommandLine` silently ignores), not a guess at it.
+        var cliOnlyConfig = new ConfigurationBuilder().AddCommandLine(args).Build();
+        var cliFlags = cliOnlyConfig.AsEnumerable()
+            .Where(kv => kv.Value is not null)
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .ToList();
+        Console.WriteLine("CLI flags:");
+        if (cliFlags.Count == 0)
+        {
+            Console.WriteLine("  (none passed)");
+        }
+        else
+        {
+            foreach (var (key, value) in cliFlags)
+            {
+                Console.WriteLine($"  --{key}={(RedactionHelper.IsSensitive(key) ? RedactionHelper.RedactedValue : value)}");
+            }
+        }
+
+        // Tier 2: environment variables — every `{{ tool_prefix_env }}_*`
+        // var actually present right now, not just the fixed keys
+        // `EnvKeyMappings` knows about: auth-credential vars
+        // (`_TOKEN`/`_USERNAME`/`_PASSWORD`/`_API_KEY`/`_CLIENT_ID`/
+        // `_CLIENT_SECRET`/`_CONSUMER_KEY`/`_CONSUMER_SECRET`/
+        // `_PRIVATE_KEY_PATH`) are read directly by `AuthManager`,
+        // entirely outside this cascade, but are still real
+        // config-affecting env vars an operator would want to see.
+        const string envPrefix = "{{ tool_prefix_env }}_";
+        var envVars = Environment.GetEnvironmentVariables()
+            .Cast<System.Collections.DictionaryEntry>()
+            .Where(entry => ((string)entry.Key).StartsWith(envPrefix, StringComparison.Ordinal))
+            .Select(entry => ((string)entry.Key, (string?)entry.Value))
+            .OrderBy(entry => entry.Item1, StringComparer.Ordinal)
+            .ToList();
+        Console.WriteLine("\nEnvironment variables:");
+        if (envVars.Count == 0)
+        {
+            Console.WriteLine("  (none set)");
+        }
+        else
+        {
+            foreach (var (key, value) in envVars)
+            {
+                Console.WriteLine($"  {key}={(RedactionHelper.IsSensitive(key) ? RedactionHelper.RedactedValue : value)}");
+            }
+        }
+
+        // Tiers 3-6: the four config files the cascade reads, highest
+        // (local, cwd) to lowest (install-dir) precedence.
+        PrintConfigFileSection("Local config file", ConfigPaths.LocalConfigPath(projectName));
+        PrintConfigFileSection("Home config file", ConfigPaths.HomeConfigPath(projectName));
+        PrintConfigFileSection("System config file", ConfigPaths.SystemConfigPath(projectName));
+        PrintConfigFileSection("Install-dir config file", ConfigPaths.InstallDirConfigPath());
+
+        // Tier 7: built-in defaults.
+        Console.WriteLine("\nBuilt-in defaults:");
+        Console.WriteLine($"  {JsonSerializer.Serialize(RedactionHelper.Redact(Core.ConfigurationExtensions.BuiltInDefaults()))}");
+
+        var dotEnvPresent = File.Exists(Path.Combine(Directory.GetCurrentDirectory(), ".env"));
+        Console.WriteLine(
+            "\nNote: a .env file in the current directory is detected but NEVER auto-loaded " +
+            $"(this project has no DotNetEnv dependency) — present: {(dotEnvPresent ? "true" : "false")}");
+
+        // This target generates one MCP server per one API spec, so
+        // there's exactly one relevant credential slot
+        // (`AuthManager.CredentialKey`), tied to whichever auth method
+        // was discovered/configured. `HasAsync` reports presence only —
+        // it never decrypts-then-discards the actual secret.
+        var credentialStore = new EncryptedFileCredentialStore();
+        var credentialSaved = await credentialStore.HasAsync(AuthManager.CredentialKey, cancellationToken);
+        Console.WriteLine("\nCredential storage:");
+        Console.WriteLine($"  auth method: {options.AuthMethod}");
+        Console.WriteLine($"  credential saved: {(credentialSaved ? "true" : "false")}");
+
+        Console.WriteLine("\nResolved (final merged) config:");
+        Console.WriteLine($"  Url: {options.Url}");
+        Console.WriteLine($"  AuthMethod: {options.AuthMethod}");
+        Console.WriteLine($"  Credentials: {RedactionHelper.RedactedValue}");
+        Console.WriteLine($"  LogLevel: {options.LogLevel}");
+        Console.WriteLine($"  Transport: {options.Transport}");
+        Console.WriteLine($"  Host: {options.Host}");
+        Console.WriteLine($"  Port: {options.Port}");
+    }
+
+    /// <summary>Prints one config-file tier's absolute path, whether it exists, and — if it does — its redacted contents.</summary>
+    private static void PrintConfigFileSection(string label, string path)
+    {
+        Console.WriteLine($"\n{label}: {path}");
+        var exists = File.Exists(path);
+        Console.WriteLine($"  exists: {(exists ? "true" : "false")}");
+        if (!exists)
+        {
+            return;
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(File.ReadAllText(path));
+            Console.WriteLine($"  contents: {RedactionHelper.RedactJsonNode(node)?.ToJsonString()}");
+        }
+        catch (JsonException ex)
+        {
+            Console.WriteLine($"  contents: <unreadable: {ex.Message}>");
+        }
     }
 
     /// <summary>Lists the API spec versions this project has a store for (v8 multi-version support), showing which is default/active.</summary>
@@ -230,7 +347,7 @@ public static class Roles
     {
         var builder = Host.CreateApplicationBuilder(args);
         builder.Configuration.AddMcpifyConfiguration("{{ project_name }}", args);
-        builder.Services.AddMcpifyServices();
+        builder.Services.AddMcpifyServices(builder.Configuration);
         return builder.Build();
     }
 }

@@ -61,8 +61,14 @@ fn version_help_versions_and_config_are_available() {
     let config = generated_server(&["config"]);
     assert!(config.status.success(), "{}", stderr(&config));
     let config: serde_json::Value = serde_json::from_slice(&config.stdout).unwrap();
-    assert_eq!(config["api_version"], "{{ default_version_label }}");
-    assert_eq!(config["transport"], "stdio");
+    // The `config` command now shows the cascade grouped by source; the
+    // final merged result lives under "resolved" (previously the entire
+    // flat output).
+    assert_eq!(config["resolved"]["api_version"], "{{ default_version_label }}");
+    assert_eq!(config["resolved"]["transport"], "stdio");
+    assert_eq!(config["built_in_defaults"]["transport"], "stdio");
+    assert_eq!(config["local_config_file"]["exists"], false);
+    assert_eq!(config["home_config_file"]["exists"], false);
 }
 
 {% if operations | length > 0 %}#[test]

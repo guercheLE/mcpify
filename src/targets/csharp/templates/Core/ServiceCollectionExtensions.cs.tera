@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace {{ namespace }}.Core;
@@ -15,9 +16,9 @@ namespace {{ namespace }}.Core;
 // rather than editing this file.
 public static partial class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddMcpifyServices(this IServiceCollection services)
+    public static IServiceCollection AddMcpifyServices(this IServiceCollection services, IConfiguration configuration)
     {
-        AddLogging(services);
+        AddLogging(services, configuration);
         AddTracing(services);
         AddConfig(services);
         AddCircuitBreaker(services);
@@ -31,7 +32,7 @@ public static partial class ServiceCollectionExtensions
         return services;
     }
 
-    static partial void AddLogging(IServiceCollection services);
+    static partial void AddLogging(IServiceCollection services, IConfiguration configuration);
     static partial void AddTracing(IServiceCollection services);
     static partial void AddConfig(IServiceCollection services);
     static partial void AddCircuitBreaker(IServiceCollection services);

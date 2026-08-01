@@ -5,6 +5,7 @@ expression: file_tree(&output_dir)
 [
     ".editorconfig",
     ".env.example",
+    ".githooks/pre-commit",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-build.yml",
     ".github/workflows/release.yml",
@@ -55,6 +56,7 @@ expression: file_tree(&output_dir)
     "Tests/Data/EmbeddingsPopulatedTests.cs",
     "Tests/Data/SqliteVecStoreTests.cs",
     "Tests/Out.Tests.csproj",
+    "Tests/Services/EmbeddingServiceTests.cs",
     "Tests/Validation/ValidatorTests.cs",
     "Tools/McpTools.cs",
     "Tools/Profiler/Profiler.csproj",

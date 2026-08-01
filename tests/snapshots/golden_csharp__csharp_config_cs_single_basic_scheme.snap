@@ -55,6 +55,32 @@ public sealed class McpifyOptions
 }
 
 /// <summary>
+/// Single source of truth for each config-cascade tier's on-disk file
+/// path (REQ-2.2). <see cref="ConfigurationExtensions.AddMcpifyConfiguration"/>
+/// calls these directly to register its <c>AddJsonFile</c> providers, and
+/// <c>Cli/Roles.cs</c>'s `config` command calls the exact same methods to
+/// show each tier's resolved path — so there is exactly one formula per
+/// tier, never a second hand-rolled copy that could drift out of sync.
+/// </summary>
+public static class ConfigPaths
+{
+    public static string InstallDirConfigPath() =>
+        Path.Combine(AppContext.BaseDirectory, "config.json");
+
+    public static string SystemConfigPath(string projectName) =>
+        Path.Combine("/etc", projectName, "config.json");
+
+    public static string HomeConfigPath(string projectName) =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            $".{projectName}",
+            "config.json");
+
+    public static string LocalConfigPath(string projectName) =>
+        Path.Combine(Directory.GetCurrentDirectory(), $"{projectName}.config.json");
+}
+
+/// <summary>
 /// REQ-2.2's 7-tier configuration cascade (CLI flags &gt; env vars &gt;
 /// local file &gt; home file &gt; system file &gt; install-dir file &gt;
 /// built-in defaults), mapped directly onto <see cref="IConfiguration"/>'s
@@ -101,43 +127,45 @@ public static class ConfigurationExtensions
         string projectName,
         string[] args)
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var installDir = AppContext.BaseDirectory;
-
         return configuration
             // Tier 7: built-in defaults.
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                // ApiVersion is deliberately not listed here (unlike the
-                // other optional fields below): its default lives only on
-                // the `McpifyOptions.ApiVersion` property declaration
-                // above (inside the `mcpify:versions:begin/:end` marker),
-                // so `add-version --set-default` has a single place to
-                // update rather than two that could drift out of sync.
-                ["LogLevel"] = "info",
-                ["RateLimit"] = "100",
-                ["TimeoutMs"] = "30000",
-                ["CacheSize"] = "500",
-                ["RetryAttempts"] = "3",
-                ["Transport"] = "Stdio",
-                ["Host"] = "127.0.0.1",
-                ["Port"] = "3000",
-            })
+            .AddInMemoryCollection(BuiltInDefaults())
             // Tier 6: tool installation-directory config file.
-            .AddJsonFile(Path.Combine(installDir, "config.json"), optional: true)
+            .AddJsonFile(ConfigPaths.InstallDirConfigPath(), optional: true)
             // Tier 5: system-wide config file.
-            .AddJsonFile(Path.Combine("/etc", projectName, "config.json"), optional: true)
+            .AddJsonFile(ConfigPaths.SystemConfigPath(projectName), optional: true)
             // Tier 4: user home-directory config file.
-            .AddJsonFile(Path.Combine(home, $".{projectName}", "config.json"), optional: true)
+            .AddJsonFile(ConfigPaths.HomeConfigPath(projectName), optional: true)
             // Tier 3: local working-directory config file.
-            .AddJsonFile(
-                Path.Combine(Directory.GetCurrentDirectory(), $"{projectName}.config.json"),
-                optional: true)
+            .AddJsonFile(ConfigPaths.LocalConfigPath(projectName), optional: true)
             // Tier 2: environment variables.
             .AddInMemoryCollection(ReadEnvOverrides())
             // Tier 1: CLI flags / direct tool-call parameters.
             .AddCommandLine(args);
     }
+
+    /// <summary>
+    /// Tier 7's built-in defaults — extracted so <c>Cli/Roles.cs</c>'s
+    /// `config` command can show this tier's contents without
+    /// hand-rolling a second copy of the same dictionary.
+    /// ApiVersion is deliberately not listed here (unlike the other
+    /// optional fields below): its default lives only on the
+    /// <see cref="McpifyOptions.ApiVersion"/> property declaration above
+    /// (inside the `mcpify:versions:begin/:end` marker), so
+    /// `add-version --set-default` has a single place to update rather
+    /// than two that could drift out of sync.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string?> BuiltInDefaults() => new Dictionary<string, string?>
+    {
+        ["LogLevel"] = "info",
+        ["RateLimit"] = "100",
+        ["TimeoutMs"] = "30000",
+        ["CacheSize"] = "500",
+        ["RetryAttempts"] = "3",
+        ["Transport"] = "Stdio",
+        ["Host"] = "127.0.0.1",
+        ["Port"] = "3000",
+    };
 
     private static Dictionary<string, string?> ReadEnvOverrides()
     {

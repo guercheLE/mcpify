@@ -65,9 +65,11 @@ func defaultAPIVersion() string { return "default" }
 
 // mcpify:versions:end
 
-// defaults is tier 7: built-in defaults, the lowest-priority tier every
-// other tier overrides.
-func defaults() Config {
+// Defaults is tier 7: built-in defaults, the lowest-priority tier every
+// other tier overrides. Exported (not just used internally by Load) so the
+// `config` command (Story G5's cascade-by-source diagnostic view) can
+// display this tier without duplicating the literal values here.
+func Defaults() Config {
 	return Config{
 		ApiVersion:    defaultAPIVersion(),
 		LogLevel:      "info",
@@ -91,6 +93,42 @@ type CLIOverrides struct {
 	CorsAllow *string
 }
 
+// InstallDirConfigPath is tier-6's path: config.json next to the running
+// executable. Exported so both Load and the `config` command's
+// cascade-by-source display resolve this tier's path through the exact
+// same formula — see this file's package doc comment on Load.
+func InstallDirConfigPath() (string, error) {
+	installDir, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(installDir), "config.json"), nil
+}
+
+// SystemConfigPath is tier-5's path: /etc/out/config.json.
+func SystemConfigPath() string {
+	return "/" + filepath.Join("etc", "out", "config.json")
+}
+
+// HomeConfigPath is tier-4's path: ~/.out/config.json.
+func HomeConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".out", "config.json"), nil
+}
+
+// LocalConfigPath is tier-3's path: out.config.json in the
+// current working directory.
+func LocalConfigPath() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cwd, "out.config.json"), nil
+}
+
 // Load resolves REQ-2.2's 7-tier configuration cascade (CLI flags > env
 // vars > local file > home file > system file > install-dir file >
 // built-in defaults), applied lowest-priority-first so each later tier
@@ -98,19 +136,21 @@ type CLIOverrides struct {
 // `targets::csharp::templates::Core::Config.cs.tera`'s cascade, adapted to
 // a hand-rolled struct merge since Go has no `IConfiguration`-equivalent
 // first-party layered-config primitive (v5-implementation-plan.md's
-// toolchain note on `config`).
+// toolchain note on `config`). Each file tier's path comes from this
+// file's exported *ConfigPath helper — the single source of truth the
+// `config` command's diagnostic display reuses rather than recomputing.
 func Load(overrides CLIOverrides) (Config, error) {
-	cfg := defaults()
+	cfg := Defaults()
 
-	if installDir, err := os.Executable(); err == nil {
-		applyFile(&cfg, filepath.Join(filepath.Dir(installDir), "config.json"))
+	if installDirPath, err := InstallDirConfigPath(); err == nil {
+		applyFile(&cfg, installDirPath)
 	}
-	applyFile(&cfg, "/"+filepath.Join("etc", "out", "config.json"))
-	if home, err := os.UserHomeDir(); err == nil {
-		applyFile(&cfg, filepath.Join(home, ".out", "config.json"))
+	applyFile(&cfg, SystemConfigPath())
+	if homePath, err := HomeConfigPath(); err == nil {
+		applyFile(&cfg, homePath)
 	}
-	if cwd, err := os.Getwd(); err == nil {
-		applyFile(&cfg, filepath.Join(cwd, "out.config.json"))
+	if localPath, err := LocalConfigPath(); err == nil {
+		applyFile(&cfg, localPath)
 	}
 	applyEnv(&cfg)
 	applyCLIOverrides(&cfg, overrides)

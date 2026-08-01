@@ -18,6 +18,28 @@ function readYamlIfExists(path: string): Record<string, unknown> {
   return (yaml.load(readFileSync(path, 'utf8')) as Record<string, unknown>) ?? {};
 }
 
+/**
+ * Single source of truth for each config-file tier's resolved path — used
+ * both by `loadConfig` below and by the `config` CLI command (which shows
+ * the cascade layer-by-layer and must display the exact same paths
+ * `loadConfig` actually reads, never a hand-rolled duplicate of the formula).
+ */
+export function localConfigPath(): string {
+  return join(process.cwd(), '{{ project_name }}.config.yml');
+}
+
+export function homeConfigPath(): string {
+  return join(homedir(), CONFIG_DIR_NAME, 'config.yml');
+}
+
+export function systemConfigPath(): string {
+  return join('/etc', '{{ project_name }}', 'config.yml');
+}
+
+export function installDirConfigPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), 'config.yml');
+}
+
 function envOverrides(): Record<string, unknown> {
   const pick = (key: string): string | undefined => process.env[`${ENV_PREFIX}_${key}`];
   const candidates: Record<string, string | undefined> = {
@@ -45,15 +67,13 @@ function envOverrides(): Record<string, unknown> {
  * (applied by ConfigSchema's per-field `.default()`).
  */
 export function loadConfig(cliFlags: Partial<Config> = {}): Config {
-  const installDir = dirname(fileURLToPath(import.meta.url));
-
   const layers: Record<string, unknown>[] = [
     cliFlags,
     envOverrides(),
-    readYamlIfExists(join(process.cwd(), '{{ project_name }}.config.yml')),
-    readYamlIfExists(join(homedir(), CONFIG_DIR_NAME, 'config.yml')),
-    readYamlIfExists(join('/etc', '{{ project_name }}', 'config.yml')),
-    readYamlIfExists(join(installDir, 'config.yml')),
+    readYamlIfExists(localConfigPath()),
+    readYamlIfExists(homeConfigPath()),
+    readYamlIfExists(systemConfigPath()),
+    readYamlIfExists(installDirConfigPath()),
   ];
 
   // reduceRight applies the lowest-priority layer first, then spreads each

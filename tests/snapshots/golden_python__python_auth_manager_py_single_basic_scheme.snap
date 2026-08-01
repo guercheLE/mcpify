@@ -91,12 +91,12 @@ class AuthManager:
             exchanged: Credentials | None = None
             try:
                 exchanged = await self._strategy.refresh_token(parsed)
-            except Exception:
+            except Exception:  # noqa: BLE001 - any strategy-specific refresh failure falls through to a full re-authenticate, not a crash
                 exchanged = None
             if exchanged is None:
                 try:
                     exchanged = await self._strategy.authenticate(parsed)
-                except Exception:
+                except Exception:  # noqa: BLE001 - any strategy-specific auth failure surfaces as NoActiveCredentialsError below, not a crash
                     exchanged = None
             if exchanged is not None:
                 normalized = await self._normalize_credentials(exchanged)

@@ -25,7 +25,7 @@ public static class SetupWizard
         var apiVersion = PromptApiVersion();
         var transport = PromptTransport();
 
-        await credentialStore.SaveAsync("active-credentials", JsonSerializer.Serialize(credentials));
+        await credentialStore.SaveAsync(AuthManager.CredentialKey, JsonSerializer.Serialize(credentials));
 
         var env = new Dictionary<string, string>
         {

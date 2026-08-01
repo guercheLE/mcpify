@@ -16,7 +16,7 @@ const strategies: Record<AuthMethod, AuthStrategy> = {
   basic: new BasicAuthStrategy(),
 };
 
-const CREDENTIAL_ACCOUNT = 'active-credentials';
+export const CREDENTIAL_ACCOUNT = 'active-credentials';
 
 const HEADER_LOCATIONS: Record<AuthMethod, [string, string]> = {
   basic: ['header', 'Authorization'],

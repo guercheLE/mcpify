@@ -4,6 +4,7 @@ expression: file_tree(&output_dir)
 ---
 [
     ".env.example",
+    ".githooks/pre-commit",
     ".github/workflows/ci.yml",
     ".github/workflows/docker-build.yml",
     ".github/workflows/release.yml",
@@ -52,6 +53,7 @@ expression: file_tree(&output_dir)
     "internal/http/server.go",
     "internal/services/apiclient.go",
     "internal/services/embedding.go",
+    "internal/services/embedding_cache_dir_test.go",
     "internal/services/embedding_integration_test.go",
     "internal/services/embeddings_populated_test.go",
     "internal/services/populate.go",

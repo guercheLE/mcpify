@@ -52,6 +52,17 @@ func NewManager(authMethod core.AuthMethod, strategies map[core.AuthMethod]Strat
 	return &Manager{authMethod: authMethod, strategy: strategy, credentials: credentialStore}, nil
 }
 
+// HasStoredCredentials reports whether this project's single credential
+// slot (this generator emits one MCP server per one API spec, so there is
+// exactly one relevant slot, keyed by credentialKey) currently has a value
+// persisted — without ever exposing or decrypting the secret itself. For
+// the `config` command's diagnostic display (REQ-2.3.1's redaction
+// principle: show that a credential exists, never what it is).
+func HasStoredCredentials(store CredentialStore) (bool, error) {
+	_, found, err := store.Get(credentialKey)
+	return found, err
+}
+
 // headerLocations maps each discovered auth method to where its
 // credential value travels on the wire. Used by the HTTP-transport
 // auth-gate/extractor (internal/http) to know which incoming header to

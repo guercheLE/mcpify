@@ -22,7 +22,15 @@ public sealed class AuthManager(
     IKeyedServiceProvider keyedServiceProvider,
     ICredentialStore credentialStore)
 {
-    private const string CredentialKey = "active-credentials";
+    /// <summary>
+    /// The single credential-store key this project ever writes to or
+    /// reads from — this target generates one MCP server per one API
+    /// spec, so there's exactly one relevant "credential slot". Public so
+    /// <c>Cli/SetupWizard.cs</c> and <c>Cli/Roles.cs</c>'s `config`
+    /// command (checking whether a credential is saved, without
+    /// exposing it) share this one literal instead of each re-typing it.
+    /// </summary>
+    public const string CredentialKey = "active-credentials";
     private Dictionary<string, string>? _cachedCredentials;
 
     private IAuthStrategy Strategy =>

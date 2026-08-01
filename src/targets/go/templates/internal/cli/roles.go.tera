@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,11 +61,10 @@ func newServices(ctx context.Context, overrides core.CLIOverrides) (*Services, e
 		return nil, err
 	}
 
-	home, err := os.UserHomeDir()
+	cacheDir, err := services.ResolveCacheDir()
 	if err != nil {
 		return nil, err
 	}
-	cacheDir := filepath.Join(home, ".{{ project_name }}", "models")
 	sharedLibraryPath, err := services.ResolveSharedLibraryPath(ctx, cacheDir)
 	if err != nil {
 		return nil, err
@@ -178,20 +178,214 @@ func PrintVersion() {
 	fmt.Println("1.0.0")
 }
 
-// PrintConfig prints the resolved configuration with secrets redacted
-// (REQ-2.3.1's redaction principle applied to this output too).
+// envVarPrefix is every environment variable this project's config
+// cascade (applyEnv) AND its auth manager (envCredentials — TOKEN,
+// USERNAME, PASSWORD, API_KEY, CLIENT_ID, CLIENT_SECRET, CONSUMER_KEY,
+// CONSUMER_SECRET, PRIVATE_KEY_PATH, read directly from os.LookupEnv
+// outside this cascade entirely) share as a namespace. PrintConfig scans
+// os.Environ() against this prefix directly rather than only the fixed
+// keys applyEnv() knows about, so those auth-credential vars — very much
+// config-affecting, from an operator's point of view — still show up.
+const envVarPrefix = "{{ tool_prefix_env }}_"
+
+// PrintConfig prints the resolved REQ-2.2 cascade grouped by source,
+// highest-precedence-first (CLI flags win, so they're listed first here,
+// even though core.Load itself applies tiers lowest-to-highest internally
+// so each later tier can overwrite the last) — so `{{ project_name }}
+// config` can actually answer "why is my config wrong" by showing which
+// layer a value came from and which config files exist on disk, not just
+// the final merged result. Every path shown is resolved through the exact
+// same core.*ConfigPath helper Load itself calls. Secrets are never
+// printed raw (REQ-2.3.1): file contents, defaults, and the resolved
+// config's credentials are all routed through core's redaction
+// primitives, and only a saved/not-saved boolean is shown for the stored
+// credential itself.
 func PrintConfig(overrides core.CLIOverrides) error {
 	config, err := core.Load(overrides)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("URL: %s\n", config.URL)
-	fmt.Printf("AuthMethod: %s\n", config.AuthMethod)
-	fmt.Println("Credentials: ***REDACTED***")
-	fmt.Printf("LogLevel: %s\n", config.LogLevel)
-	fmt.Printf("Transport: %s\n", config.Transport)
-	fmt.Printf("Host: %s\n", config.Host)
-	fmt.Printf("Port: %d\n", config.Port)
+
+	fmt.Println("CLI flags:")
+	printCLIFlags(overrides)
+	fmt.Println()
+
+	fmt.Println("Environment variables:")
+	printEnvVars()
+	fmt.Println()
+
+	localPath, localErr := core.LocalConfigPath()
+	printConfigFileSection("Local config file", localPath, localErr)
+
+	homePath, homeErr := core.HomeConfigPath()
+	printConfigFileSection("Home config file", homePath, homeErr)
+
+	printConfigFileSection("System config file", core.SystemConfigPath(), nil)
+
+	installPath, installErr := core.InstallDirConfigPath()
+	printConfigFileSection("Install-dir config file", installPath, installErr)
+
+	fmt.Println("Built-in defaults:")
+	printRedactedJSON(core.Defaults())
+	fmt.Println()
+
+	printDotenvNote()
+
+	fmt.Println("Credential storage:")
+	if err := printCredentialStorage(config.AuthMethod); err != nil {
+		return err
+	}
+	fmt.Println()
+
+	fmt.Println("Resolved (final merged) config:")
+	fmt.Printf("  URL: %s\n", config.URL)
+	fmt.Printf("  AuthMethod: %s\n", config.AuthMethod)
+	fmt.Println("  Credentials: ***REDACTED***")
+	fmt.Printf("  LogLevel: %s\n", config.LogLevel)
+	fmt.Printf("  Transport: %s\n", config.Transport)
+	fmt.Printf("  Host: %s\n", config.Host)
+	fmt.Printf("  Port: %d\n", config.Port)
+	return nil
+}
+
+// printCLIFlags shows exactly which persistent cobra flags were actually
+// passed on THIS invocation — CLIOverrides only sets a pointer field when
+// its flag was parsed, so a nil field means "not passed" rather than
+// "passed as zero value".
+func printCLIFlags(overrides core.CLIOverrides) {
+	var flags []string
+	if overrides.URL != nil {
+		flags = append(flags, fmt.Sprintf("--url=%s", *overrides.URL))
+	}
+	if overrides.Host != nil {
+		flags = append(flags, fmt.Sprintf("--host=%s", *overrides.Host))
+	}
+	if overrides.Port != nil {
+		flags = append(flags, fmt.Sprintf("--port=%d", *overrides.Port))
+	}
+	if overrides.CorsAllow != nil {
+		flags = append(flags, fmt.Sprintf("--cors-allow=%s", *overrides.CorsAllow))
+	}
+	if len(flags) == 0 {
+		fmt.Println("  (none passed)")
+		return
+	}
+	for _, flag := range flags {
+		fmt.Printf("  %s\n", flag)
+	}
+}
+
+// printEnvVars scans os.Environ() for every currently-set envVarPrefix-
+// prefixed variable (not just the fixed keys applyEnv() knows about — see
+// envVarPrefix's doc comment) and prints each as KEY=value, redacting
+// values whose suffix (the part after envVarPrefix) matches core's
+// sensitive-field deny-list via RedactMap.
+func printEnvVars() {
+	found := map[string]string{}
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || !strings.HasPrefix(key, envVarPrefix) {
+			continue
+		}
+		found[key] = value
+	}
+	if len(found) == 0 {
+		fmt.Println("  (none set)")
+		return
+	}
+
+	bySuffix := make(map[string]any, len(found))
+	for key, value := range found {
+		bySuffix[strings.TrimPrefix(key, envVarPrefix)] = value
+	}
+	redacted := core.RedactMap(bySuffix)
+
+	keys := make([]string, 0, len(found))
+	for key := range found {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Printf("  %s=%v\n", key, redacted[strings.TrimPrefix(key, envVarPrefix)])
+	}
+}
+
+// printConfigFileSection prints one file tier's absolute path plus whether
+// it exists and (redacted) contents, or a resolution error if the tier's
+// path couldn't be computed at all (e.g. os.UserHomeDir failing).
+func printConfigFileSection(label, path string, pathErr error) {
+	if pathErr != nil {
+		fmt.Printf("%s: (unable to resolve path: %v)\n\n", label, pathErr)
+		return
+	}
+	fmt.Printf("%s: %s\n", label, path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Println("  exists: false")
+		fmt.Println()
+		return
+	}
+	fmt.Println("  exists: true")
+
+	redacted, err := core.RedactJSONBytes(data)
+	if err != nil {
+		fmt.Printf("  contents: (invalid JSON: %v)\n\n", err)
+		return
+	}
+	fmt.Printf("  contents: %s\n\n", redacted)
+}
+
+// printRedactedJSON marshals value to JSON and prints it back out with
+// core.RedactJSONBytes applied, indented under the current section.
+func printRedactedJSON(value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		fmt.Printf("  (unable to encode: %v)\n", err)
+		return
+	}
+	redacted, err := core.RedactJSONBytes(data)
+	if err != nil {
+		fmt.Printf("  (unable to redact: %v)\n", err)
+		return
+	}
+	fmt.Printf("  %s\n", redacted)
+}
+
+// printDotenvNote flags that a .env file sitting in the current directory
+// is never auto-loaded — this project has no dotenv dependency, unlike
+// some of mcpify's other targets, so an operator who dropped secrets in
+// one and expected the cascade to pick them up needs to be told why it
+// didn't.
+func printDotenvNote() {
+	present := false
+	if cwd, err := os.Getwd(); err == nil {
+		if _, statErr := os.Stat(filepath.Join(cwd, ".env")); statErr == nil {
+			present = true
+		}
+	}
+	fmt.Printf("Note: a .env file in the current directory is detected but NEVER auto-loaded (this project has no dotenv dependency) — present: %t\n\n", present)
+}
+
+// printCredentialStorage shows the single auth method this project was
+// generated for and whether a credential is currently persisted for it —
+// never the credential's value (REQ-2.3.1).
+func printCredentialStorage(method core.AuthMethod) error {
+	display := string(method)
+	if method == core.AuthMethodNone {
+		display = "(none)"
+	}
+	fmt.Printf("  auth method: %s\n", display)
+
+	credentialStore, err := core.NewCredentialStore()
+	if err != nil {
+		return err
+	}
+	saved, err := auth.HasStoredCredentials(credentialStore)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  credential saved: %t\n", saved)
 	return nil
 }
 

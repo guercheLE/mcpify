@@ -24,7 +24,14 @@ use super::strategies::pat::PatAuthStrategy;
 {%- endif %}
 use super::strategies::stub::StubAuthStrategy;
 
-const CREDENTIAL_ACCOUNT: &str = "active-credentials";
+/// `pub` (not just `pub(crate)`) because the `config` CLI command lives in
+/// the generated *binary* crate, which depends on this library crate as an
+/// external dependency — `cli::config` checks credential presence via
+/// `credential_storage::has_credential` against this exact same account so
+/// its display can never drift from what `login`/`credentials` actually
+/// read/write, but that only compiles if the constant crosses the
+/// bin/library boundary.
+pub const CREDENTIAL_ACCOUNT: &str = "active-credentials";
 {%- if "pat" in auth_method_keys or "apiKey" in auth_method_keys or "basic" in auth_method_keys %}
 const ENV_PREFIX: &str = "{{ tool_prefix_env }}";
 {%- endif %}
