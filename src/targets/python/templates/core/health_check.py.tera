@@ -90,7 +90,7 @@ class HealthCheckManager:
             except TimeoutError:
                 log.warning("health check timed out", component=registered.name)
                 self.registry.report(registered.name, ComponentStatus.UNHEALTHY, "timed out")
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - an arbitrary registered check must not crash the monitoring loop
                 log.warning("health check failed", component=registered.name, error=str(err))
                 self.registry.report(registered.name, ComponentStatus.UNHEALTHY, str(err))
             else:

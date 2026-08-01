@@ -30,7 +30,7 @@ KNOWN_VERSIONS: list[VersionRow] = [
 def run() -> None:
     try:
         active_version = load_config().api_version
-    except Exception:  # config not yet set up — still show what's available
+    except Exception:  # noqa: BLE001 - config not yet set up — still show what's available
         active_version = ""
 
     for row in KNOWN_VERSIONS:
